@@ -1,0 +1,227 @@
+{
+  "timestamp": "2026-08-02T17:13:44.013338+00:00",
+  "dataset_size": 12,
+  "total_latency_ms": 0.0,
+  "queries": [
+    {
+      "id": 1,
+      "question": "what is the minimum credit score",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": false,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 6.36,
+      "normalized": "what is the minimum credit score",
+      "truncated": false
+    },
+    {
+      "id": 2,
+      "question": "What documents are required, what is the maximum LTV, and also tell me the minimum credit score?",
+      "sub_queries": 3,
+      "sub_question_ok": true,
+      "intent": [
+        "documents",
+        "limits",
+        "limits"
+      ],
+      "intent_ok": false,
+      "entities": [
+        "loan to value",
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 3.47,
+      "normalized": "what documents are required, what is the maximum ltv, and also tell me the minimum credit score?",
+      "truncated": false
+    },
+    {
+      "id": 3,
+      "question": "what is the minimun credt scor",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": false,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 1.02,
+      "normalized": "what is the minimun credt scor",
+      "truncated": false
+    },
+    {
+      "id": 4,
+      "question": "max ltv for investmnt properti",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value",
+        "investment property"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 0.74,
+      "normalized": "max ltv for investmnt properti",
+      "truncated": false
+    },
+    {
+      "id": 5,
+      "question": "What are the income and employment requirements?",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.28,
+      "normalized": "what are the income and employment requirements?",
+      "truncated": false
+    },
+    {
+      "id": 6,
+      "question": "what documnts are requred",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": false,
+      "spell_corrected": true,
+      "latency_ms": 0.7,
+      "normalized": "what documnts are requred",
+      "truncated": false
+    },
+    {
+      "id": 7,
+      "question": "What is the maximum LTV for a conventional loan?",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value",
+        "conventional"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.35,
+      "normalized": "what is the maximum ltv for a conventional loan?",
+      "truncated": false
+    },
+    {
+      "id": 8,
+      "question": "how much down payment do i need for a house",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.42,
+      "normalized": "how much down payment do i need for a house",
+      "truncated": false
+    },
+    {
+      "id": 9,
+      "question": "fha vs va loan differences",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": false,
+      "entities": [
+        "federal housing administration",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.13,
+      "normalized": "fha vs va loan differences",
+      "truncated": false
+    },
+    {
+      "id": 10,
+      "question": "tell me about the closing process and what fees i will pay",
+      "sub_queries": 2,
+      "sub_question_ok": true,
+      "intent": [
+        "process",
+        "costs"
+      ],
+      "intent_ok": false,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 1.73,
+      "normalized": "tell me about the closing process and what fees i will pay",
+      "truncated": false
+    },
+    {
+      "id": 11,
+      "question": "",
+      "sub_queries": 0,
+      "sub_question_ok": true,
+      "intent": [],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.0,
+      "normalized": "",
+      "truncated": false
+    },
+    {
+      "id": 12,
+      "question": "asdfqwer zxcvbnm",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.35,
+      "normalized": "asdfqwer zxcvbnm",
+      "truncated": false
+    }
+  ],
+  "summary": {
+    "sub_question_accuracy": 1.0,
+    "intent_accuracy": 0.5833333333333334,
+    "entity_accuracy": 0.9166666666666666,
+    "avg_query_processing_latency_ms": 1.65,
+    "total_latency_ms": 19.76
+  }
+}

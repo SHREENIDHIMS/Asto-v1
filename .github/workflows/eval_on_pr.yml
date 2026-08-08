@@ -1,0 +1,104 @@
+name: Evaluation on PR
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/app/search/**"
+      - "backend/app/ranking/**"
+      - "backend/app/response/**"
+      - "backend/app/query_processing/**"
+      - "evaluation/**"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: adminpass
+          POSTGRES_DB: asto_assistant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin"
+          --health-interval "10s"
+          --health-timeout "5s"
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Install pgvector and set up schema
+        env:
+          ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+        run: |
+          PGPASSWORD=adminpass psql -h localhost -U admin -d asto_assistant -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          cd backend
+          python -c "from app.db.postgres.schema import ensure_schema; ensure_schema()"
+
+      - name: Seed benchmark data
+        env:
+          ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          cd backend
+          python -c "
+          from evaluation.datasets.seed_benchmark_data import clear_benchmark_data, seed_benchmark_data
+          clear_benchmark_data()
+          topics = seed_benchmark_data()
+          print(f'Benchmark data seeded: {len(topics)} topics')
+          "
+
+      - name: Run benchmark
+        env:
+          ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+          ASTO_JWT_SECRET: test-secret
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: |
+          python -m evaluation.run_benchmark --output-dir evaluation/reports
+
+      - name: Check for regression
+        run: |
+          python -c "
+          import json, glob
+          reports = sorted(glob.glob('evaluation/reports/*.json'), reverse=True)
+          if len(reports) < 2:
+              print('Not enough reports for comparison, skipping regression check')
+              exit(0)
+          latest = json.load(open(reports[0]))
+          previous = json.load(open(reports[1]))
+          latest_summary = latest.get('summary', {})
+          previous_summary = previous.get('summary', {})
+          threshold = 0.05
+          for metric in ['sub_question_accuracy', 'intent_accuracy', 'entity_accuracy']:
+              delta = latest_summary.get(metric, 0) - previous_summary.get(metric, 0)
+              if delta < -threshold:
+                  print(f'REGRESSION: {metric} dropped by {delta:.3f} (threshold: -{threshold})')
+                  exit(1)
+              print(f'{metric}: {previous_summary.get(metric, 0):.3f} -> {latest_summary.get(metric, 0):.3f} (delta: {delta:+.3f})')
+          # Check retrieval metrics if available
+          latest_retrieval = latest.get('retrieval_metrics', {})
+          previous_retrieval = previous.get('retrieval_metrics', {})
+          if 'hit_rate@10' in latest_retrieval and 'hit_rate@10' in previous_retrieval:
+              delta = latest_retrieval['hit_rate@10'] - previous_retrieval['hit_rate@10']
+              if delta < -threshold:
+                  print(f'REGRESSION: hit_rate@10 dropped by {delta:.3f} (threshold: -{threshold})')
+                  exit(1)
+              print(f'hit_rate@10: {previous_retrieval[\"hit_rate@10\"]:.3f} -> {latest_retrieval[\"hit_rate@10\"]:.3f} (delta: {delta:+.3f})')
+          print('No significant regression detected')
+          "

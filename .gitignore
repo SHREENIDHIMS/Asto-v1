@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtualenv / runtime
+backend/.venv/
+venv/
+.venv/
+
+# Env & secrets
+.env
+*.env
+backend/.env
+frontend/.env*
+
+# Node
+node_modules/
+.next/
+out/
+
+# Build artifacts
+*.log
+dist/
+build/
+
+# Runtime storage & downloaded models
+storage/
+nlp_models/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

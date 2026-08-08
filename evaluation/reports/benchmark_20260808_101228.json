@@ -1,0 +1,4036 @@
+{
+  "timestamp": "2026-08-08T10:12:24.336811+00:00",
+  "dataset_size": 125,
+  "total_latency_ms": 0.0,
+  "queries": [
+    {
+      "id": 1,
+      "question": "what is the minimum credit score",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 7.67,
+      "normalized": "what is the minimum credit score",
+      "truncated": false
+    },
+    {
+      "id": 2,
+      "question": "what fico score do i need to qualify for a loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.14,
+      "normalized": "what fico score do i need to qualify for a loan",
+      "truncated": false
+    },
+    {
+      "id": 3,
+      "question": "minimum credit score for a conventional mortgage",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score",
+        "conventional"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.68,
+      "normalized": "minimum credit score for a conventional mortgage",
+      "truncated": false
+    },
+    {
+      "id": 4,
+      "question": "what credit score is required for fha",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score",
+        "federal housing administration"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.65,
+      "normalized": "what credit score is required for fha",
+      "truncated": false
+    },
+    {
+      "id": 5,
+      "question": "can i get a loan with a 580 credit score",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.89,
+      "normalized": "can i get a loan with a 580 credit score",
+      "truncated": false
+    },
+    {
+      "id": 6,
+      "question": "what credit rating do i need",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.6,
+      "normalized": "what credit rating do i need",
+      "truncated": false
+    },
+    {
+      "id": 7,
+      "question": "do i need a 620 credit score for conventional",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score",
+        "conventional"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.8,
+      "normalized": "do i need a 620 credit score for conventional",
+      "truncated": false
+    },
+    {
+      "id": 8,
+      "question": "what is the lowest credit score allowed",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.66,
+      "normalized": "what is the lowest credit score allowed",
+      "truncated": false
+    },
+    {
+      "id": 9,
+      "question": "what documents are required for a mortgage application",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.7,
+      "normalized": "what documents are required for a mortgage application",
+      "truncated": false
+    },
+    {
+      "id": 10,
+      "question": "what paperwork do i need to apply for a loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.03,
+      "normalized": "what paperwork do i need to apply for a loan",
+      "truncated": false
+    },
+    {
+      "id": 11,
+      "question": "list the required documents",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.38,
+      "normalized": "list the required documents",
+      "truncated": false
+    },
+    {
+      "id": 12,
+      "question": "what documents do i need to provide",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.8,
+      "normalized": "what documents do i need to provide",
+      "truncated": false
+    },
+    {
+      "id": 13,
+      "question": "do i need to provide bank statements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "bank statement"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.67,
+      "normalized": "do i need to provide bank statements",
+      "truncated": false
+    },
+    {
+      "id": 14,
+      "question": "what proof of income is required",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "proof of income"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.72,
+      "normalized": "what proof of income is required",
+      "truncated": false
+    },
+    {
+      "id": 15,
+      "question": "what documents are needed for the loan application",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.71,
+      "normalized": "what documents are needed for the loan application",
+      "truncated": false
+    },
+    {
+      "id": 16,
+      "question": "checklist of required documentation",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document",
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.39,
+      "normalized": "checklist of required documentation",
+      "truncated": false
+    },
+    {
+      "id": 17,
+      "question": "what is the maximum ltv for a conventional loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value",
+        "conventional"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.79,
+      "normalized": "what is the maximum ltv for a conventional loan",
+      "truncated": false
+    },
+    {
+      "id": 18,
+      "question": "what is the max loan to value ratio",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.73,
+      "normalized": "what is the max loan to value ratio",
+      "truncated": false
+    },
+    {
+      "id": 19,
+      "question": "how high can the loan to value be",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.98,
+      "normalized": "how high can the loan to value be",
+      "truncated": false
+    },
+    {
+      "id": 20,
+      "question": "maximum ltv with pmi",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value",
+        "private mortgage insurance"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.61,
+      "normalized": "maximum ltv with pmi",
+      "truncated": false
+    },
+    {
+      "id": 21,
+      "question": "what ltv is allowed for investment properties",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value",
+        "investment property"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.7,
+      "normalized": "what ltv is allowed for investment properties",
+      "truncated": false
+    },
+    {
+      "id": 22,
+      "question": "how much down payment is required",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.68,
+      "normalized": "how much down payment is required",
+      "truncated": false
+    },
+    {
+      "id": 23,
+      "question": "what is the minimum down payment for a conventional loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment",
+        "conventional"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.95,
+      "normalized": "what is the minimum down payment for a conventional loan",
+      "truncated": false
+    },
+    {
+      "id": 24,
+      "question": "do fha loans require a down payment",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "down payment"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.2,
+      "normalized": "do fha loans require a down payment",
+      "truncated": false
+    },
+    {
+      "id": 25,
+      "question": "how much down payment for an investment property",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment",
+        "investment property"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.39,
+      "normalized": "how much down payment for an investment property",
+      "truncated": false
+    },
+    {
+      "id": 26,
+      "question": "minimum down payment for va loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.1,
+      "normalized": "minimum down payment for va loan",
+      "truncated": false
+    },
+    {
+      "id": 27,
+      "question": "how long do i need to be employed",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.66,
+      "normalized": "how long do i need to be employed",
+      "truncated": false
+    },
+    {
+      "id": 28,
+      "question": "what are the employment requirements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.7,
+      "normalized": "what are the employment requirements",
+      "truncated": false
+    },
+    {
+      "id": 29,
+      "question": "how many years of employment history",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.66,
+      "normalized": "how many years of employment history",
+      "truncated": false
+    },
+    {
+      "id": 30,
+      "question": "what income documentation is needed",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.53,
+      "normalized": "what income documentation is needed",
+      "truncated": false
+    },
+    {
+      "id": 31,
+      "question": "what are the income requirements for a mortgage",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.78,
+      "normalized": "what are the income requirements for a mortgage",
+      "truncated": false
+    },
+    {
+      "id": 32,
+      "question": "what is an fha loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.5,
+      "normalized": "what is an fha loan",
+      "truncated": false
+    },
+    {
+      "id": 33,
+      "question": "what are the fha loan requirements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.61,
+      "normalized": "what are the fha loan requirements",
+      "truncated": false
+    },
+    {
+      "id": 34,
+      "question": "how does an fha loan work",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.61,
+      "normalized": "how does an fha loan work",
+      "truncated": false
+    },
+    {
+      "id": 35,
+      "question": "what credit score do fha loans require",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score",
+        "federal housing administration"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.85,
+      "normalized": "what credit score do fha loans require",
+      "truncated": false
+    },
+    {
+      "id": 36,
+      "question": "are fha loans available for primary residences only",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "primary residence"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 1.69,
+      "normalized": "are fha loans available for primary residences only",
+      "truncated": false
+    },
+    {
+      "id": 37,
+      "question": "what is a va loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.62,
+      "normalized": "what is a va loan",
+      "truncated": false
+    },
+    {
+      "id": 38,
+      "question": "who is eligible for a va loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.71,
+      "normalized": "who is eligible for a va loan",
+      "truncated": false
+    },
+    {
+      "id": 39,
+      "question": "do va loans require a down payment",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "veterans affairs",
+        "down payment"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.71,
+      "normalized": "do va loans require a down payment",
+      "truncated": false
+    },
+    {
+      "id": 40,
+      "question": "do va loans require pmi",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "veterans affairs",
+        "private mortgage insurance"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.53,
+      "normalized": "do va loans require pmi",
+      "truncated": false
+    },
+    {
+      "id": 41,
+      "question": "what credit score is needed for a va loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit score",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.87,
+      "normalized": "what credit score is needed for a va loan",
+      "truncated": false
+    },
+    {
+      "id": 42,
+      "question": "fha vs va loan differences",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.74,
+      "normalized": "fha vs va loan differences",
+      "truncated": false
+    },
+    {
+      "id": 43,
+      "question": "what is the difference between fha and va loans",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.93,
+      "normalized": "what is the difference between fha and va loans",
+      "truncated": false
+    },
+    {
+      "id": 44,
+      "question": "compare fha and va loans",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.56,
+      "normalized": "compare fha and va loans",
+      "truncated": false
+    },
+    {
+      "id": 45,
+      "question": "tell me about the closing process",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.67,
+      "normalized": "tell me about the closing process",
+      "truncated": false
+    },
+    {
+      "id": 46,
+      "question": "what are the steps to closing",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.61,
+      "normalized": "what are the steps to closing",
+      "truncated": false
+    },
+    {
+      "id": 47,
+      "question": "how does closing work",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.45,
+      "normalized": "how does closing work",
+      "truncated": false
+    },
+    {
+      "id": 48,
+      "question": "what happens at closing",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.62,
+      "normalized": "what happens at closing",
+      "truncated": false
+    },
+    {
+      "id": 49,
+      "question": "how long does the closing process take",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.91,
+      "normalized": "how long does the closing process take",
+      "truncated": false
+    },
+    {
+      "id": 50,
+      "question": "what are the closing costs",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing costs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.53,
+      "normalized": "what are the closing costs",
+      "truncated": false
+    },
+    {
+      "id": 51,
+      "question": "what fees will i pay at closing",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.94,
+      "normalized": "what fees will i pay at closing",
+      "truncated": false
+    },
+    {
+      "id": 52,
+      "question": "what is the origination fee",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "origination fee"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.54,
+      "normalized": "what is the origination fee",
+      "truncated": false
+    },
+    {
+      "id": 53,
+      "question": "what is an appraisal fee",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "appraisal fee"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.51,
+      "normalized": "what is an appraisal fee",
+      "truncated": false
+    },
+    {
+      "id": 54,
+      "question": "how much are typical closing costs",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing costs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.68,
+      "normalized": "how much are typical closing costs",
+      "truncated": false
+    },
+    {
+      "id": 55,
+      "question": "what fees are paid at closing",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.41,
+      "normalized": "what fees are paid at closing",
+      "truncated": false
+    },
+    {
+      "id": 56,
+      "question": "what is the maximum debt to income ratio",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "debt to income"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.59,
+      "normalized": "what is the maximum debt to income ratio",
+      "truncated": false
+    },
+    {
+      "id": 57,
+      "question": "what is the max dti for a conventional loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "debt to income",
+        "conventional"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.02,
+      "normalized": "what is the max dti for a conventional loan",
+      "truncated": false
+    },
+    {
+      "id": 58,
+      "question": "how much debt can i have relative to income",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.97,
+      "normalized": "how much debt can i have relative to income",
+      "truncated": false
+    },
+    {
+      "id": 59,
+      "question": "what dti is allowed for fha",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "debt to income",
+        "federal housing administration"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.6,
+      "normalized": "what dti is allowed for fha",
+      "truncated": false
+    },
+    {
+      "id": 60,
+      "question": "what is my debt to income ratio limit",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "debt to income"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.81,
+      "normalized": "what is my debt to income ratio limit",
+      "truncated": false
+    },
+    {
+      "id": 61,
+      "question": "do lenders pull a credit report",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "documents"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit report"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.99,
+      "normalized": "do lenders pull a credit report",
+      "truncated": false
+    },
+    {
+      "id": 62,
+      "question": "what is on my credit report",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "credit report"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.62,
+      "normalized": "what is on my credit report",
+      "truncated": false
+    },
+    {
+      "id": 63,
+      "question": "how are interest rates determined",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "interest rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.56,
+      "normalized": "how are interest rates determined",
+      "truncated": false
+    },
+    {
+      "id": 64,
+      "question": "what is the current mortgage interest rate",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "interest rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.91,
+      "normalized": "what is the current mortgage interest rate",
+      "truncated": false
+    },
+    {
+      "id": 65,
+      "question": "what affects my interest rate",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "interest rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.89,
+      "normalized": "what affects my interest rate",
+      "truncated": false
+    },
+    {
+      "id": 66,
+      "question": "what is apr",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "annual percentage rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.32,
+      "normalized": "what is apr",
+      "truncated": false
+    },
+    {
+      "id": 67,
+      "question": "what does annual percentage rate mean",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "annual percentage rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.65,
+      "normalized": "what does annual percentage rate mean",
+      "truncated": false
+    },
+    {
+      "id": 68,
+      "question": "what is the difference between apr and interest rate",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "annual percentage rate",
+        "interest rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.94,
+      "normalized": "what is the difference between apr and interest rate",
+      "truncated": false
+    },
+    {
+      "id": 69,
+      "question": "what is private mortgage insurance",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "private mortgage insurance"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.56,
+      "normalized": "what is private mortgage insurance",
+      "truncated": false
+    },
+    {
+      "id": 70,
+      "question": "when is pmi required",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "private mortgage insurance"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.42,
+      "normalized": "when is pmi required",
+      "truncated": false
+    },
+    {
+      "id": 71,
+      "question": "how do i avoid pmi",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "private mortgage insurance"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.66,
+      "normalized": "how do i avoid pmi",
+      "truncated": false
+    },
+    {
+      "id": 72,
+      "question": "what is the fha mortgage insurance premium",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "mortgage insurance premium"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.85,
+      "normalized": "what is the fha mortgage insurance premium",
+      "truncated": false
+    },
+    {
+      "id": 73,
+      "question": "is there an upfront mip",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "mortgage insurance premium"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.01,
+      "normalized": "is there an upfront mip",
+      "truncated": false
+    },
+    {
+      "id": 74,
+      "question": "how much down payment for an investment property",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment",
+        "investment property"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.31,
+      "normalized": "how much down payment for an investment property",
+      "truncated": false
+    },
+    {
+      "id": 75,
+      "question": "what are investment property requirements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "investment property"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.81,
+      "normalized": "what are investment property requirements",
+      "truncated": false
+    },
+    {
+      "id": 76,
+      "question": "can i use rental income to qualify",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.4,
+      "normalized": "can i use rental income to qualify",
+      "truncated": false
+    },
+    {
+      "id": 77,
+      "question": "what is the down payment for a second home",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment",
+        "second home"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.31,
+      "normalized": "what is the down payment for a second home",
+      "truncated": false
+    },
+    {
+      "id": 78,
+      "question": "what are second home requirements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "second home"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.65,
+      "normalized": "what are second home requirements",
+      "truncated": false
+    },
+    {
+      "id": 79,
+      "question": "can i finance a multi unit property",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "multi unit"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.67,
+      "normalized": "can i finance a multi unit property",
+      "truncated": false
+    },
+    {
+      "id": 80,
+      "question": "what is the ltv for a multi unit property",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "loan to value",
+        "multi unit"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.85,
+      "normalized": "what is the ltv for a multi unit property",
+      "truncated": false
+    },
+    {
+      "id": 81,
+      "question": "can i finance a manufactured home",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "manufactured home"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.56,
+      "normalized": "can i finance a manufactured home",
+      "truncated": false
+    },
+    {
+      "id": 82,
+      "question": "what are the requirements for a mobile home loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "manufactured home"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.8,
+      "normalized": "what are the requirements for a mobile home loan",
+      "truncated": false
+    },
+    {
+      "id": 83,
+      "question": "what are the occupancy requirements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "occupancy"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.44,
+      "normalized": "what are the occupancy requirements",
+      "truncated": false
+    },
+    {
+      "id": 84,
+      "question": "do i need to live in the home",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "occupancy"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.68,
+      "normalized": "do i need to live in the home",
+      "truncated": false
+    },
+    {
+      "id": 85,
+      "question": "how do i get pre approved",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.68,
+      "normalized": "how do i get pre approved",
+      "truncated": false
+    },
+    {
+      "id": 86,
+      "question": "what is a pre approval letter",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "pre approval letter"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.53,
+      "normalized": "what is a pre approval letter",
+      "truncated": false
+    },
+    {
+      "id": 87,
+      "question": "how long is pre approval valid",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "pre approval"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.84,
+      "normalized": "how long is pre approval valid",
+      "truncated": false
+    },
+    {
+      "id": 88,
+      "question": "what is an appraisal",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "appraisal"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.35,
+      "normalized": "what is an appraisal",
+      "truncated": false
+    },
+    {
+      "id": 89,
+      "question": "what does the appraisal do",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "appraisal"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.42,
+      "normalized": "what does the appraisal do",
+      "truncated": false
+    },
+    {
+      "id": 90,
+      "question": "what is escrow",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "escrow"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.27,
+      "normalized": "what is escrow",
+      "truncated": false
+    },
+    {
+      "id": 91,
+      "question": "what is an escrow account",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "escrow"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.44,
+      "normalized": "what is an escrow account",
+      "truncated": false
+    },
+    {
+      "id": 92,
+      "question": "what is underwriting",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "underwriting"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.28,
+      "normalized": "what is underwriting",
+      "truncated": false
+    },
+    {
+      "id": 93,
+      "question": "what does the underwriter review",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "underwriting"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.49,
+      "normalized": "what does the underwriter review",
+      "truncated": false
+    },
+    {
+      "id": 94,
+      "question": "what is a rate lock",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "rate lock"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.43,
+      "normalized": "what is a rate lock",
+      "truncated": false
+    },
+    {
+      "id": 95,
+      "question": "how long can i lock my rate",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "interest rate"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.01,
+      "normalized": "how long can i lock my rate",
+      "truncated": false
+    },
+    {
+      "id": 96,
+      "question": "what is refinancing",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 0.32,
+      "normalized": "what is refinancing",
+      "truncated": false
+    },
+    {
+      "id": 97,
+      "question": "when should i refinance",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.52,
+      "normalized": "when should i refinance",
+      "truncated": false
+    },
+    {
+      "id": 98,
+      "question": "what is a cash out refinance",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "cash out"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.52,
+      "normalized": "what is a cash out refinance",
+      "truncated": false
+    },
+    {
+      "id": 99,
+      "question": "how much equity do i need for cash out",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "cash out"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.77,
+      "normalized": "how much equity do i need for cash out",
+      "truncated": false
+    },
+    {
+      "id": 100,
+      "question": "what is a jumbo loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "jumbo"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.42,
+      "normalized": "what is a jumbo loan",
+      "truncated": false
+    },
+    {
+      "id": 101,
+      "question": "what are jumbo loan requirements",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "jumbo"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.43,
+      "normalized": "what are jumbo loan requirements",
+      "truncated": false
+    },
+    {
+      "id": 102,
+      "question": "what is an adjustable rate mortgage",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "costs"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "adjustable rate mortgage"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.53,
+      "normalized": "what is an adjustable rate mortgage",
+      "truncated": false
+    },
+    {
+      "id": 103,
+      "question": "how does an arm work",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "adjustable rate mortgage"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.43,
+      "normalized": "how does an arm work",
+      "truncated": false
+    },
+    {
+      "id": 104,
+      "question": "what is a reverse mortgage",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "reverse mortgage"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.42,
+      "normalized": "what is a reverse mortgage",
+      "truncated": false
+    },
+    {
+      "id": 105,
+      "question": "how does a reverse mortgage work",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "reverse mortgage"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.55,
+      "normalized": "how does a reverse mortgage work",
+      "truncated": false
+    },
+    {
+      "id": 106,
+      "question": "what is a home equity line of credit",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "helic home equity line of credit"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.72,
+      "normalized": "what is a home equity line of credit",
+      "truncated": false
+    },
+    {
+      "id": 107,
+      "question": "how does a heloc work",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "helic home equity line of credit"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.44,
+      "normalized": "how does a heloc work",
+      "truncated": false
+    },
+    {
+      "id": 108,
+      "question": "what is a usda loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "united states department of agriculture"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.42,
+      "normalized": "what is a usda loan",
+      "truncated": false
+    },
+    {
+      "id": 109,
+      "question": "who is eligible for a usda loan",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "united states department of agriculture"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.57,
+      "normalized": "who is eligible for a usda loan",
+      "truncated": false
+    },
+    {
+      "id": 110,
+      "question": "do usda loans require a down payment",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "united states department of agriculture",
+        "down payment"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.6,
+      "normalized": "do usda loans require a down payment",
+      "truncated": false
+    },
+    {
+      "id": 111,
+      "question": "can i use gift funds for the down payment",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.89,
+      "normalized": "can i use gift funds for the down payment",
+      "truncated": false
+    },
+    {
+      "id": 112,
+      "question": "what is a gift letter",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "definition"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "gift letter"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.45,
+      "normalized": "what is a gift letter",
+      "truncated": false
+    },
+    {
+      "id": 113,
+      "question": "can i get a loan after bankruptcy",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "bankruptcy"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.57,
+      "normalized": "can i get a loan after bankruptcy",
+      "truncated": false
+    },
+    {
+      "id": 114,
+      "question": "how long after bankruptcy can i get a mortgage",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "bankruptcy"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.9,
+      "normalized": "how long after bankruptcy can i get a mortgage",
+      "truncated": false
+    },
+    {
+      "id": 115,
+      "question": "can i get a loan after foreclosure",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "foreclosure"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.57,
+      "normalized": "can i get a loan after foreclosure",
+      "truncated": false
+    },
+    {
+      "id": 116,
+      "question": "how long after foreclosure can i get a mortgage",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "foreclosure"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.9,
+      "normalized": "how long after foreclosure can i get a mortgage",
+      "truncated": false
+    },
+    {
+      "id": 117,
+      "question": "",
+      "sub_queries": 0,
+      "sub_question_ok": true,
+      "intent": [],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.0,
+      "normalized": "",
+      "truncated": false
+    },
+    {
+      "id": 118,
+      "question": "asdfqwer zxcvbnm",
+      "sub_queries": 1,
+      "sub_question_ok": true,
+      "intent": [
+        "general"
+      ],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.38,
+      "normalized": "asdfqwer zxcvbnm",
+      "truncated": false
+    },
+    {
+      "id": 119,
+      "question": "hello",
+      "sub_queries": 0,
+      "sub_question_ok": true,
+      "intent": [],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.07,
+      "normalized": "hello",
+      "truncated": false
+    },
+    {
+      "id": 120,
+      "question": "thanks",
+      "sub_queries": 0,
+      "sub_question_ok": true,
+      "intent": [],
+      "intent_ok": true,
+      "entities": [],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 0.07,
+      "normalized": "thanks",
+      "truncated": false
+    },
+    {
+      "id": 121,
+      "question": "what documents are required, what is the maximum ltv, and what is the minimum credit score",
+      "sub_queries": 3,
+      "sub_question_ok": true,
+      "intent": [
+        "documents",
+        "limits",
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "document",
+        "loan to value",
+        "credit score"
+      ],
+      "entities_ok": true,
+      "spell_corrected": false,
+      "latency_ms": 1.14,
+      "normalized": "what documents are required, what is the maximum ltv, and what is the minimum credit score",
+      "truncated": false
+    },
+    {
+      "id": 122,
+      "question": "what is the minimum down payment and what is the max dti",
+      "sub_queries": 2,
+      "sub_question_ok": true,
+      "intent": [
+        "limits",
+        "limits"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "down payment",
+        "debt to income"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 0.85,
+      "normalized": "what is the minimum down payment and what is the max dti",
+      "truncated": false
+    },
+    {
+      "id": 123,
+      "question": "how do i get pre approved and what is the closing process",
+      "sub_queries": 2,
+      "sub_question_ok": true,
+      "intent": [
+        "process",
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "closing"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 1.63,
+      "normalized": "how do i get pre approved and what is the closing process",
+      "truncated": false
+    },
+    {
+      "id": 124,
+      "question": "what are the fha requirements and how do they differ from va",
+      "sub_queries": 2,
+      "sub_question_ok": true,
+      "intent": [
+        "requirements",
+        "process"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "federal housing administration",
+        "veterans affairs"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 1.07,
+      "normalized": "what are the fha requirements and how do they differ from va",
+      "truncated": false
+    },
+    {
+      "id": 125,
+      "question": "what is pmi and how can i avoid it",
+      "sub_queries": 2,
+      "sub_question_ok": true,
+      "intent": [
+        "costs",
+        "eligibility"
+      ],
+      "intent_ok": true,
+      "entities": [
+        "private mortgage insurance"
+      ],
+      "entities_ok": true,
+      "spell_corrected": true,
+      "latency_ms": 0.88,
+      "normalized": "what is pmi and how can i avoid it",
+      "truncated": false
+    }
+  ],
+  "summary": {
+    "sub_question_accuracy": 1.0,
+    "intent_accuracy": 1.0,
+    "entity_accuracy": 1.0,
+    "avg_query_processing_latency_ms": 0.79,
+    "total_latency_ms": 98.24
+  },
+  "retrieval_metrics": {
+    "hit_rate@1": 1.0,
+    "mrr@1": 0.968,
+    "precision@1": 0.968,
+    "recall@1": 0.4386,
+    "hit_rate@3": 1.0,
+    "mrr@3": 0.968,
+    "precision@3": 0.6507,
+    "recall@3": 0.6201,
+    "hit_rate@5": 1.0,
+    "mrr@5": 0.968,
+    "precision@5": 0.5584,
+    "recall@5": 0.7587,
+    "hit_rate@10": 1.0,
+    "mrr@10": 0.968,
+    "precision@10": 0.3832,
+    "recall@10": 0.8991,
+    "ndcg@10": 0.9041,
+    "mrr": 0.968
+  },
+  "retrieval_per_query": [
+    {
+      "id": 1,
+      "question": "what is the minimum credit score",
+      "retrieved_count": 13,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 2,
+      "question": "what fico score do i need to qualify for a loan",
+      "retrieved_count": 30,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 3,
+      "question": "minimum credit score for a conventional mortgage",
+      "retrieved_count": 26,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 4,
+      "question": "what credit score is required for fha",
+      "retrieved_count": 29,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        738,
+        742,
+        743,
+        744,
+        747,
+        750,
+        751,
+        760,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 5,
+      "question": "can i get a loan with a 580 credit score",
+      "retrieved_count": 29,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 6,
+      "question": "what credit rating do i need",
+      "retrieved_count": 17,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 7,
+      "question": "do i need a 620 credit score for conventional",
+      "retrieved_count": 15,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 8,
+      "question": "what is the lowest credit score allowed",
+      "retrieved_count": 17,
+      "relevant_count": 5,
+      "hits": [
+        736,
+        743,
+        744,
+        760,
+        731
+      ]
+    },
+    {
+      "id": 9,
+      "question": "what documents are required for a mortgage application",
+      "retrieved_count": 25,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        756,
+        735
+      ]
+    },
+    {
+      "id": 10,
+      "question": "what paperwork do i need to apply for a loan",
+      "retrieved_count": 28,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        756,
+        735
+      ]
+    },
+    {
+      "id": 11,
+      "question": "list the required documents",
+      "retrieved_count": 20,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        756,
+        735
+      ]
+    },
+    {
+      "id": 12,
+      "question": "what documents do i need to provide",
+      "retrieved_count": 4,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        756,
+        735
+      ]
+    },
+    {
+      "id": 13,
+      "question": "do i need to provide bank statements",
+      "retrieved_count": 4,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        735
+      ]
+    },
+    {
+      "id": 14,
+      "question": "what proof of income is required",
+      "retrieved_count": 22,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        742,
+        748,
+        753,
+        756,
+        764,
+        734,
+        735
+      ]
+    },
+    {
+      "id": 15,
+      "question": "what documents are needed for the loan application",
+      "retrieved_count": 28,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        756,
+        735
+      ]
+    },
+    {
+      "id": 16,
+      "question": "checklist of required documentation",
+      "retrieved_count": 20,
+      "relevant_count": 3,
+      "hits": [
+        739,
+        756,
+        735
+      ]
+    },
+    {
+      "id": 17,
+      "question": "what is the maximum ltv for a conventional loan",
+      "retrieved_count": 25,
+      "relevant_count": 3,
+      "hits": [
+        732,
+        750,
+        759
+      ]
+    },
+    {
+      "id": 18,
+      "question": "what is the max loan to value ratio",
+      "retrieved_count": 25,
+      "relevant_count": 3,
+      "hits": [
+        732,
+        750,
+        759
+      ]
+    },
+    {
+      "id": 19,
+      "question": "how high can the loan to value be",
+      "retrieved_count": 25,
+      "relevant_count": 3,
+      "hits": [
+        732,
+        750,
+        759
+      ]
+    },
+    {
+      "id": 20,
+      "question": "maximum ltv with pmi",
+      "retrieved_count": 29,
+      "relevant_count": 6,
+      "hits": [
+        737,
+        738,
+        746,
+        750,
+        759,
+        732
+      ]
+    },
+    {
+      "id": 21,
+      "question": "what ltv is allowed for investment properties",
+      "retrieved_count": 28,
+      "relevant_count": 4,
+      "hits": [
+        732,
+        748,
+        750,
+        759
+      ]
+    },
+    {
+      "id": 22,
+      "question": "how much down payment is required",
+      "retrieved_count": 22,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        733,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        765
+      ]
+    },
+    {
+      "id": 23,
+      "question": "what is the minimum down payment for a conventional loan",
+      "retrieved_count": 31,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        733,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        765
+      ]
+    },
+    {
+      "id": 24,
+      "question": "do fha loans require a down payment",
+      "retrieved_count": 32,
+      "relevant_count": 15,
+      "hits": [
+        736,
+        737,
+        738,
+        742,
+        765,
+        746,
+        747,
+        748,
+        749,
+        750,
+        751,
+        760,
+        731,
+        764,
+        733
+      ]
+    },
+    {
+      "id": 25,
+      "question": "how much down payment for an investment property",
+      "retrieved_count": 21,
+      "relevant_count": 12,
+      "hits": [
+        736,
+        737,
+        738,
+        764,
+        733,
+        746,
+        748,
+        749,
+        760,
+        731,
+        732,
+        765
+      ]
+    },
+    {
+      "id": 26,
+      "question": "minimum down payment for va loan",
+      "retrieved_count": 32,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        733,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        765
+      ]
+    },
+    {
+      "id": 27,
+      "question": "how long do i need to be employed",
+      "retrieved_count": 3,
+      "relevant_count": 8,
+      "hits": [
+        734,
+        735
+      ]
+    },
+    {
+      "id": 28,
+      "question": "what are the employment requirements",
+      "retrieved_count": 20,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        748,
+        756,
+        764,
+        734,
+        735
+      ]
+    },
+    {
+      "id": 29,
+      "question": "how many years of employment history",
+      "retrieved_count": 7,
+      "relevant_count": 8,
+      "hits": [
+        734,
+        735
+      ]
+    },
+    {
+      "id": 30,
+      "question": "what income documentation is needed",
+      "retrieved_count": 10,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        739,
+        742,
+        748,
+        753,
+        756,
+        764,
+        734,
+        735
+      ]
+    },
+    {
+      "id": 31,
+      "question": "what are the income requirements for a mortgage",
+      "retrieved_count": 26,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        742,
+        748,
+        753,
+        756,
+        764,
+        734,
+        735
+      ]
+    },
+    {
+      "id": 32,
+      "question": "what is an fha loan",
+      "retrieved_count": 25,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 33,
+      "question": "what are the fha loan requirements",
+      "retrieved_count": 30,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 34,
+      "question": "how does an fha loan work",
+      "retrieved_count": 25,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 35,
+      "question": "what credit score do fha loans require",
+      "retrieved_count": 34,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        738,
+        742,
+        743,
+        744,
+        747,
+        750,
+        751,
+        760,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 36,
+      "question": "are fha loans available for primary residences only",
+      "retrieved_count": 27,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        738,
+        742,
+        747,
+        750,
+        751,
+        752,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 37,
+      "question": "what is a va loan",
+      "retrieved_count": 27,
+      "relevant_count": 4,
+      "hits": [
+        737,
+        738,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 38,
+      "question": "who is eligible for a va loan",
+      "retrieved_count": 27,
+      "relevant_count": 4,
+      "hits": [
+        737,
+        738,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 39,
+      "question": "do va loans require a down payment",
+      "retrieved_count": 33,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        733,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        765
+      ]
+    },
+    {
+      "id": 40,
+      "question": "do va loans require pmi",
+      "retrieved_count": 33,
+      "relevant_count": 6,
+      "hits": [
+        737,
+        738,
+        746,
+        731,
+        732,
+        733
+      ]
+    },
+    {
+      "id": 41,
+      "question": "what credit score is needed for a va loan",
+      "retrieved_count": 30,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        737,
+        738,
+        743,
+        744,
+        760,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 42,
+      "question": "fha vs va loan differences",
+      "retrieved_count": 27,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        737,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 43,
+      "question": "what is the difference between fha and va loans",
+      "retrieved_count": 27,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        737,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 44,
+      "question": "compare fha and va loans",
+      "retrieved_count": 27,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        737,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 45,
+      "question": "tell me about the closing process",
+      "retrieved_count": 7,
+      "relevant_count": 5,
+      "hits": [
+        739,
+        740,
+        741,
+        752,
+        755
+      ]
+    },
+    {
+      "id": 46,
+      "question": "what are the steps to closing",
+      "retrieved_count": 5,
+      "relevant_count": 5,
+      "hits": [
+        739,
+        740,
+        741,
+        752,
+        755
+      ]
+    },
+    {
+      "id": 47,
+      "question": "how does closing work",
+      "retrieved_count": 5,
+      "relevant_count": 5,
+      "hits": [
+        739,
+        740,
+        741,
+        752,
+        755
+      ]
+    },
+    {
+      "id": 48,
+      "question": "what happens at closing",
+      "retrieved_count": 5,
+      "relevant_count": 5,
+      "hits": [
+        739,
+        740,
+        741,
+        752,
+        755
+      ]
+    },
+    {
+      "id": 49,
+      "question": "how long does the closing process take",
+      "retrieved_count": 7,
+      "relevant_count": 5,
+      "hits": [
+        739,
+        740,
+        741,
+        752,
+        755
+      ]
+    },
+    {
+      "id": 50,
+      "question": "what are the closing costs",
+      "retrieved_count": 6,
+      "relevant_count": 7,
+      "hits": [
+        739,
+        740,
+        741,
+        745,
+        752,
+        755
+      ]
+    },
+    {
+      "id": 51,
+      "question": "what fees will i pay at closing",
+      "retrieved_count": 22,
+      "relevant_count": 4,
+      "hits": [
+        745,
+        738,
+        740,
+        741
+      ]
+    },
+    {
+      "id": 52,
+      "question": "what is the origination fee",
+      "retrieved_count": 4,
+      "relevant_count": 4,
+      "hits": [
+        745,
+        738,
+        740,
+        741
+      ]
+    },
+    {
+      "id": 53,
+      "question": "what is an appraisal fee",
+      "retrieved_count": 6,
+      "relevant_count": 6,
+      "hits": [
+        738,
+        740,
+        741,
+        745,
+        754,
+        756
+      ]
+    },
+    {
+      "id": 54,
+      "question": "how much are typical closing costs",
+      "retrieved_count": 15,
+      "relevant_count": 4,
+      "hits": [
+        745,
+        740,
+        741
+      ]
+    },
+    {
+      "id": 55,
+      "question": "what fees are paid at closing",
+      "retrieved_count": 7,
+      "relevant_count": 4,
+      "hits": [
+        745,
+        738,
+        740,
+        741
+      ]
+    },
+    {
+      "id": 56,
+      "question": "what is the maximum debt to income ratio",
+      "retrieved_count": 10,
+      "relevant_count": 2,
+      "hits": [
+        736,
+        742
+      ]
+    },
+    {
+      "id": 57,
+      "question": "what is the max dti for a conventional loan",
+      "retrieved_count": 28,
+      "relevant_count": 2,
+      "hits": [
+        736,
+        742
+      ]
+    },
+    {
+      "id": 58,
+      "question": "how much debt can i have relative to income",
+      "retrieved_count": 9,
+      "relevant_count": 2,
+      "hits": [
+        736,
+        742
+      ]
+    },
+    {
+      "id": 59,
+      "question": "what dti is allowed for fha",
+      "retrieved_count": 18,
+      "relevant_count": 8,
+      "hits": [
+        736,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 60,
+      "question": "what is my debt to income ratio limit",
+      "retrieved_count": 12,
+      "relevant_count": 2,
+      "hits": [
+        736,
+        742
+      ]
+    },
+    {
+      "id": 61,
+      "question": "do lenders pull a credit report",
+      "retrieved_count": 16,
+      "relevant_count": 3,
+      "hits": [
+        740,
+        741,
+        743
+      ]
+    },
+    {
+      "id": 62,
+      "question": "what is on my credit report",
+      "retrieved_count": 12,
+      "relevant_count": 3,
+      "hits": [
+        740,
+        741,
+        743
+      ]
+    },
+    {
+      "id": 63,
+      "question": "how are interest rates determined",
+      "retrieved_count": 10,
+      "relevant_count": 7,
+      "hits": [
+        737,
+        744,
+        745,
+        748,
+        757,
+        758,
+        761
+      ]
+    },
+    {
+      "id": 64,
+      "question": "what is the current mortgage interest rate",
+      "retrieved_count": 18,
+      "relevant_count": 7,
+      "hits": [
+        737,
+        744,
+        745,
+        748,
+        757,
+        758,
+        761
+      ]
+    },
+    {
+      "id": 65,
+      "question": "what affects my interest rate",
+      "retrieved_count": 9,
+      "relevant_count": 7,
+      "hits": [
+        737,
+        744,
+        745,
+        748,
+        757,
+        758,
+        761
+      ]
+    },
+    {
+      "id": 66,
+      "question": "what is apr",
+      "retrieved_count": 10,
+      "relevant_count": 1,
+      "hits": [
+        745
+      ]
+    },
+    {
+      "id": 67,
+      "question": "what does annual percentage rate mean",
+      "retrieved_count": 11,
+      "relevant_count": 1,
+      "hits": [
+        745
+      ]
+    },
+    {
+      "id": 68,
+      "question": "what is the difference between apr and interest rate",
+      "retrieved_count": 12,
+      "relevant_count": 7,
+      "hits": [
+        737,
+        744,
+        745,
+        748,
+        757,
+        758,
+        761
+      ]
+    },
+    {
+      "id": 69,
+      "question": "what is private mortgage insurance",
+      "retrieved_count": 16,
+      "relevant_count": 4,
+      "hits": [
+        737,
+        738,
+        746,
+        732
+      ]
+    },
+    {
+      "id": 70,
+      "question": "when is pmi required",
+      "retrieved_count": 26,
+      "relevant_count": 4,
+      "hits": [
+        737,
+        738,
+        746,
+        732
+      ]
+    },
+    {
+      "id": 71,
+      "question": "how do i avoid pmi",
+      "retrieved_count": 16,
+      "relevant_count": 4,
+      "hits": [
+        737,
+        738,
+        746,
+        732
+      ]
+    },
+    {
+      "id": 72,
+      "question": "what is the fha mortgage insurance premium",
+      "retrieved_count": 21,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        764,
+        733
+      ]
+    },
+    {
+      "id": 73,
+      "question": "is there an upfront mip",
+      "retrieved_count": 16,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        738,
+        747,
+        764
+      ]
+    },
+    {
+      "id": 74,
+      "question": "how much down payment for an investment property",
+      "retrieved_count": 21,
+      "relevant_count": 12,
+      "hits": [
+        736,
+        737,
+        738,
+        732,
+        765,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        733
+      ]
+    },
+    {
+      "id": 75,
+      "question": "what are investment property requirements",
+      "retrieved_count": 23,
+      "relevant_count": 2,
+      "hits": [
+        732,
+        748
+      ]
+    },
+    {
+      "id": 76,
+      "question": "can i use rental income to qualify",
+      "retrieved_count": 14,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        732,
+        742,
+        748,
+        753,
+        756,
+        764,
+        734,
+        735
+      ]
+    },
+    {
+      "id": 77,
+      "question": "what is the down payment for a second home",
+      "retrieved_count": 22,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        765,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        733
+      ]
+    },
+    {
+      "id": 78,
+      "question": "what are second home requirements",
+      "retrieved_count": 24,
+      "relevant_count": 1,
+      "hits": [
+        749
+      ]
+    },
+    {
+      "id": 79,
+      "question": "can i finance a multi unit property",
+      "retrieved_count": 8,
+      "relevant_count": 1,
+      "hits": [
+        750
+      ]
+    },
+    {
+      "id": 80,
+      "question": "what is the ltv for a multi unit property",
+      "retrieved_count": 27,
+      "relevant_count": 3,
+      "hits": [
+        732,
+        750,
+        759
+      ]
+    },
+    {
+      "id": 81,
+      "question": "can i finance a manufactured home",
+      "retrieved_count": 9,
+      "relevant_count": 1,
+      "hits": [
+        751
+      ]
+    },
+    {
+      "id": 82,
+      "question": "what are the requirements for a mobile home loan",
+      "retrieved_count": 33,
+      "relevant_count": 1,
+      "hits": [
+        751
+      ]
+    },
+    {
+      "id": 83,
+      "question": "what are the occupancy requirements",
+      "retrieved_count": 20,
+      "relevant_count": 1,
+      "hits": [
+        752
+      ]
+    },
+    {
+      "id": 84,
+      "question": "do i need to live in the home",
+      "retrieved_count": 10,
+      "relevant_count": 1,
+      "hits": [
+        752
+      ]
+    },
+    {
+      "id": 85,
+      "question": "how do i get pre approved",
+      "retrieved_count": 10,
+      "relevant_count": 1,
+      "hits": [
+        753
+      ]
+    },
+    {
+      "id": 86,
+      "question": "what is a pre approval letter",
+      "retrieved_count": 11,
+      "relevant_count": 1,
+      "hits": [
+        753
+      ]
+    },
+    {
+      "id": 87,
+      "question": "how long is pre approval valid",
+      "retrieved_count": 9,
+      "relevant_count": 1,
+      "hits": [
+        753
+      ]
+    },
+    {
+      "id": 88,
+      "question": "what is an appraisal",
+      "retrieved_count": 4,
+      "relevant_count": 4,
+      "hits": [
+        741,
+        754,
+        756,
+        740
+      ]
+    },
+    {
+      "id": 89,
+      "question": "what does the appraisal do",
+      "retrieved_count": 4,
+      "relevant_count": 4,
+      "hits": [
+        741,
+        754,
+        756,
+        740
+      ]
+    },
+    {
+      "id": 90,
+      "question": "what is escrow",
+      "retrieved_count": 1,
+      "relevant_count": 1,
+      "hits": [
+        755
+      ]
+    },
+    {
+      "id": 91,
+      "question": "what is an escrow account",
+      "retrieved_count": 1,
+      "relevant_count": 1,
+      "hits": [
+        755
+      ]
+    },
+    {
+      "id": 92,
+      "question": "what is underwriting",
+      "retrieved_count": 2,
+      "relevant_count": 1,
+      "hits": [
+        756
+      ]
+    },
+    {
+      "id": 93,
+      "question": "what does the underwriter review",
+      "retrieved_count": 2,
+      "relevant_count": 1,
+      "hits": [
+        756
+      ]
+    },
+    {
+      "id": 94,
+      "question": "what is a rate lock",
+      "retrieved_count": 8,
+      "relevant_count": 1,
+      "hits": [
+        757
+      ]
+    },
+    {
+      "id": 95,
+      "question": "how long can i lock my rate",
+      "retrieved_count": 9,
+      "relevant_count": 1,
+      "hits": [
+        757
+      ]
+    },
+    {
+      "id": 96,
+      "question": "what is refinancing",
+      "retrieved_count": 2,
+      "relevant_count": 2,
+      "hits": [
+        758,
+        759
+      ]
+    },
+    {
+      "id": 97,
+      "question": "when should i refinance",
+      "retrieved_count": 2,
+      "relevant_count": 2,
+      "hits": [
+        758,
+        759
+      ]
+    },
+    {
+      "id": 98,
+      "question": "what is a cash out refinance",
+      "retrieved_count": 3,
+      "relevant_count": 2,
+      "hits": [
+        758,
+        759
+      ]
+    },
+    {
+      "id": 99,
+      "question": "how much equity do i need for cash out",
+      "retrieved_count": 4,
+      "relevant_count": 1,
+      "hits": [
+        759
+      ]
+    },
+    {
+      "id": 100,
+      "question": "what is a jumbo loan",
+      "retrieved_count": 25,
+      "relevant_count": 1,
+      "hits": [
+        760
+      ]
+    },
+    {
+      "id": 101,
+      "question": "what are jumbo loan requirements",
+      "retrieved_count": 30,
+      "relevant_count": 1,
+      "hits": [
+        760
+      ]
+    },
+    {
+      "id": 102,
+      "question": "what is an adjustable rate mortgage",
+      "retrieved_count": 17,
+      "relevant_count": 2,
+      "hits": [
+        744,
+        761
+      ]
+    },
+    {
+      "id": 103,
+      "question": "how does an arm work",
+      "retrieved_count": 17,
+      "relevant_count": 2,
+      "hits": [
+        744,
+        761
+      ]
+    },
+    {
+      "id": 104,
+      "question": "what is a reverse mortgage",
+      "retrieved_count": 13,
+      "relevant_count": 1,
+      "hits": [
+        762
+      ]
+    },
+    {
+      "id": 105,
+      "question": "how does a reverse mortgage work",
+      "retrieved_count": 13,
+      "relevant_count": 1,
+      "hits": [
+        762
+      ]
+    },
+    {
+      "id": 106,
+      "question": "what is a home equity line of credit",
+      "retrieved_count": 17,
+      "relevant_count": 1,
+      "hits": [
+        763
+      ]
+    },
+    {
+      "id": 107,
+      "question": "how does a heloc work",
+      "retrieved_count": 17,
+      "relevant_count": 1,
+      "hits": [
+        763
+      ]
+    },
+    {
+      "id": 108,
+      "question": "what is a usda loan",
+      "retrieved_count": 26,
+      "relevant_count": 1,
+      "hits": [
+        764
+      ]
+    },
+    {
+      "id": 109,
+      "question": "who is eligible for a usda loan",
+      "retrieved_count": 26,
+      "relevant_count": 1,
+      "hits": [
+        764
+      ]
+    },
+    {
+      "id": 110,
+      "question": "do usda loans require a down payment",
+      "retrieved_count": 32,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        765,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        733
+      ]
+    },
+    {
+      "id": 111,
+      "question": "can i use gift funds for the down payment",
+      "retrieved_count": 18,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        737,
+        738,
+        765,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        733
+      ]
+    },
+    {
+      "id": 112,
+      "question": "what is a gift letter",
+      "retrieved_count": 3,
+      "relevant_count": 1,
+      "hits": [
+        765
+      ]
+    },
+    {
+      "id": 113,
+      "question": "can i get a loan after bankruptcy",
+      "retrieved_count": 25,
+      "relevant_count": 1,
+      "hits": [
+        766
+      ]
+    },
+    {
+      "id": 114,
+      "question": "how long after bankruptcy can i get a mortgage",
+      "retrieved_count": 13,
+      "relevant_count": 1,
+      "hits": [
+        766
+      ]
+    },
+    {
+      "id": 115,
+      "question": "can i get a loan after foreclosure",
+      "retrieved_count": 25,
+      "relevant_count": 1,
+      "hits": [
+        767
+      ]
+    },
+    {
+      "id": 116,
+      "question": "how long after foreclosure can i get a mortgage",
+      "retrieved_count": 13,
+      "relevant_count": 1,
+      "hits": [
+        767
+      ]
+    },
+    {
+      "id": 117,
+      "question": "",
+      "retrieved_count": 0,
+      "relevant_count": 0,
+      "hits": []
+    },
+    {
+      "id": 118,
+      "question": "asdfqwer zxcvbnm",
+      "retrieved_count": 0,
+      "relevant_count": 0,
+      "hits": []
+    },
+    {
+      "id": 119,
+      "question": "hello",
+      "retrieved_count": 0,
+      "relevant_count": 0,
+      "hits": []
+    },
+    {
+      "id": 120,
+      "question": "thanks",
+      "retrieved_count": 0,
+      "relevant_count": 0,
+      "hits": []
+    },
+    {
+      "id": 121,
+      "question": "what documents are required, what is the maximum ltv, and what is the minimum credit score",
+      "retrieved_count": 34,
+      "relevant_count": 11,
+      "hits": [
+        736,
+        739,
+        743,
+        744,
+        750,
+        756,
+        759,
+        760,
+        731,
+        732,
+        735
+      ]
+    },
+    {
+      "id": 122,
+      "question": "what is the minimum down payment and what is the max dti",
+      "retrieved_count": 24,
+      "relevant_count": 12,
+      "hits": [
+        736,
+        737,
+        738,
+        742,
+        733,
+        746,
+        748,
+        749,
+        760,
+        731,
+        764,
+        765
+      ]
+    },
+    {
+      "id": 123,
+      "question": "how do i get pre approved and what is the closing process",
+      "retrieved_count": 14,
+      "relevant_count": 6,
+      "hits": [
+        739,
+        740,
+        741,
+        752,
+        753,
+        755
+      ]
+    },
+    {
+      "id": 124,
+      "question": "what are the fha requirements and how do they differ from va",
+      "retrieved_count": 26,
+      "relevant_count": 9,
+      "hits": [
+        736,
+        737,
+        738,
+        742,
+        747,
+        750,
+        751,
+        731,
+        733
+      ]
+    },
+    {
+      "id": 125,
+      "question": "what is pmi and how can i avoid it",
+      "retrieved_count": 16,
+      "relevant_count": 4,
+      "hits": [
+        737,
+        738,
+        746,
+        732
+      ]
+    }
+  ],
+  "retrieval_topic_mapping": {
+    "credit_score": [
+      731,
+      736,
+      743,
+      744,
+      760
+    ],
+    "down_payment": [
+      731,
+      733,
+      736,
+      737,
+      738,
+      746,
+      748,
+      749,
+      760,
+      764,
+      765
+    ],
+    "fha": [
+      731,
+      733,
+      736,
+      738,
+      742,
+      747,
+      750,
+      751
+    ],
+    "va": [
+      731,
+      733,
+      737,
+      738
+    ],
+    "fha_va": [
+      731,
+      733,
+      738,
+      742,
+      750
+    ],
+    "ltv": [
+      732,
+      750,
+      759
+    ],
+    "pmi": [
+      732,
+      737,
+      738,
+      746
+    ],
+    "investment": [
+      732,
+      748
+    ],
+    "employment": [
+      734,
+      735,
+      736,
+      742,
+      748,
+      753,
+      756,
+      764
+    ],
+    "documents": [
+      735,
+      739,
+      756
+    ],
+    "dti": [
+      736,
+      742
+    ],
+    "interest_rate": [
+      737,
+      744,
+      745,
+      748,
+      757,
+      758,
+      761
+    ],
+    "fees": [
+      738,
+      740,
+      741,
+      745
+    ],
+    "mip": [
+      738,
+      747,
+      764
+    ],
+    "closing": [
+      739,
+      740,
+      741,
+      752,
+      755
+    ],
+    "credit_report": [
+      740,
+      741,
+      743
+    ],
+    "appraisal": [
+      740,
+      741,
+      754,
+      756
+    ],
+    "arm": [
+      744,
+      761
+    ],
+    "apr": [
+      745
+    ],
+    "second_home": [
+      749
+    ],
+    "multi_unit": [
+      750
+    ],
+    "manufactured": [
+      751
+    ],
+    "occupancy": [
+      752
+    ],
+    "pre_approval": [
+      753
+    ],
+    "escrow": [
+      755
+    ],
+    "underwriting": [
+      756
+    ],
+    "rate_lock": [
+      757
+    ],
+    "refinance": [
+      758,
+      759
+    ],
+    "cash_out": [
+      759
+    ],
+    "jumbo": [
+      760
+    ],
+    "reverse": [
+      762
+    ],
+    "heloc": [
+      763
+    ],
+    "usda": [
+      764
+    ],
+    "gift_funds": [
+      765
+    ],
+    "bankruptcy": [
+      766
+    ],
+    "foreclosure": [
+      767
+    ]
+  },
+  "latency_metrics": {
+    "end_to_end_search": {
+      "count": 121,
+      "p50_ms": 11.0,
+      "p95_ms": 14.36,
+      "p99_ms": 22.04
+    },
+    "cold_start": {
+      "first_query_ms": 320.03,
+      "budget_ok": true
+    }
+  }
+}

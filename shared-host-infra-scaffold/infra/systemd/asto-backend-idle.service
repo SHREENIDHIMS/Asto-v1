@@ -1,0 +1,6 @@
+[Unit]
+Description=Idle-stop watcher run for asto-backend
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/idle_stop_watcher.sh

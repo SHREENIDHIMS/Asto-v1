@@ -1,0 +1,72 @@
+# Shared infrastructure for hosting multiple lean projects on one
+# AWS free-tier EC2 instance (1 GiB RAM).
+#
+# This compose file runs ONLY the two services that should be shared
+# across every project on the box:
+#   - Postgres (with pgvector) — one instance, one DB per project
+#   - Nginx — one reverse proxy, one server block per project
+#
+# Project-specific app containers/services are NOT defined here.
+# Each project's own docker-compose.yml (or systemd unit) should
+# join the `shared_net` network created by this file and connect
+# to `postgres` by its service name.
+#
+# Bring this up FIRST, before any individual project:
+#   docker compose -f infra/shared/docker-compose.yml up -d
+
+version: "3.9"
+
+networks:
+  shared_net:
+    name: shared_net
+    driver: bridge
+
+volumes:
+  pg_data:
+    name: shared_pg_data
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16   # Debian-based, ships pgvector — avoid alpine here
+    container_name: shared_postgres
+    restart: unless-stopped
+    networks:
+      - shared_net
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    ports:
+      - "127.0.0.1:5433:5432"   # bind to localhost only — never expose publicly
+    deploy:
+      resources:
+        limits:
+          memory: 200m           # hard cap: Postgres will OOM before it starves other projects
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:1.27-alpine       # fine for nginx — no compiled ML deps here
+    container_name: shared_nginx
+    restart: unless-stopped
+    networks:
+      - shared_net
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    deploy:
+      resources:
+        limits:
+          memory: 30m
+    depends_on:
+      - postgres

@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.venv
+.env
+*.md
+tests/
+debug_imports.py
+check_psycopg.py

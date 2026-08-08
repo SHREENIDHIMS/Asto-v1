@@ -1,0 +1,22 @@
+[
+  {"id": 1, "question": "what is the minimum credit score", "expected_intent": "requirements", "expected_entities": ["credit score"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 2, "question": "What documents are required for a conventional loan?", "expected_intent": "documents", "expected_entities": ["document", "conventional"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 3, "question": "what is the maximum ltv for an investment property", "expected_intent": "limits", "expected_entities": ["loan to value", "investment property"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 4, "question": "minimum down payment requirement", "expected_intent": "requirements", "expected_entities": ["down payment"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 5, "question": "What documents are required, what is the maximum LTV, and also tell me the minimum credit score?", "expected_intent": "documents", "expected_entities": ["loan to value", "credit score"], "expected_sub_questions": 3, "expected_answer": true},
+  {"id": 6, "question": "fha vs va loan differences", "expected_intent": "definition", "expected_entities": ["federal housing administration", "veterans affairs"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 7, "question": "what documnts are requred for a heloc", "expected_intent": "documents", "expected_entities": ["home equity line of credit"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 8, "question": "dti ratio for jumbo loans", "expected_intent": "limits", "expected_entities": ["debt to income", "jumbo"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 9, "question": "how much down payment do i need for a house", "expected_intent": "requirements", "expected_entities": ["down payment"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 10, "question": "tell me about the closing process and what fees i will pay", "expected_intent": "process", "expected_entities": ["closing"], "expected_sub_questions": 2, "expected_answer": true},
+  {"id": 11, "question": "minimum credit score for usda loans", "expected_intent": "requirements", "expected_entities": ["credit score", "usda"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 12, "question": "what is the maximun ltv for a va loan", "expected_intent": "limits", "expected_entities": ["loan to value", "veterans affairs"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 13, "question": "required documents for self employed borrowers", "expected_intent": "documents", "expected_entities": ["document"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 14, "question": "what are the income and employment requirements?", "expected_intent": "requirements", "expected_entities": [], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 15, "question": "credit score vs interest rate relationship", "expected_intent": "requirements", "expected_entities": ["credit score"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 16, "question": "conventional loan vs fha loan comparison", "expected_intent": "definition", "expected_entities": ["conventional", "federal housing administration"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 17, "question": "asdasdf qwerzxc", "expected_intent": "general", "expected_entities": [], "expected_sub_questions": 1, "expected_answer": false},
+  {"id": 18, "question": "what is the minimun credt scor", "expected_intent": "requirements", "expected_entities": ["credit score"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 19, "question": "reverse mortgage eligibility requirements", "expected_intent": "requirements", "expected_entities": ["reverse mortgage"], "expected_sub_questions": 1, "expected_answer": true},
+  {"id": 20, "question": "what fees do i pay at closing", "expected_intent": "process", "expected_entities": ["closing"], "expected_sub_questions": 1, "expected_answer": true}
+]

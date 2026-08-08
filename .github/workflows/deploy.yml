@@ -1,0 +1,102 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm run build
+
+      - name: Run unit tests
+        env:
+          ASTO_JWT_SECRET: test-secret
+          ASTO_ENVIRONMENT: test
+        run: |
+          cd backend
+          python -m pytest tests/unit/ -v --timeout=60
+
+      - name: Check deploy secrets
+        id: deploy-secrets
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          if [ -z "$EC2_HOST" ]; then
+            echo "::warning::Deploy to EC2 skipped: EC2_HOST secret is not configured. Add EC2_HOST, EC2_USER, EC2_SSH_KEY, ASTO_JWT_SECRET and ASTO_DATABASE_URL under Settings > Secrets and variables > Actions."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy to EC2 via SSH
+        if: github.ref == 'refs/heads/main' && steps.deploy-secrets.outputs.configured == 'true'
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: |
+            ASTO_JWT_SECRET=${{ secrets.ASTO_JWT_SECRET }}
+            ASTO_DATABASE_URL=${{ secrets.ASTO_DATABASE_URL }}
+          script: |
+            set -e
+
+            PROJECT_DIR="/opt/asto"
+            LOG_FILE="/var/log/asto-deploy.log"
+
+            cd "$PROJECT_DIR"
+
+            # Pull latest code
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Rebuild and restart containers
+            docker compose pull
+            docker compose build
+            docker compose up -d
+
+            # Verify services are healthy
+            sleep 5
+            curl -sf http://localhost:8011/api/v1/health || {
+                echo "ERROR: Backend health check failed" | tee -a "$LOG_FILE"
+                exit 1
+            }
+            curl -sf http://localhost:3011/ || {
+                echo "ERROR: Frontend health check failed" | tee -a "$LOG_FILE"
+                exit 1
+            }
+
+            echo "Deploy complete: $(date)" | tee -a "$LOG_FILE"
+            docker compose ps

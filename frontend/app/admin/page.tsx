@@ -1,0 +1,1197 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  FileText,
+  History,
+  LayoutDashboard,
+  Loader2,
+  LogOut,
+  MessageSquare,
+  RefreshCw,
+  ShieldAlert,
+  Sparkles,
+  Upload,
+  UserPlus,
+  Users,
+  XCircle,
+} from "lucide-react";
+import {
+  listPendingDocuments,
+  approveDocument,
+  rejectDocument,
+  getDocumentHistory,
+  listAllDocuments,
+  uploadDocument,
+  listUsers,
+  createUser,
+  listClients,
+  createClient,
+  assignStaffToClient,
+  getKnowledgeGaps,
+  getAnalyticsSummary,
+  AnalyticsSummary,
+  getDocumentFile,
+  openBlobInNewTab,
+  ApprovalDocument,
+  ApprovalHistoryEntry,
+  AdminDocument,
+  AdminUser,
+  AdminClient,
+  KnowledgeGap,
+} from "@/lib/api-client";
+import { clearToken, decodeToken, getToken } from "@/lib/auth";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+function statusBadge(status: string) {
+  switch (status) {
+    case "approved":
+      return <Badge className="bg-green-100 text-green-800 border-green-200">{status}</Badge>;
+    case "pending":
+      return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">{status}</Badge>;
+    case "rejected":
+      return <Badge variant="destructive">{status}</Badge>;
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString();
+}
+
+async function handleViewDocument(documentId: number, token: string) {
+  try {
+    const blob = await getDocumentFile(documentId, token);
+    openBlobInNewTab(blob, `document-${documentId}`);
+  } catch (err) {
+    window.alert(
+      err instanceof Error ? err.message : "Failed to load document file"
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Approvals queue tab
+// ---------------------------------------------------------------------------
+
+function ApprovalsTab({ token }: { token: string }) {
+  const [documents, setDocuments] = useState<ApprovalDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [historyDoc, setHistoryDoc] = useState<ApprovalDocument | null>(null);
+  const [history, setHistory] = useState<ApprovalHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await listPendingDocuments(token);
+      setDocuments(res.documents);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load queue");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleDecision = async (doc: ApprovalDocument, approve: boolean) => {
+    setBusyId(doc.id);
+    setError(null);
+    try {
+      if (approve) await approveDocument(doc.id, token);
+      else await rejectDocument(doc.id, token);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Decision failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openHistory = async (doc: ApprovalDocument) => {
+    setHistoryDoc(doc);
+    setHistoryLoading(true);
+    setHistory([]);
+    try {
+      const res = await getDocumentHistory(doc.id, token);
+      setHistory(res.history);
+    } catch {
+      setHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Documents uploaded via ingestion wait here until approved. Pending docs
+          are not searchable.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Action failed</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : documents.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-600" />
+            <p className="font-medium">All caught up</p>
+            <p className="text-sm text-muted-foreground">
+              No documents awaiting approval.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        documents.map((doc) => (
+          <Card key={doc.id}>
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Clock className="w-4 h-4 text-yellow-600" />
+                    <p className="font-medium truncate">{doc.title}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    {doc.doc_type} · {doc.department}
+                    {doc.client_id != null && ` · client #${doc.client_id}`} · v{doc.version}
+                    {" · "}uploaded {formatDate(doc.created_at)}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate font-mono">
+                    {doc.source_path}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleViewDocument(doc.id, token)}
+                  >
+                    <FileText className="h-3.5 w-3.5 mr-1.5" />
+                    View
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openHistory(doc)}
+                  >
+                    <History className="h-3.5 w-3.5 mr-1.5" />
+                    History
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    disabled={busyId === doc.id}
+                    onClick={() => handleDecision(doc, false)}
+                  >
+                    {busyId === doc.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Reject
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busyId === doc.id}
+                    onClick={() => handleDecision(doc, true)}
+                  >
+                    {busyId === doc.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Approve
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))
+      )}
+
+      <Dialog open={historyDoc != null} onOpenChange={(open) => !open && setHistoryDoc(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approval History</DialogTitle>
+            <DialogDescription>
+              {historyDoc?.title}
+            </DialogDescription>
+          </DialogHeader>
+          {historyLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No history recorded.</p>
+          ) : (
+            <div className="space-y-3 max-h-80 overflow-y-auto">
+              {history.map((entry) => (
+                <div key={entry.id} className="border border-border rounded-lg p-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">
+                      {entry.from_status} → {entry.to_status}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatDate(entry.created_at)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    by {entry.reviewed_by_email ?? "unknown"}
+                  </p>
+                  {entry.reason && (
+                    <p className="text-xs mt-1">{entry.reason}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Documents tab
+// ---------------------------------------------------------------------------
+
+function DocumentsTab({ token }: { token: string }) {
+  const [documents, setDocuments] = useState<AdminDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await listAllDocuments(token);
+      setDocuments(res.documents);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load documents");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setUploadMessage(null);
+    setError(null);
+    try {
+      const res = await uploadDocument(file, token);
+      setUploadMessage(
+        `Uploaded "${res.filename}" (${(res.size_bytes / 1024).toFixed(1)} KB). It is now pending approval and will be indexed by the batch ingestion job.`
+      );
+      setFile(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Upload className="w-4 h-4" />
+            Upload document
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Uploads are validated and written to storage/pending/. The batch
+            ingestion job indexes them later; they enter the approval queue as
+            pending.
+          </p>
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <Input
+                type="file"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="cursor-pointer"
+              />
+            </div>
+            <Button
+              type="button"
+              onClick={handleUpload}
+              disabled={!file || uploading}
+            >
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4 mr-1.5" />
+              )}
+              Upload
+            </Button>
+          </div>
+          {uploadMessage && (
+            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">
+              {uploadMessage}
+            </p>
+          )}
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-muted-foreground">
+          {documents.length} documents
+        </h3>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="divide-y divide-border">
+            {documents.map((doc) => (
+              <div key={doc.id} className="py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                    <p className="font-medium truncate">{doc.title}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {doc.doc_type} · {doc.department} · v{doc.version}
+                    {doc.client_id != null && ` · client #${doc.client_id}`} ·{" "}
+                    {formatDate(doc.created_at)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {statusBadge(doc.approval_status)}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleViewDocument(doc.id, token)}
+                    className="text-xs"
+                  >
+                    <FileText className="h-3.5 w-3.5 mr-1" />
+                    View
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {documents.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No documents yet.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Users tab
+// ---------------------------------------------------------------------------
+
+function UsersTab({ token }: { token: string }) {
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({
+    email: "",
+    password: "",
+    full_name: "",
+    role: "loan_officer",
+    department: "general",
+  });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await listUsers(token);
+      setUsers(res.users);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load users");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await createUser(
+        {
+          email: form.email,
+          password: form.password,
+          full_name: form.full_name || null,
+          role: form.role,
+          department: form.department,
+        },
+        token
+      );
+      setShowCreate(false);
+      setForm({ email: "", password: "", full_name: "", role: "loan_officer", department: "general" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create user");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {users.length} staff users
+        </p>
+        <Button type="button" size="sm" onClick={() => setShowCreate(true)}>
+          <UserPlus className="h-3.5 w-3.5 mr-1.5" />
+          New user
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="divide-y divide-border">
+            {users.map((user) => (
+              <div key={user.id} className="py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">
+                    {user.full_name || user.email}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{user.email}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Badge variant="outline">{user.role}</Badge>
+                  <Badge variant="outline">{user.department}</Badge>
+                  {!user.is_active && <Badge variant="destructive">inactive</Badge>}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create staff user</DialogTitle>
+            <DialogDescription>
+              Staff can search the knowledge base scoped to their department and
+              assigned clients.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="user-email">Email</Label>
+              <Input
+                id="user-email"
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="user-fullname">Full name</Label>
+              <Input
+                id="user-fullname"
+                value={form.full_name}
+                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="user-password">Password</Label>
+              <Input
+                id="user-password"
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Role</Label>
+                <Select
+                  value={form.role}
+                  onValueChange={(v) => setForm({ ...form, role: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">admin</SelectItem>
+                    <SelectItem value="loan_officer">loan_officer</SelectItem>
+                    <SelectItem value="underwriter">underwriter</SelectItem>
+                    <SelectItem value="processor">processor</SelectItem>
+                    <SelectItem value="viewer">viewer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Department</Label>
+                <Select
+                  value={form.department}
+                  onValueChange={(v) => setForm({ ...form, department: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">general</SelectItem>
+                    <SelectItem value="loans">loans</SelectItem>
+                    <SelectItem value="underwriting">underwriting</SelectItem>
+                    <SelectItem value="hr">hr</SelectItem>
+                    <SelectItem value="legal">legal</SelectItem>
+                    <SelectItem value="operations">operations</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={saving || !form.email || !form.password}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4 mr-1.5" />}
+              Create user
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Clients tab
+// ---------------------------------------------------------------------------
+
+function ClientsTab({ token }: { token: string }) {
+  const [clients, setClients] = useState<AdminClient[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ email: "", password: "", full_name: "" });
+  const [saving, setSaving] = useState(false);
+  const [assignClientId, setAssignClientId] = useState<number | null>(null);
+  const [assignUserId, setAssignUserId] = useState<string>("");
+  const [assigning, setAssigning] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [clientsRes, usersRes] = await Promise.all([
+        listClients(token),
+        listUsers(token),
+      ]);
+      setClients(clientsRes.clients);
+      setUsers(usersRes.users);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load clients");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await createClient(
+        { email: form.email, password: form.password, full_name: form.full_name || null },
+        token
+      );
+      setShowCreate(false);
+      setForm({ email: "", password: "", full_name: "" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create client");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAssign = async () => {
+    if (assignClientId == null || !assignUserId) return;
+    setAssigning(true);
+    setError(null);
+    try {
+      await assignStaffToClient(assignClientId, Number(assignUserId), token);
+      setAssignClientId(null);
+      setAssignUserId("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to assign staff");
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">{clients.length} clients</p>
+        <Button type="button" size="sm" onClick={() => setShowCreate(true)}>
+          <UserPlus className="h-3.5 w-3.5 mr-1.5" />
+          New client
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="divide-y divide-border">
+            {clients.map((client) => (
+              <div key={client.id} className="py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">
+                    {client.full_name || client.email}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{client.email}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {!client.is_active && <Badge variant="destructive">inactive</Badge>}
+                  <Dialog
+                    open={assignClientId === client.id}
+                    onOpenChange={(open) => !open && setAssignClientId(null)}
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAssignClientId(client.id);
+                        setAssignUserId("");
+                      }}
+                    >
+                      <Users className="h-3.5 w-3.5 mr-1.5" />
+                      Assign staff
+                    </Button>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Assign staff to client</DialogTitle>
+                        <DialogDescription>
+                          {client.full_name || client.email} — assigned staff
+                          can see this client&apos;s documents in search.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-2">
+                        <Label>Staff user</Label>
+                        <Select value={assignUserId} onValueChange={setAssignUserId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a staff user" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {users.map((u) => (
+                              <SelectItem key={u.id} value={String(u.id)}>
+                                {u.full_name || u.email}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setAssignClientId(null)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={handleAssign}
+                          disabled={assigning || !assignUserId}
+                        >
+                          {assigning ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Users className="h-4 w-4 mr-1.5" />
+                          )}
+                          Assign
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </div>
+            ))}
+            {clients.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No clients yet.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create client account</DialogTitle>
+            <DialogDescription>
+              Clients log in via the Client tab on the sign-in page and see only
+              their own data.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="client-email">Email</Label>
+              <Input
+                id="client-email"
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="client-fullname">Full name</Label>
+              <Input
+                id="client-fullname"
+                value={form.full_name}
+                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="client-password">Password</Label>
+              <Input
+                id="client-password"
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                required
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={saving || !form.email || !form.password}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4 mr-1.5" />}
+              Create client
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Analytics tab
+// ---------------------------------------------------------------------------
+
+function BarChart({
+  data,
+  valueKey,
+  labelKey,
+  color = "bg-primary",
+  emptyLabel,
+}: {
+  data: { [k: string]: string | number }[];
+  valueKey: string;
+  labelKey: string;
+  color?: string;
+  emptyLabel: string;
+}) {
+  const max = Math.max(1, ...data.map((d) => Number(d[valueKey])));
+  if (data.length === 0) {
+    return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {data.map((d, i) => {
+        const value = Number(d[valueKey]);
+        const width = Math.max(4, (value / max) * 100);
+        return (
+          <div key={i} className="flex items-center gap-3">
+            <span className="w-32 shrink-0 truncate text-xs text-muted-foreground capitalize">
+              {String(d[labelKey])}
+            </span>
+            <div className="flex-1 h-5 bg-muted rounded overflow-hidden">
+              <div
+                className={`h-full ${color} rounded`}
+                style={{ width: `${width}%` }}
+              />
+            </div>
+            <span className="w-8 shrink-0 text-right text-xs font-medium">
+              {value}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AnalyticsTab({ token }: { token: string }) {
+  const [gaps, setGaps] = useState<KnowledgeGap[]>([]);
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [res, summaryRes] = await Promise.all([
+        getKnowledgeGaps(token),
+        getAnalyticsSummary(token),
+      ]);
+      setGaps(res.knowledge_gaps);
+      setSummary(summaryRes.summary);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load analytics");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const statCards = [
+    {
+      label: "Total gaps",
+      value: summary ? summary.total_gaps.toLocaleString() : "—",
+    },
+    {
+      label: "Last 14 days",
+      value: summary
+        ? summary.by_day.reduce((acc, d) => acc + d.count, 0).toLocaleString()
+        : "—",
+    },
+    {
+      label: "Low confidence",
+      value: summary ? summary.low_confidence_count.toLocaleString() : "—",
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Queries that returned no answer or low confidence — candidates for new
+          or updated documents.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {statCards.map((s) => (
+              <Card key={s.label}>
+                <CardHeader className="pb-1">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    {s.label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold">{s.value}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Gaps by intent</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <BarChart
+                  data={summary?.by_intent ?? []}
+                  valueKey="count"
+                  labelKey="intent"
+                  emptyLabel="No knowledge gaps recorded yet."
+                />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Gaps per day (last 14 days)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <BarChart
+                  data={summary?.by_day ?? []}
+                  valueKey="count"
+                  labelKey="date"
+                  color="bg-amber-500"
+                  emptyLabel="No knowledge gaps in the last 14 days."
+                />
+              </CardContent>
+            </Card>
+          </div>
+
+          {gaps.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <ShieldAlert className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                <p className="font-medium">No knowledge gaps recorded</p>
+                <p className="text-sm text-muted-foreground">
+                  Queries that miss the knowledge base will show up here.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="divide-y divide-border">
+                {gaps.map((gap) => (
+                  <div key={gap.id} className="py-3">
+                    <p className="font-medium">{gap.query}</p>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                      {gap.intent && <Badge variant="outline">{gap.intent}</Badge>}
+                      {gap.confidence != null && (
+                        <span>confidence {Math.round(gap.confidence * 100)}%</span>
+                      )}
+                      <span>{formatDate(gap.created_at)}</span>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin page shell
+// ---------------------------------------------------------------------------
+
+export default function AdminPage() {
+  const router = useRouter();
+  const [token, setToken] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const t = getToken();
+    const claims = t ? decodeToken(t) : null;
+    if (!t || claims?.role !== "admin") {
+      router.replace("/login");
+      return;
+    }
+    setToken(t);
+    setIsAdmin(true);
+  }, [router]);
+
+  const handleLogout = useCallback(() => {
+    clearToken();
+    router.push("/login");
+  }, [router]);
+
+  if (!isAdmin || !token) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground">
+              <LayoutDashboard className="w-4 h-4" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-foreground">Asto Admin</h1>
+              <p className="text-xs text-muted-foreground -mt-0.5">
+                Approvals · Documents · Users · Clients
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/">
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Ask Asto
+              </Link>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign out
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-4 py-8">
+        <Tabs defaultValue="approvals">
+          <TabsList className="grid w-full grid-cols-5">
+            <TabsTrigger value="approvals">Approvals</TabsTrigger>
+            <TabsTrigger value="documents">Documents</TabsTrigger>
+            <TabsTrigger value="users">Users</TabsTrigger>
+            <TabsTrigger value="clients">Clients</TabsTrigger>
+            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          </TabsList>
+          <TabsContent value="approvals">
+            <ApprovalsTab token={token} />
+          </TabsContent>
+          <TabsContent value="documents">
+            <DocumentsTab token={token} />
+          </TabsContent>
+          <TabsContent value="users">
+            <UsersTab token={token} />
+          </TabsContent>
+          <TabsContent value="clients">
+            <ClientsTab token={token} />
+          </TabsContent>
+          <TabsContent value="analytics">
+            <AnalyticsTab token={token} />
+          </TabsContent>
+        </Tabs>
+      </main>
+
+      <footer className="border-t border-border py-4">
+        <div className="max-w-5xl mx-auto px-4 flex items-center gap-2 text-xs text-muted-foreground">
+          <Sparkles className="w-3.5 h-3.5" />
+          Asto — every decision here is written to the audit trail.
+        </div>
+      </footer>
+    </div>
+  );
+}
