@@ -291,6 +291,7 @@ export interface ClientDocument {
   doc_type: string;
   department: string;
   version: number;
+  property_id: number | null;
   created_at: string | null;
 }
 
@@ -340,6 +341,41 @@ export async function getClientDocuments(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to load documents');
+  }
+  return response.json();
+}
+
+export async function getClientPropertyDocuments(
+  propertyId: number,
+  token: string
+): Promise<{ documents: ClientDocument[] }> {
+  const response = await fetch(
+    `${API_BASE_URL}/client/properties/${propertyId}/documents`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load property documents');
+  }
+  return response.json();
+}
+
+export async function clientUploadDocument(
+  file: File,
+  token: string,
+  propertyId?: number | null
+): Promise<{ message: string; filename: string; stored_as: string; size_bytes: number; property_id: number | null }> {
+  const form = new FormData();
+  form.append('file', file);
+  const query = propertyId != null ? `?property_id=${propertyId}` : '';
+  const response = await fetch(`${API_BASE_URL}/client/documents/upload${query}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Upload failed');
   }
   return response.json();
 }

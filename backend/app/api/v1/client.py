@@ -5,6 +5,7 @@ A client can only ever see their OWN data:
 - their own properties (/client/properties)
 - their own cases/mortgages (/client/cases)
 - their own approved documents (/client/documents)
+- upload their own documents (/client/documents/upload, pending→approval)
 
 Scoping is enforced by ``client_id`` from the JWT identity resolution
 (dependencies.get_current_user) — never taken from a request body.
@@ -12,13 +13,19 @@ Scoping is enforced by ``client_id`` from the JWT identity resolution
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
+from app.config import settings
 from app.db.postgres.session import acquire
 from app.dependencies import require_auth
 from app.db.postgres.models import client_row_to_dict, case_row_to_dict
 from app.documents.file_serve import resolve_stored_file
+from app.documents.validation import validate_upload
 
 router = APIRouter()
 
@@ -29,6 +36,23 @@ def _require_client(user: dict) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This endpoint is for client accounts only",
+        )
+
+
+def _assert_owns_property(user: dict, property_id: int) -> None:
+    """404 unless the authenticated client owns the property."""
+    with acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM properties "
+                "WHERE id = %s AND client_id = %s AND is_active = true",
+                (property_id, user["client_id"]),
+            )
+            owned = cur.fetchone()
+    if owned is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Property not found",
         )
 
 
@@ -96,8 +120,8 @@ async def client_documents(user: dict = Depends(require_auth)) -> dict:
     with acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, title, source_path, doc_type, department, version, "
-                "created_at "
+                "SELECT id, title, source_path, doc_type, department, "
+                "version, property_id, created_at "
                 "FROM documents "
                 "WHERE client_id = %s AND is_active = true AND is_approved = true "
                 "ORDER BY created_at DESC",
@@ -106,6 +130,91 @@ async def client_documents(user: dict = Depends(require_auth)) -> dict:
             documents = [dict(row) for row in cur.fetchall()]
 
     return {"documents": documents}
+
+
+@router.get("/properties/{property_id}/documents")
+async def client_property_documents(
+    property_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return a client's own approved documents for a specific property."""
+    _require_client(user)
+    _assert_owns_property(user, property_id)
+    with acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, title, source_path, doc_type, department, "
+                "version, property_id, created_at "
+                "FROM documents "
+                "WHERE client_id = %s AND property_id = %s "
+                "AND is_active = true AND is_approved = true "
+                "ORDER BY created_at DESC",
+                (user["client_id"], property_id),
+            )
+            documents = [dict(row) for row in cur.fetchall()]
+
+    return {"documents": documents}
+
+
+@router.post("/documents/upload")
+async def client_upload_document(
+    file: UploadFile = File(...),
+    property_id: int | None = None,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Accept a client's document upload.
+
+    Per CLAUDE.md rule 5: validates and writes to ``storage/pending/``
+    only — ingestion runs separately. A ``<uuid>.meta.json`` sidecar
+    carries the ``client_id``/``property_id`` so the batch ingestion can
+    scope the indexed document. The document enters the approval queue as
+    pending and is searchable only after an admin approves it.
+    """
+    _require_client(user)
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No filename provided",
+        )
+
+    if property_id is not None:
+        _assert_owns_property(user, property_id)
+
+    file_size = 0
+    content = b""
+    while chunk := await file.read(8192):
+        file_size += len(chunk)
+        content += chunk
+
+    result = validate_upload(file.filename, file_size)
+    if not result.valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.error,
+        )
+
+    pending_dir = Path(settings.storage_pending_dir)
+    pending_dir.mkdir(parents=True, exist_ok=True)
+
+    token = uuid.uuid4().hex
+    unique_name = f"{token}_{file.filename}"
+    dest = pending_dir / unique_name
+    dest.write_bytes(content)
+
+    sidecar = pending_dir / f"{token}.meta.json"
+    sidecar.write_text(
+        json.dumps({"client_id": user["client_id"], "property_id": property_id}),
+        encoding="utf-8",
+    )
+
+    return {
+        "message": "File uploaded successfully and queued for indexing",
+        "filename": file.filename,
+        "stored_as": str(dest),
+        "size_bytes": file_size,
+        "property_id": property_id,
+    }
 
 
 @router.get("/documents/{document_id}/file")

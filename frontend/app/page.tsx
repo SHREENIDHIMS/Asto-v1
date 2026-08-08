@@ -56,7 +56,18 @@ export default function ChatPage() {
 
     if (!token) {
       router.replace("/login");
+      return;
     }
+    // Auto-route each identity to its own interface.
+    if (claims?.audience === "client") {
+      router.replace("/client");
+      return;
+    }
+    if (claims?.role === "admin") {
+      router.replace("/admin");
+      return;
+    }
+    // Staff (non-admin) stay on the staff chat.
   }, [router]);
 
   useEffect(() => {

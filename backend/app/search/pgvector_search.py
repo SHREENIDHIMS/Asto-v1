@@ -18,11 +18,20 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def _get_embedding_model() -> TextEmbedding:
-    """Lazily load and cache the FastEmbed model."""
+    """Lazily load and cache the FastEmbed model.
+
+    local_files_only=True so the serving process never re-downloads the model
+    at request time (the model is baked into the image; re-downloads inside the
+    memory-capped container cause transient spikes that crash the process with
+    ERR_EMPTY_RESPONSE). fastembed 0.8.0 still logs a spurious "local file sizes
+    do not match the metadata" warning with this flag, but it skips the actual
+    download and embeds from the baked cache.
+    """
     logger.info("Loading embedding model: %s", settings.embedding_model)
     model = TextEmbedding(
         model_name=settings.embedding_model,
         cache_dir=settings.embedding_cache_dir,
+        local_files_only=True,
     )
     return model
 

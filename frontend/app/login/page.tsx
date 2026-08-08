@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { login, clientLogin } from "@/lib/api-client";
-import { storeToken } from "@/lib/auth";
+import { decodeToken, storeToken } from "@/lib/auth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -33,7 +33,15 @@ export default function LoginPage() {
           ? await login(email, password)
           : await clientLogin(email, password);
       storeToken(result.access_token);
-      router.push("/");
+      // Auto-identify the user and route them to their own interface.
+      const claims = decodeToken(result.access_token);
+      if (claims?.audience === "client") {
+        router.push("/client");
+      } else if (claims?.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

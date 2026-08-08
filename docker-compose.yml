@@ -48,18 +48,18 @@ services:
     deploy:
       resources:
         limits:
-          memory: 200m
+          # 200m is too low: the bge-small ONNX model loads at ~208MB peak on
+          # its own; combined with uvicorn + asyncpg (~95MB) the search path
+          # peaks ~300MB under Linux cgroups and is OOM-killed mid-response
+          # (ERR_EMPTY_RESPONSE). Raised with evidence, not blindly (rule 10).
+          memory: 384m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8011/api/v1/health', timeout=5).status == 200 else 1)"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 20s
-    command: >
-      uvicorn app.main:app
-      --workers 1
-      --host 0.0.0.0
-      --port 8011
+    command: ["app.main:app", "--workers", "1", "--host", "0.0.0.0", "--port", "8011"]
 
   frontend:
     build:

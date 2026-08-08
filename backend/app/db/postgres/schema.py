@@ -88,6 +88,7 @@ DDL_STATEMENTS: list[str] = [
         doc_type        TEXT NOT NULL DEFAULT 'policy',
         department      TEXT NOT NULL DEFAULT 'general',
         client_id       BIGINT REFERENCES clients(id),
+        property_id     BIGINT REFERENCES properties(id),
         approval_status TEXT NOT NULL DEFAULT 'approved'
                          CHECK (approval_status IN ('pending','approved','rejected')),
         approved_by     BIGINT REFERENCES users(id),
@@ -173,6 +174,7 @@ DDL_STATEMENTS: list[str] = [
 # model existed (CREATE TABLE IF NOT EXISTS cannot alter an existing table).
 ALTER_STATEMENTS: list[str] = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES clients(id)",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS property_id BIGINT REFERENCES properties(id)",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES users(id)",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
@@ -206,6 +208,7 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON document_chunks USING hnsw (embedding vector_cosine_ops)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_chunks_content_hash ON document_chunks (content_hash)",
     "CREATE INDEX IF NOT EXISTS idx_documents_client ON documents (client_id)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_property ON documents (property_id)",
     "CREATE INDEX IF NOT EXISTS idx_properties_client ON properties (client_id)",
     "CREATE INDEX IF NOT EXISTS idx_cases_client ON cases (client_id)",
     "CREATE INDEX IF NOT EXISTS idx_cases_property ON cases (property_id)",

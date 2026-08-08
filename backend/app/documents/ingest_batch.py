@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -35,6 +36,25 @@ logging.basicConfig(level=settings.log_level, format="%(levelname)s %(name)s: %(
 logger = logging.getLogger(__name__)
 
 
+def _load_sidecar(file_path: Path) -> dict:
+    """Load client upload metadata from the matching ``<uuid>.meta.json`` sidecar.
+
+    Client uploads write a sidecar next to the pending file carrying
+    ``client_id`` (and optionally ``property_id``) so the batch ingestion
+    can scope the indexed document. Returns an empty dict when absent.
+    """
+    prefix = file_path.stem.split("_", 1)[0]
+    sidecar = file_path.parent / f"{prefix}.meta.json"
+    if not sidecar.exists():
+        return {}
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        logger.warning("Failed to read sidecar for %s", file_path.name)
+        return {}
+
+
 def _move_to_processed(file_path: Path) -> None:
     """Move processed file to the processed directory."""
     processed_dir = Path(settings.storage_processed_dir)
@@ -45,6 +65,14 @@ def _move_to_processed(file_path: Path) -> None:
         logger.info("Moved %s → %s", file_path, dest)
     except FileNotFoundError:
         logger.warning("File already moved: %s", file_path)
+
+    prefix = file_path.stem.split("_", 1)[0]
+    sidecar = file_path.parent / f"{prefix}.meta.json"
+    if sidecar.exists():
+        try:
+            sidecar.rename(processed_dir / sidecar.name)
+        except FileNotFoundError:
+            logger.warning("Sidecar already moved: %s", sidecar.name)
 
 
 def _try_ocr_fallback(file_path: Path, extracted: ExtractedText) -> ExtractedText | None:
@@ -123,6 +151,7 @@ def process_file(file_path: Path) -> bool:
             embeddings = None
 
     with acquire() as conn:
+        sidecar = _load_sidecar(file_path)
         result = index_document(
             conn=conn,
             doc_title=metadata.title,
@@ -131,6 +160,8 @@ def process_file(file_path: Path) -> bool:
             source_path=metadata.source_path,
             chunks=chunks,
             embeddings=embeddings,
+            client_id=sidecar.get("client_id"),
+            property_id=sidecar.get("property_id"),
         )
         logger.info(
             "Indexed %d, skipped %d for document %d",
