@@ -53,6 +53,7 @@ export default function ChatPage() {
     return raw ? Number(raw) : 0;
   });
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [prefill, setPrefill] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -133,6 +134,7 @@ export default function ChatPage() {
     setStage(null);
     setIsLoading(true);
     setError(null);
+    setPrefill(null);
 
     try {
       const token = getToken() ?? undefined;
@@ -181,6 +183,16 @@ export default function ChatPage() {
       }
     },
     [isLoading, replaceTurnResponse]
+  );
+
+  const handleOpenRecentChat = useCallback(
+    (turnId: string, query: string) => {
+      // Bring that turn into view and re-read it.
+      const el = document.getElementById(`turn-${turnId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setPrefill(query);
+    },
+    []
   );
 
   const stageLabel =
@@ -244,7 +256,7 @@ export default function ChatPage() {
                       <button
                         type="button"
                         className="flex-1 justify-start gap-2 font-normal text-sm h-8 px-2 text-left rounded-md hover:bg-muted"
-                        onDoubleClick={() => {}}
+                        onClick={() => handleOpenRecentChat(t.id, t.query)}
                         title={t.query}
                       >
                         <span className="truncate text-xs">
@@ -290,7 +302,7 @@ export default function ChatPage() {
           {turns.length > 0 && (
             <div className="space-y-8 mt-4">
               {turns.map((turn) => (
-                <div key={turn.id} className="relative group">
+                <div key={turn.id} id={`turn-${turn.id}`} className="relative group">
                   <ChatMessage
                     turn={turn}
                     onRegenerate={() => handleRegenerateTurn(turn.id, turn.query)}
@@ -383,6 +395,7 @@ export default function ChatPage() {
             onSearch={handleSearch}
             isLoading={isLoading}
             placeholder="Ask about requirements, policies, or documents..."
+            prefill={prefill ?? undefined}
           />
         </div>
       </div>

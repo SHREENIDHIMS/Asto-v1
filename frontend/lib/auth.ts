@@ -31,23 +31,26 @@ export function decodeToken(token: string): TokenClaims | null {
   }
 }
 
-export function storeToken(token: string): void {
-  if (typeof window !== 'undefined') {
+export function storeToken(token: string, remember: boolean = true): void {
+  if (typeof window === 'undefined') return;
+  if (remember) {
     localStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.removeItem(TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(TOKEN_KEY);
   }
 }
 
 export function getToken(): string | null {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem(TOKEN_KEY);
-  }
-  return null;
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function clearToken(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(TOKEN_KEY);
-  }
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
 export async function getSession(): Promise<UserSession | null> {

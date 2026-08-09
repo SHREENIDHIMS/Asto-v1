@@ -32,7 +32,7 @@ export default function LoginPage() {
         tab === "staff"
           ? await login(email, password)
           : await clientLogin(email, password);
-      storeToken(result.access_token);
+      storeToken(result.access_token, rememberMe);
       // Auto-identify the user and route them to their own interface.
       const claims = decodeToken(result.access_token);
       if (claims?.audience === "client") {
@@ -137,6 +137,17 @@ export default function LoginPage() {
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
+
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="staff-remember"
+                  checked={rememberMe}
+                  onCheckedChange={(checked) => setRememberMe(checked === true)}
+                />
+                <Label htmlFor="staff-remember" className="font-normal text-muted-foreground">
+                  Remember me
+                </Label>
+              </div>
 
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}

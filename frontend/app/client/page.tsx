@@ -875,8 +875,7 @@ export default function ClientPage() {
         const result: SearchResponse = await searchKnowledgeBaseStream(
           q,
           t,
-          (s) => setChatStage(s),
-          cases[0]?.id ?? null
+          (s) => setChatStage(s)
         );
         sessions.appendTurn(sid, q, result, urgency);
         setChatPending(null);
@@ -893,7 +892,7 @@ export default function ClientPage() {
         setRegeneratingTurnId(null);
       }
     },
-    [chatLoading, sessions, cases]
+    [chatLoading, sessions]
   );
 
   const handleRegenerateTurn = useCallback(
@@ -909,8 +908,7 @@ export default function ClientPage() {
         const result: SearchResponse = await searchKnowledgeBaseStream(
           query,
           t,
-          (s) => setChatStage(s),
-          cases[0]?.id ?? null
+          (s) => setChatStage(s)
         );
         // Replace the assistant response in place — do not append.
         sessions.replaceTurnResponse(sid, turnId, result);
@@ -923,7 +921,7 @@ export default function ClientPage() {
         setChatStage(null);
       }
     },
-    [chatLoading, sessions, cases]
+    [chatLoading, sessions]
   );
 
   // Session auto-timeout (client-side idle timer). 0 = disabled.
