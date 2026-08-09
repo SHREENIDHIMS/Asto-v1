@@ -35,7 +35,9 @@
   shadcn/ui, client-side JWT. Chat view at `/` (bubbles, 24h localStorage
   history), Staff/Client login tabs, client portal at `/portal`, admin
   dashboard at `/admin` (approvals, documents+upload, users, clients,
-  analytics). No SSE streaming yet.
+  analytics). True SSE streaming (Session 6): `POST /search/stream` pushes
+  `status` → `fact`/`sentence` → `result` events as content is produced;
+  staff + client chat render facts/sentences progressively.
 - **Storage:** One Postgres per host, one database per project
   (`asto_assistant`). NO Qdrant / Redis / MinIO (deliberately removed).
 - **Ingestion:** Batch-only (`ingest_batch.py`), never in the request path.
@@ -80,11 +82,13 @@ to these ports.
 3. ~~**Client (external) auth**~~ — client login, audience-scoped JWT, client endpoints
    implemented (Session 3).
 4. ~~**ChatGPT-style chat UX**~~ — **DONE (Session 4):** chat thread view at `/`,
-   assistant bubbles, 24h localStorage history, typing indicator. True token
-   streaming (SSE) not started — deliberate carry-over.
+   assistant bubbles, 24h localStorage history, typing indicator. True SSE
+   streaming **DONE (Session 6):** `/search/stream` pushes `status`/`fact`/
+   `sentence`/`result` events progressively; staff + client chat render them.
 5. ~~**Admin dashboard**~~ — **DONE (Session 4):** `/admin` with approvals queue,
    documents + upload, users, clients + assignments, knowledge-gap analytics.
-   No charts — analytics tab shows the raw knowledge-gap list.
+   Document view/download verified live (Session 6). Analytics *endpoints*
+   verified live; a chart UI for the analytics tab is still a carry-over.
 6. ~~**Runtime verification**~~ — **DONE (Session 2):** `.venv` (3.11) installed,
    unit (107) + integration (7) tests pass, compose up healthy, benchmark run.
 
@@ -193,9 +197,61 @@ to these ports.
   document view/download; client portal has no document open/download; the
   deployed frontend still uses the baked-in `localhost:8011` API base.
 
-### Session 3 — 2026-08-08
+### Session 6 — 2026-08-10 (True SSE streaming + document view/download + analytics verification)
 
-**Done (Phase B3 + Phase C — approval workflow + client auth backend):**
+**Done (Phase D carry-overs closed):**
+- **Verified document view/download (#2):** admin `GET /documents/{id}/file`
+  and client `GET /client/documents/{id}/file` both serve stored files (admin
+  resolve confirmed 200 with the stored file). Seeded demo docs reference
+  `/docs/*.pdf` that were never placed in storage, so those rows 404 — the
+  endpoint logic is correct and works whenever a real file is on disk
+  (`documents/file_serve.py` searches processed/ then pending/ by basename).
+- **Verified analytics (#3):** `GET /analytics/summary` + `/analytics/knowledge-gaps`
+  live on `admin@asto.local` (empty until real gaps accumulate — gap logging is
+  wired into the pipeline).
+- **True SSE streaming (backend):** replaced the "streaming-lite" buffered
+  stream in `api/v1/search.py`. `_run_pipeline` now emits typed events via a
+  `(event_type, data)` callback; `POST /search/stream` runs the sync pipeline
+  in a worker thread (`asyncio.to_thread`) draining an `asyncio.Queue` so each
+  event is flushed as soon as it is produced — no more single buffered payload.
+  Event order: `status` (processing/searching/ranking/packaging/done) →
+  one `fact` event per structured-fact row (fact path) or one `sentence`
+  event per extractive summary sentence (document path) → `result` (same
+  payload as the sync endpoint) → `error` on failure. No LLM, no generated
+  text — every streamed item is a verbatim retrieved value.
+- **Frontend streaming UI:** `lib/api-client.ts`
+  `searchKnowledgeBaseStream` now takes a handlers object
+  (`onStage`/`onFact`/`onSentence`); new
+  `components/chat/StreamingPreview.tsx` renders the stage label plus facts /
+  summary sentences as they arrive; wired into the staff chat (`/`) and client
+  chat (`/client`) loading bubbles (reset on new search/regenerate, replaced by
+  the full `ChatMessage` when `result` lands). Staff page supports case-context
+  fact streaming; client page streams own-case facts + document summaries.
+- **Tests:** new integration tests — `test_fact_path_integration.py`
+  `test_stream_emits_fact_events_then_result` (SSE stream: statuses → fact
+  events → result, one fact event per fact, verbatim values + sources) and
+  `test_end_to_end.py` `test_document_path_stream_emits_sentence_events`
+  (sentence events == summary rows). Full suite: **311 passed**
+  (unit + integration, live Postgres).
+- **Live verification:** rebuilt `asto-backend` + `frontend`, recreated both.
+  Client fact query over `/search/stream` returned
+  status → 5 fact events → result; admin document query returned
+  status → 2 sentence events → result; sync `/search/` still returns a full
+  package (routing=answer, confidence 100). Frontend container serves the
+  `StreamingPreview` chunk.
+- **Build hygiene:** `npm run build` clean, `tsc --noEmit` clean, ESLint clean
+  on changed files.
+
+**Not done / carry to next session:**
+- Admin dashboard still shows only the raw knowledge-gap list (no charts yet) —
+  the analytics *endpoints* are verified; a chart UI is the remaining piece.
+- Seeded demo docs have no real source files on disk (they 404 on view) —
+  either place PDFs in `storage/processed/` matching their basenames or upload
+  fresh docs to see view/download end-to-end.
+- Phase E docs (README/design-doc) not re-touched for streaming; this entry is
+  the record.
+
+
 - **Approval workflow (B3):**
   - `indexing.py` now inserts documents/chunks with `approval_status='pending'`,
     `is_approved=false` by default (opt-in `approval_status="approved"` for seed/backfill).

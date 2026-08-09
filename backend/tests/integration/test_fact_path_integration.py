@@ -398,6 +398,81 @@ class TestFactPathIntegration:
         assert status_fact["value"] == "under_review"
         assert status_fact["source"].startswith("cases#")
 
+    def test_stream_emits_fact_events_then_result(self, fact_db):
+        """SSE stream pushes a ``fact`` event per fact, then ``result``."""
+        from fastapi.testclient import TestClient
+
+        from app.dependencies import require_auth
+        from app.main import app
+
+        app.dependency_overrides[require_auth] = lambda: _client_user(fact_db["client1"])
+        try:
+            client = TestClient(app)
+            with client.stream(
+                "POST",
+                "/api/v1/search/stream",
+                json={
+                    "query": "what is the current status of my application?",
+                    "case_id": fact_db["case1"],
+                },
+            ) as response:
+                body = "".join(response.iter_text())
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+        events = [
+            part
+            for part in body.split("\n\n")
+            if part.strip()
+        ]
+        import json
+
+        event_types = []
+        stages = []
+        fact_events = []
+        result_event = None
+        for part in events:
+            lines = part.splitlines()
+            event = next(
+                (l[len("event: ") :] for l in lines if l.startswith("event: ")),
+                "message",
+            )
+            data = next(
+                (l[len("data: ") :] for l in lines if l.startswith("data: ")),
+                None,
+            )
+            event_types.append(event)
+            if event == "status":
+                stages.append(json.loads(data)["stage"])
+            elif event == "fact":
+                fact_events.append(data)
+            elif event == "result":
+                result_event = data
+
+        # Status progression comes first.
+        assert event_types[0] == "status"
+        assert "packaging" in stages
+        assert event_types[-1] == "result"
+
+        # One fact event per fact, each a verbatim retrieved row.
+        assert len(fact_events) >= 3
+
+        status_fact = next(
+            json.loads(e) for e in fact_events
+            if json.loads(e)["label"] == "Status"
+        )
+        assert status_fact["value"] == "under_review"
+        assert status_fact["source"].startswith("cases#")
+
+        # The final result carries the same package as the sync endpoint.
+        result = json.loads(result_event)
+        assert result["retrieval_path"] == "structured_fact"
+        assert result["routing"] == "answer"
+        assert len(result["facts"]) == len(fact_events)
+
     def test_ambiguous_personal_query_returns_clarify_chips(self, fact_db):
         """A personal-but-ambiguous query asks to rephrase with click-to-ask chips."""
         from app.query_processing.fact_path import CLARIFY_PROMPT, run_fact_path

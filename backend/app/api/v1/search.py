@@ -13,14 +13,20 @@ Every response field traces back verbatim to a source chunk.
 
 ``POST /search/``  â€” plain JSON request/response.
 ``POST /search/stream`` â€” SSE (text/event-stream) version that emits
-``status`` events as the pipeline advances, then one ``result`` event
-with the same payload as the sync endpoint. This is "streaming-lite":
-there is no token generation in this system (answers are composed from
-retrieved excerpts), so the stream is progress, not characters.
+content as it is produced: ``status`` events as the pipeline advances,
+``fact`` events per resolved fact row (fact path), ``sentence`` events per
+extractive summary sentence (document path), then one ``result`` event with
+the same payload as the sync endpoint.
+
+This is "true" streaming in the sense that content is pushed progressively
+as it becomes available (a client can render each fact/sentence as it
+arrives), not a single buffered payload. There is still no LLM and no
+generated text: every streamed item is a verbatim retrieved value.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Annotated, Callable
@@ -182,12 +188,20 @@ def _run_pipeline(
     query: str,
     user: dict,
     case_id: int | None = None,
-    emit: Callable[[str], None] | None = None,
+    emit: Callable[[str, dict], None] | None = None,
 ) -> SearchResponse:
     """Execute the full search pipeline and return a SearchResponse.
 
-    ``emit`` (optional) is called with a stage name at each pipeline
-    phase so the streaming endpoint can report progress.
+    ``emit`` (optional) is called with ``(event_type, data)`` at each
+    pipeline phase and for each produced fact/summary sentence so the
+    streaming endpoint can push content progressively:
+
+    - ``("status", {"stage": ...})`` as the pipeline advances
+    - ``("fact", {label, value, source, kind, retrieved_at})`` per fact row
+      on the structured-fact path
+    - ``("sentence", {text, source})`` per extractive summary sentence on
+      the document path
+    - ``("done", {})`` when packaging is complete
 
     The structured-fact path (if the query matches a fact intent and a
     case context exists) short-circuits the document search â€” see
@@ -195,8 +209,11 @@ def _run_pipeline(
     """
     start_ms = time.time() * 1000
 
-    if emit:
-        emit("processing")
+    def status(stage: str) -> None:
+        if emit:
+            emit("status", {"stage": stage})
+
+    status("processing")
     plan = process_query(query)
 
     if not plan.sub_queries:
@@ -207,8 +224,7 @@ def _run_pipeline(
 
     # Structured-fact path â€” deterministic SQL, no vector search. Falls
     # through to the document path when run_fact_path returns None.
-    if emit:
-        emit("searching")
+    status("searching")
     with session.acquire() as conn:
         fact_package = run_fact_path(
             conn=conn,
@@ -220,8 +236,7 @@ def _run_pipeline(
         )
 
     if fact_package is not None:
-        if emit:
-            emit("packaging")
+        status("packaging")
 
         latency_ms = time.time() * 1000 - start_ms
         _log_audit(
@@ -235,9 +250,12 @@ def _run_pipeline(
             latency_ms=round(latency_ms, 1),
         )
 
-        if emit:
-            emit("done")
-        return SearchResponse(**_serialize(fact_package))
+        payload = _serialize(fact_package)
+        for f in payload["facts"]:
+            if emit:
+                emit("fact", f)
+        status("done")
+        return SearchResponse(**payload)
 
     with session.acquire() as conn:
         result = search_knowledge_base(
@@ -259,8 +277,7 @@ def _run_pipeline(
         reverse=True,
     )
 
-    if emit:
-        emit("ranking")
+    status("ranking")
     ranked = rank_fusion(
         bm25_ranked=bm25_ranked,
         vector_ranked=vector_ranked,
@@ -287,8 +304,7 @@ def _run_pipeline(
             key=lambda c: rerank_order.get(c.chunk_id, len(rerank_order)),
         )
 
-    if emit:
-        emit("packaging")
+    status("packaging")
     user_depts = resolve_user_departments(user)
     package = build_response_package(
         candidates=ranked,
@@ -348,8 +364,10 @@ def _run_pipeline(
 
     payload = _serialize(package)
 
-    if emit:
-        emit("done")
+    for s in payload["summary"]:
+        if emit:
+            emit("sentence", {"text": s["text"], "source": s.get("source")})
+    status("done")
     return SearchResponse(**payload)
 
 
@@ -371,25 +389,58 @@ async def search_stream(
     request: SearchRequest,
     user: Annotated[dict, Depends(require_auth)],
 ) -> StreamingResponse:
-    """Search with SSE progress events, then a final ``result`` event.
+    """Search with SSE events pushed progressively as content is produced.
 
-    Events: ``status`` (stage), ``result`` (full package), ``error``.
+    Events emitted in order:
+    - ``status``  — pipeline stage (``processing``, ``searching``,
+      ``ranking``, ``packaging``, ``done``)
+    - ``fact``    — one event per resolved fact (structured-fact path),
+      payload ``{label, value, source, kind, retrieved_at}``
+    - ``sentence``— one event per extractive summary sentence (document
+      path), payload ``{text, source}``
+    - ``result``  — the complete ``SearchResponse`` (identical payload to
+      the sync endpoint)
+    - ``error``   — on failure (with ``detail``)
+
+    Content is flushed to the client as soon as each item is produced
+    (progressive render, not a single buffered payload).
     """
-    stage_events: list[str] = []
+    queue: asyncio.Queue = asyncio.Queue()
 
-    def emit(stage: str) -> None:
-        stage_events.append(_sse_event("status", {"stage": stage}))
+    def emit(event_type: str, data: dict) -> None:
+        queue.put_nowait((event_type, data))
+
+    async def producer():
+        try:
+            # Run the synchronous pipeline in a worker thread so the event
+            # loop stays free and the generator can drain the queue as each
+            # event is produced (progressive flush). ``emit`` is invoked
+            # from that thread; Queue.put_nowait is thread-safe.
+            result = await asyncio.to_thread(
+                _run_pipeline,
+                request.query,
+                user,
+                case_id=request.case_id,
+                emit=emit,
+            )
+            queue.put_nowait(("result", result))
+        except HTTPException as exc:
+            queue.put_nowait(("error", {"detail": exc.detail}))
+        except Exception as exc:  # pragma: no cover - defensive
+            queue.put_nowait(("error", {"detail": f"Search failed: {exc}"}))
 
     async def gen():
-        try:
-            result = _run_pipeline(request.query, user, case_id=request.case_id, emit=emit)
-            for event in stage_events:
-                yield event
-            yield _sse_event("result", result.model_dump())
-        except HTTPException as exc:
-            yield _sse_event("error", {"detail": exc.detail})
-        except Exception as exc:  # pragma: no cover - defensive
-            yield _sse_event("error", {"detail": f"Search failed: {exc}"})
+        task = asyncio.ensure_future(producer())
+        while True:
+            event_type, data = await queue.get()
+            if event_type == "result":
+                yield _sse_event("result", data.model_dump())
+                break
+            if event_type == "error":
+                yield _sse_event("error", data)
+                break
+            yield _sse_event(event_type, data)
+        task.cancel()
 
     return StreamingResponse(
         gen(),

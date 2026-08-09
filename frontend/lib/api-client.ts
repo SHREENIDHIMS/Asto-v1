@@ -93,15 +93,30 @@ export type SearchStage =
   | 'packaging'
   | 'done';
 
+/** A summary sentence pushed mid-stream (verbatim retrieved text). */
+export interface StreamedSentence {
+  text: string;
+  source: SearchSummarySentence['source'];
+}
+
+export interface SearchStreamHandlers {
+  onStage?: (stage: SearchStage) => void;
+  onFact?: (fact: StructuredFact) => void;
+  onSentence?: (sentence: StreamedSentence) => void;
+}
+
 /**
- * Streaming-lite search: reads the SSE stream from /search/stream,
- * invoking onStage for each progress event and resolving with the final
- * SearchResponse from the result event.
+ * True streaming search: reads the SSE stream from /search/stream,
+ * invoking handlers progressively as content is produced:
+ * - onStage for each pipeline stage,
+ * - onFact per structured fact (fact path),
+ * - onSentence per extractive summary sentence (document path),
+ * resolving with the final SearchResponse from the result event.
  */
 export async function searchKnowledgeBaseStream(
   query: string,
   token: string | undefined,
-  onStage?: (stage: SearchStage) => void,
+  handlers?: SearchStreamHandlers,
   caseId?: number | null
 ): Promise<SearchResponse> {
   const headers: Record<string, string> = {
@@ -135,8 +150,18 @@ export async function searchKnowledgeBaseStream(
     const handleEvent = (event: string, data: string) => {
       if (event === 'status') {
         const parsed = JSON.parse(data) as { stage?: SearchStage };
-        if (parsed.stage && onStage) {
-          onStage(parsed.stage);
+        if (parsed.stage && handlers?.onStage) {
+          handlers.onStage(parsed.stage);
+        }
+      } else if (event === 'fact') {
+        const fact = JSON.parse(data) as StructuredFact;
+        if (handlers?.onFact) {
+          handlers.onFact(fact);
+        }
+      } else if (event === 'sentence') {
+        const sentence = JSON.parse(data) as StreamedSentence;
+        if (handlers?.onSentence) {
+          handlers.onSentence(sentence);
         }
       } else if (event === 'result') {
         resolve(JSON.parse(data) as SearchResponse);

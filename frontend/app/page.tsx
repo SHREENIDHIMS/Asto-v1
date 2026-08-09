@@ -14,10 +14,13 @@ import {
   SearchResponse,
   SearchStage,
   StaffDashboardCase,
+  StreamedSentence,
+  StructuredFact,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken } from "@/lib/auth";
 import { useChatHistory } from "@/hooks/use-chat-history";
 import ChatMessage from "@/components/chat/ChatMessage";
+import StreamingPreview from "@/components/chat/StreamingPreview";
 import SearchBar from "@/components/search/SearchBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
 import HeroSection from "@/components/home/HeroSection";
@@ -52,6 +55,8 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [stage, setStage] = useState<SearchStage | null>(null);
+  const [streamFacts, setStreamFacts] = useState<StructuredFact[]>([]);
+  const [streamSentences, setStreamSentences] = useState<StreamedSentence[]>([]);
   const [role, setRole] = useState<string | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -158,6 +163,8 @@ export default function ChatPage() {
     if (isLoading) return;
     setPendingQuestion(q);
     setStage(null);
+    setStreamFacts([]);
+    setStreamSentences([]);
     setIsLoading(true);
     setError(null);
     setPrefill(null);
@@ -167,16 +174,24 @@ export default function ChatPage() {
       const result: SearchResponse = await searchKnowledgeBaseStream(
         q,
         token,
-        (s) => setStage(s),
+        {
+          onStage: (s) => setStage(s),
+          onFact: (f) => setStreamFacts((prev) => [...prev, f]),
+          onSentence: (s) => setStreamSentences((prev) => [...prev, s]),
+        },
         selectedCaseId
       );
       appendTurn(q, result);
       setPendingQuestion(null);
       setStage(null);
+      setStreamFacts([]);
+      setStreamSentences([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setPendingQuestion(null);
       setStage(null);
+      setStreamFacts([]);
+      setStreamSentences([]);
     } finally {
       setIsLoading(false);
       setRegeneratingId(null);
@@ -192,20 +207,30 @@ export default function ChatPage() {
       if (isLoading) return;
       setRegeneratingId(turnId);
       setError(null);
+      setStreamFacts([]);
+      setStreamSentences([]);
       try {
         const token = getToken() ?? undefined;
         const result: SearchResponse = await searchKnowledgeBaseStream(
           query,
           token,
-          (s) => setStage(s),
+          {
+            onStage: (s) => setStage(s),
+            onFact: (f) => setStreamFacts((prev) => [...prev, f]),
+            onSentence: (s) => setStreamSentences((prev) => [...prev, s]),
+          },
           selectedCaseId
         );
         // Replace the assistant response in place — do not append.
         replaceTurnResponse(turnId, result);
         setStage(null);
+        setStreamFacts([]);
+        setStreamSentences([]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
         setStage(null);
+        setStreamFacts([]);
+        setStreamSentences([]);
       } finally {
         setRegeneratingId(null);
       }
@@ -222,17 +247,6 @@ export default function ChatPage() {
     },
     []
   );
-
-  const stageLabel =
-    stage === "processing"
-      ? "Understanding your question…"
-      : stage === "searching"
-        ? "Searching internal documents…"
-        : stage === "ranking"
-          ? "Ranking the best matches…"
-          : stage === "packaging"
-            ? "Preparing your answer…"
-            : null;
 
   return (
     <>
@@ -367,22 +381,11 @@ export default function ChatPage() {
                   {pendingQuestion}
                 </div>
               </div>
-              <div className="flex gap-3">
-                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted border border-border">
-                  <Sparkles className="w-4 h-4 animate-pulse" />
-                </div>
-                <div className="rounded-2xl rounded-tl-sm border border-border bg-card p-4 shadow-sm space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
-                    <span className="text-xs text-muted-foreground">
-                      {stageLabel ?? "Working…"}
-                    </span>
-                  </div>
-                  <div className="h-3 w-40 bg-muted rounded animate-pulse" />
-                  <div className="h-3 w-64 bg-muted rounded animate-pulse" />
-                  <div className="h-3 w-52 bg-muted rounded animate-pulse" />
-                </div>
-              </div>
+              <StreamingPreview
+                stage={stage}
+                facts={streamFacts}
+                sentences={streamSentences}
+              />
             </div>
           )}
         </div>

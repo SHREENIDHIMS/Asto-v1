@@ -250,3 +250,70 @@ class TestEndToEndSearchPipeline:
         assert row["confidence"] == round(package.confidence, 1)
         assert row["outcome"] == package.routing
 
+    def test_document_path_stream_emits_sentence_events(self, seeded_db):
+        """SSE document-path stream pushes a ``sentence`` event per extractive
+        summary sentence, then a ``result`` event with the full package."""
+        import json
+
+        from fastapi.testclient import TestClient
+
+        from app.auth.jwt_handler import create_token
+        from app.dependencies import require_auth
+        from app.main import app
+
+        token = create_token(
+            subject="benchmark",
+            role="super_admin",
+            department="general",
+            allowed_departments=["general"],
+        )
+
+        app.dependency_overrides[require_auth] = lambda: BENCHMARK_USER
+        try:
+            client = TestClient(app)
+            with client.stream(
+                "POST",
+                "/api/v1/search/stream",
+                json={"query": "what is the minimum credit score"},
+                headers={"Authorization": f"Bearer {token}"},
+            ) as response:
+                body = "".join(response.iter_text())
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+        event_types = []
+        sentence_events = []
+        result_event = None
+        for part in body.split("\n\n"):
+            if not part.strip():
+                continue
+            lines = part.splitlines()
+            event = next(
+                (l[len("event: ") :] for l in lines if l.startswith("event: ")),
+                "message",
+            )
+            data = next(
+                (l[len("data: ") :] for l in lines if l.startswith("data: ")),
+                None,
+            )
+            event_types.append(event)
+            if event == "sentence":
+                sentence_events.append(data)
+            elif event == "result":
+                result_event = data
+
+        assert event_types[0] == "status"
+        assert event_types[-1] == "result"
+
+        result = json.loads(result_event)
+        # A sentence event exists for each extractive summary sentence.
+        assert len(sentence_events) == len(result["summary"])
+        if sentence_events:
+            first = json.loads(sentence_events[0])
+            assert first["text"]
+            assert first["source"]
+        assert result["retrieval_path"] == "document"
+

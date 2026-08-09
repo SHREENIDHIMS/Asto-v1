@@ -16,7 +16,6 @@ import {
   MessageSquarePlus,
   Settings,
   ShieldCheck,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -34,6 +33,8 @@ import {
   searchKnowledgeBaseStream,
   SearchResponse,
   SearchStage,
+  StreamedSentence,
+  StructuredFact,
   CaseDetail,
   ClientCase,
   ClientDocument,
@@ -45,6 +46,7 @@ import { useChatSessions, ChatSession } from "@/hooks/use-chat-sessions";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ChatMessage from "@/components/chat/ChatMessage";
+import StreamingPreview from "@/components/chat/StreamingPreview";
 import SettingsModal from "@/components/settings/SettingsModal";
 import SearchBar from "@/components/search/SearchBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
@@ -151,6 +153,8 @@ function ChatView({
     regeneratingTurnId,
     onRegenerateTurn,
     showSuggestions,
+    streamFacts,
+    streamSentences,
 }: {
   session: ChatSession | null;
   isLoading: boolean;
@@ -165,6 +169,8 @@ function ChatView({
   regeneratingTurnId: string | null;
   onRegenerateTurn: (turnId: string, query: string) => void;
   showSuggestions: boolean;
+  streamFacts: StructuredFact[];
+  streamSentences: StreamedSentence[];
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -173,17 +179,6 @@ function ChatView({
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [session?.turns.length, isLoading, pendingQuestion, regeneratingTurnId]);
-
-  const stageLabel =
-    stage === "processing"
-      ? "Understanding your question…"
-      : stage === "searching"
-        ? "Searching internal documents…"
-        : stage === "ranking"
-          ? "Ranking the best matches…"
-          : stage === "packaging"
-            ? "Preparing your answer…"
-            : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -234,21 +229,11 @@ function ChatView({
                   {pendingQuestion}
                 </div>
               </div>
-              <div className="flex gap-3">
-                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted border border-border">
-                  <Sparkles className="w-4 h-4 animate-pulse" />
-                </div>
-                <div className="rounded-2xl rounded-tl-sm border border-border bg-card p-4 shadow-sm space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="h-3 w-3 rounded-full bg-primary animate-pulse" />
-                    <span className="text-xs text-muted-foreground">
-                      {stageLabel ?? "Working…"}
-                    </span>
-                  </div>
-                  <div className="h-3 w-40 bg-muted rounded animate-pulse" />
-                  <div className="h-3 w-64 bg-muted rounded animate-pulse" />
-                </div>
-              </div>
+              <StreamingPreview
+                stage={stage}
+                facts={streamFacts}
+                sentences={streamSentences}
+              />
             </div>
           )}
         </div>
@@ -794,6 +779,8 @@ export default function ClientPage() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatStage, setChatStage] = useState<SearchStage | null>(null);
   const [chatPending, setChatPending] = useState<string | null>(null);
+  const [chatStreamFacts, setChatStreamFacts] = useState<StructuredFact[]>([]);
+  const [chatStreamSentences, setChatStreamSentences] = useState<StreamedSentence[]>([]);
   const [pendingUrgency, setPendingUrgency] = useState(false);
   const [regeneratingTurnId, setRegeneratingTurnId] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
@@ -867,6 +854,8 @@ export default function ClientPage() {
       setChatPending(q);
       setPendingUrgency(urgency);
       setChatStage(null);
+      setChatStreamFacts([]);
+      setChatStreamSentences([]);
       setChatLoading(true);
       setChatError(null);
       try {
@@ -875,17 +864,25 @@ export default function ClientPage() {
         const result: SearchResponse = await searchKnowledgeBaseStream(
           q,
           t,
-          (s) => setChatStage(s)
+          {
+            onStage: (s) => setChatStage(s),
+            onFact: (f) => setChatStreamFacts((prev) => [...prev, f]),
+            onSentence: (s) => setChatStreamSentences((prev) => [...prev, s]),
+          }
         );
         sessions.appendTurn(sid, q, result, urgency);
         setChatPending(null);
         setChatStage(null);
+        setChatStreamFacts([]);
+        setChatStreamSentences([]);
       } catch (err) {
         setChatError(
           err instanceof Error ? err.message : "Something went wrong"
         );
         setChatPending(null);
         setChatStage(null);
+        setChatStreamFacts([]);
+        setChatStreamSentences([]);
       } finally {
         setPendingUrgency(false);
         setChatLoading(false);
@@ -904,11 +901,17 @@ export default function ClientPage() {
       if (!sid) return;
       setRegeneratingTurnId(turnId);
       setChatStage(null);
+      setChatStreamFacts([]);
+      setChatStreamSentences([]);
       try {
         const result: SearchResponse = await searchKnowledgeBaseStream(
           query,
           t,
-          (s) => setChatStage(s)
+          {
+            onStage: (s) => setChatStage(s),
+            onFact: (f) => setChatStreamFacts((prev) => [...prev, f]),
+            onSentence: (s) => setChatStreamSentences((prev) => [...prev, s]),
+          }
         );
         // Replace the assistant response in place — do not append.
         sessions.replaceTurnResponse(sid, turnId, result);
@@ -919,6 +922,8 @@ export default function ClientPage() {
       } finally {
         setRegeneratingTurnId(null);
         setChatStage(null);
+        setChatStreamFacts([]);
+        setChatStreamSentences([]);
       }
     },
     [chatLoading, sessions]
@@ -1086,6 +1091,8 @@ export default function ClientPage() {
           onRegenerateTurn={handleRegenerateTurn}
           pendingUrgency={pendingUrgency}
           showSuggestions={showSuggestions}
+          streamFacts={chatStreamFacts}
+          streamSentences={chatStreamSentences}
         />
       )}
 
