@@ -300,6 +300,59 @@ domain term. Phonetic contractions ("wats"/"wut" → "what is") are expanded
 in `normalization.py`. Typos that are NOT valid words (e.g. "ammount",
 "requirment", "cred") are still corrected.
 
+## 9c. Mention-based case resolution (universal search, design decision 2026-08-10)
+
+When a query has no explicit `case_id` and the caller has no
+auto-resolvable case, the fact path now tries to find the case the user is
+*talking about* from entity mentions in the query text
+(`query_processing/case_resolver.py`):
+
+- **Case number** — `CAS-2026-0001` (full form) or a short form
+  `CAS-0001` / `cas_0001` (letters + hyphen/underscore + digits), which is
+  resolved against stored numbers by letter-prefix + digit-suffix matching
+  so a partial number without the year still lands precisely. A bare space
+  is never treated as a case-number separator ("is 2026", "case 1" are not
+  mentions).
+- **Property address** — street-name token match with a street-number
+  tie-break ("99 factpath ave" uniquely selects 99 Factpath Ave even when
+  77 Factpath Ave shares the street name); city name is a fallback signal.
+- **Client name** — full-name match ("for client two" requires both
+  tokens; a bare "client" never matches).
+
+Resolution order: case-number mention → property mention → client-name
+mention → explicit `case_id` (the UI's case-context dropdown) → client
+auto-resolve (most recent active case) → fall through. An entity mention
+in the current query text wins over the dropdown: the dropdown is a
+default context, but "what's the loan on 456 oak ave?" names the case the
+user means *now*, and the candidate-case chips re-ask with a case number
+appended — both would be silently overridden if the dropdown always won.
+When a mention is ambiguous AND the selected case is one of the
+candidates, the dropdown disambiguates; otherwise the caller is offered
+candidate-case chips.
+
+**No selection, no mention → answer anyway (design decision 2026-08-10).**
+An end user (staff especially) often cannot reliably pick the right case
+from a dropdown, so the assistant must not dead-end on "I need a case
+selected to answer that." when a determinable answer exists. When the
+caller has no explicit case and no resolvable mention, the fact path
+auto-resolves a caller with exactly **one** accessible active case, and
+offers the accessible active cases as suggestion chips when there are
+**several** (same RLS scope — never widens access). Only a caller with
+zero accessible active cases falls through to the "select a case" prompt.
+
+**RLS is bound in the SQL `WHERE` clause** (`_accessible_case_rows` uses
+the same `_case_scope` as every resolver): the candidate set is always the
+caller's own cases (client), assigned clients' cases (staff), or all cases
+(admin). Mention resolution never widens access — it only picks a case from
+the set the caller could already see.
+
+**Ambiguity → candidate-case chips.** When several cases match, the caller
+returns a `no_answer` package whose related-question chips re-ask the SAME
+question with the candidate case number appended ("… for case CAS-2026-0001").
+Clicking a chip re-enters mention resolution, the case-number mention wins,
+and the fact path resolves deterministically. Chips are fixed templates
+whose only variable is a stored case number — no generated text.
+
 ## 10. Testing gate
 
 - Unit: `fact_router` classification, each resolver's RLS behavior (client

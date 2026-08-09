@@ -41,6 +41,11 @@ from collections import OrderedDict
 
 import psycopg
 
+from app.query_processing.case_resolver import (
+    CaseCandidate,
+    _accessible_case_rows,
+    resolve_case_from_query,
+)
 from app.query_processing.fact_router import route_fact_intent
 from app.query_processing.fact_resolvers import (
     FactContext,
@@ -238,17 +243,65 @@ def _merge_related_questions(intents: list[str]) -> list[str]:
     return merged
 
 
-def _resolve_case_id(conn: psycopg.Connection, user: dict, case_id: int | None) -> int | None:
-    """Return the conversation's case id, auto-resolving for client audience.
+def _resolve_case_id(
+    conn: psycopg.Connection,
+    user: dict,
+    case_id: int | None,
+    query_text: str = "",
+) -> tuple[int | None, list]:
+    """Return ``(case_id, candidates)`` for the conversation.
 
-    Client audience without an explicit case_id → most recent active case
-    (their case list). Staff/admin without a case_id → None (the caller
-    falls through to the document path).
+    Resolution order (all RLS-scoped, see case_resolver.py):
+    1. An entity mention in the query text wins over the persistent
+       dropdown. A unique match → that case. An ambiguous match that
+       includes the selected case → the selected case (the dropdown
+       disambiguates). An ambiguous match without the selected case →
+       ``candidates`` for the caller to clarify.
+    2. No resolvable mention → explicit ``case_id`` (the dropdown).
+    3. No mention and no selection → answer anyway when the caller can:
+       exactly one accessible active case → auto-resolve to it; several →
+       ``candidates`` suggestion chips; none → ``(None, [])``.
+    4. Client audience → most recent active case (legacy auto-resolve).
+    5. Otherwise → ``(None, [])`` (caller falls through or asks).
+
+    The mention-first order is deliberate: the dropdown is a default
+    context, but the user's current text ("what's the loan on 456 oak
+    ave?") names the case they mean *now*, and the candidate-case chips
+    re-ask with a case number appended — both would be silently overridden
+    if an explicit ``case_id`` always won.
     """
+    resolution = None
+    if query_text.strip():
+        resolution = resolve_case_from_query(conn, user, query_text)
+    if resolution is not None and resolution.case_id is not None:
+        return resolution.case_id, []
+    if resolution is not None and resolution.candidates:
+        candidate_ids = {c.case_id for c in resolution.candidates}
+        if case_id is not None and case_id in candidate_ids:
+            return case_id, []
+        return None, resolution.candidates
     if case_id is not None:
-        return case_id
+        return case_id, []
     if user.get("audience") != "client":
-        return None
+        # Answer anyway when the caller can, instead of a dead-end. With a
+        # single accessible active case there is nothing to disambiguate;
+        # with several, offer them as suggestion chips (same RLS scope —
+        # never widens access).
+        rows = _accessible_case_rows(conn, user)
+        if len(rows) == 1:
+            return rows[0]["case_id"], []
+        if len(rows) > 1:
+            candidates = [
+                CaseCandidate(
+                    case_id=r["case_id"],
+                    case_number=r["case_number"],
+                    client_name=r.get("client_name"),
+                    address=r.get("address"),
+                )
+                for r in rows
+            ]
+            return None, candidates
+        return None, []
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id FROM cases WHERE client_id = %s AND is_active = true "
@@ -256,7 +309,7 @@ def _resolve_case_id(conn: psycopg.Connection, user: dict, case_id: int | None) 
             (user.get("client_id"),),
         )
         row = cur.fetchone()
-    return row["id"] if row else None
+    return (row["id"] if row else None), []
 
 
 def _completeness(intent: str, facts: list[FactRecord]) -> float:
@@ -390,6 +443,39 @@ def _clarify_package(query_text: str) -> ResponsePackage:
     return package
 
 
+def _candidate_cases_package(
+    query_text: str,
+    candidates: list,
+) -> ResponsePackage:
+    """A no-answer package asking which case was meant.
+
+    The related-question chips re-ask the SAME question with the candidate
+    case number appended, so clicking one re-enters mention resolution
+    (case-number mention beats property/client) and resolves
+    deterministically. Chips are deterministic template strings — every
+    value is a stored case number.
+    """
+    base = query_text.strip().rstrip("?.! ")
+    package = ResponsePackage(
+        response_id=hashlib.sha256(
+            f"fact:candidates:{query_text}:{uuid.uuid4()}".encode()
+        ).hexdigest()[:16],
+        title="Which case?",
+        answer="",
+        confidence=0.0,
+        routing="no_answer",
+        related_questions=[
+            f"{base} for case {c.case_number}" for c in candidates[:4]
+        ],
+    )
+    package.retrieval_path = "structured_fact"
+    package.no_answer_reason = (
+        "I found a few cases matching your question. "
+        "Which case did you mean?"
+    )
+    return package
+
+
 def run_fact_path(
     conn: psycopg.Connection,
     normalized_query: str,
@@ -411,6 +497,12 @@ def run_fact_path(
     clarifying prompt is returned when the query reads personally/about the
     caller's case but no intent cleared the soft routing bar (we ask rather
     than best-guess — design decision 2026-08-09).
+
+    Case context is resolved via ``_resolve_case_id``: explicit ``case_id``
+    wins, then an entity mention in the query (case number / property /
+    client name — see case_resolver.py) for a unique match or candidate
+    chips, then client auto-resolution. Mention resolution is RLS-scoped,
+    never widening access.
     """
     if sub_queries is None:
         parts = [normalized_query]
@@ -438,7 +530,11 @@ def run_fact_path(
             return _clarify_package(query_text)
         return None
 
-    resolved_case_id = _resolve_case_id(conn, user, case_id)
+    resolved_case_id, case_candidates = _resolve_case_id(
+        conn, user, case_id, query_text=query_text
+    )
+    if case_candidates:
+        return _candidate_cases_package(query_text, case_candidates)
     if resolved_case_id is None:
         return _no_answer_package(
             "I need a case selected to answer that.",

@@ -60,13 +60,14 @@ def seed() -> None:
 
                 cur.execute(
                     "INSERT INTO properties (client_id, address, city, state, postal_code, property_type) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
                     (client_id, "123 Main St", "Springfield", "IL", "62701", "single_family"),
                 )
+                property_id = cur.fetchone()["id"]
                 cur.execute(
-                    "INSERT INTO cases (case_number, client_id, loan_amount, status) "
-                    "VALUES (%s, %s, %s, %s)",
-                    ("CAS-2026-0001", client_id, 275000.00, "active"),
+                    "INSERT INTO cases (case_number, client_id, property_id, loan_amount, status) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    ("CAS-2026-0001", client_id, property_id, 275000.00, "active"),
                 )
                 cur.execute(
                     "SELECT id FROM users WHERE email = 'admin@asto.local'",

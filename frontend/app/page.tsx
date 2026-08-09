@@ -8,7 +8,13 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { searchKnowledgeBaseStream, SearchResponse, SearchStage } from "@/lib/api-client";
+import {
+  getStaffDashboard,
+  searchKnowledgeBaseStream,
+  SearchResponse,
+  SearchStage,
+  StaffDashboardCase,
+} from "@/lib/api-client";
 import { clearToken, decodeToken, getToken } from "@/lib/auth";
 import { useChatHistory } from "@/hooks/use-chat-history";
 import ChatMessage from "@/components/chat/ChatMessage";
@@ -30,6 +36,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 export default function ChatPage() {
@@ -54,6 +67,9 @@ export default function ChatPage() {
   });
   const scrollRef = useRef<HTMLDivElement>(null);
   const [prefill, setPrefill] = useState<string | null>(null);
+  const [cases, setCases] = useState<StaffDashboardCase[]>([]);
+  const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
+  const [casesError, setCasesError] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -75,6 +91,16 @@ export default function ChatPage() {
     }
     // Staff (non-admin) stay on the staff chat.
   }, [router]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    getStaffDashboard(token)
+      .then((dash) => setCases(dash.cases ?? []))
+      .catch((err) =>
+        setCasesError(err instanceof Error ? err.message : "Failed to load cases")
+      );
+  }, []);
 
   useEffect(() => {
     // Scroll to bottom only when a new message/response begins.
@@ -141,7 +167,8 @@ export default function ChatPage() {
       const result: SearchResponse = await searchKnowledgeBaseStream(
         q,
         token,
-        (s) => setStage(s)
+        (s) => setStage(s),
+        selectedCaseId
       );
       appendTurn(q, result);
       setPendingQuestion(null);
@@ -170,7 +197,8 @@ export default function ChatPage() {
         const result: SearchResponse = await searchKnowledgeBaseStream(
           query,
           token,
-          (s) => setStage(s)
+          (s) => setStage(s),
+          selectedCaseId
         );
         // Replace the assistant response in place — do not append.
         replaceTurnResponse(turnId, result);
@@ -182,7 +210,7 @@ export default function ChatPage() {
         setRegeneratingId(null);
       }
     },
-    [isLoading, replaceTurnResponse]
+    [isLoading, replaceTurnResponse, selectedCaseId]
   );
 
   const handleOpenRecentChat = useCallback(
@@ -390,6 +418,36 @@ export default function ChatPage() {
             <p className="text-xs text-muted-foreground ml-auto">
               Responses are sourced verbatim from internal documents.
             </p>
+          </div>
+          <div className="max-w-3xl mx-auto mb-2 flex items-center gap-2">
+            <span className="shrink-0 text-xs text-muted-foreground">
+              Case context:
+            </span>
+            <Select
+              value={selectedCaseId != null ? String(selectedCaseId) : "none"}
+              onValueChange={(v) =>
+                setSelectedCaseId(v && v !== "none" ? Number(v) : null)
+              }
+              disabled={cases.length === 0}
+            >
+              <SelectTrigger className="h-8 w-64 text-xs">
+                <SelectValue
+                  placeholder={
+                    casesError
+                      ? "Cases unavailable"
+                      : "Select a case for fact answers…"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No case (document search)</SelectItem>
+                {cases.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.case_number} — {c.client_name ?? `Client ${c.client_id}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <SearchBar
             onSearch={handleSearch}

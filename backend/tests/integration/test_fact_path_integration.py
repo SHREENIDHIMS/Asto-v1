@@ -23,8 +23,10 @@ from app.db.postgres.session import acquire
 CLIENT_EMAIL = "factpath.client@asto.test"
 CLIENT2_EMAIL = "factpath.client2@asto.test"
 STAFF_EMAIL = "factpath.staff@asto.test"
+STAFF2_EMAIL = "factpath.staff2@asto.test"
 CASE1_NUMBER = "FACT-2026-0001"
 CASE2_NUMBER = "FACT-2026-0002"
+CASE3_NUMBER = "FACT-2026-0003"
 
 
 def _db_available() -> bool:
@@ -76,6 +78,18 @@ def fact_db():
                 (staff, client1),
             )
 
+            # A staff user assigned only to client2 (single accessible case).
+            cur.execute(
+                "INSERT INTO users (email, password_hash, full_name, role, department, allowed_departments) "
+                "VALUES (%s, 'x', 'Factpath Staff 2', 'loan_officer', 'general', ARRAY['general']) RETURNING id",
+                (STAFF2_EMAIL,),
+            )
+            staff2 = cur.fetchone()["id"]
+            cur.execute(
+                "INSERT INTO staff_client_assignments (user_id, client_id) VALUES (%s, %s)",
+                (staff2, client2),
+            )
+
             # A property + case per client (case2 has a property, case1 does not).
             cur.execute(
                 "INSERT INTO properties (client_id, address, city, state, postal_code, property_type) "
@@ -84,10 +98,24 @@ def fact_db():
             )
             property2 = cur.fetchone()["id"]
 
+            # A second property + case for client1 so property mention can be ambiguous.
+            cur.execute(
+                "INSERT INTO properties (client_id, address, city, state, postal_code, property_type) "
+                "VALUES (%s, '99 Factpath Ave', 'Factville', 'IL', '62565', 'single_family') RETURNING id",
+                (client1,),
+            )
+            property1 = cur.fetchone()["id"]
+            cur.execute(
+                "INSERT INTO properties (client_id, address, city, state, postal_code, property_type) "
+                "VALUES (%s, '77 Factpath Ave', 'Factville', 'IL', '62565', 'single_family') RETURNING id",
+                (client1,),
+            )
+            property3 = cur.fetchone()["id"]
+
             cur.execute(
                 "INSERT INTO cases (case_number, client_id, property_id, loan_amount, status) "
-                "VALUES (%s, %s, NULL, 250000.00, 'under_review') RETURNING id",
-                (CASE1_NUMBER, client1),
+                "VALUES (%s, %s, %s, 250000.00, 'under_review') RETURNING id",
+                (CASE1_NUMBER, client1, property1),
             )
             case1 = cur.fetchone()["id"]
             cur.execute(
@@ -96,6 +124,12 @@ def fact_db():
                 (CASE2_NUMBER, client2, property2),
             )
             case2 = cur.fetchone()["id"]
+            cur.execute(
+                "INSERT INTO cases (case_number, client_id, property_id, loan_amount, status) "
+                "VALUES (%s, %s, %s, 175000.00, 'active') RETURNING id",
+                (CASE3_NUMBER, client1, property3),
+            )
+            case3 = cur.fetchone()["id"]
 
             cur.execute(
                 "INSERT INTO case_events (case_id, status, note) "
@@ -146,7 +180,11 @@ def fact_db():
                 "staff": staff,
                 "case1": case1,
                 "case2": case2,
+                "case3": case3,
+                "property1": property1,
                 "property2": property2,
+                "property3": property3,
+                "staff2": staff2,
             }
 
     yield ids
@@ -154,16 +192,16 @@ def fact_db():
     # Cleanup in FK order.
     with acquire() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM staff_client_assignments WHERE user_id = %s", (ids["staff"],))
-            cur.execute("DELETE FROM case_notes WHERE case_id IN (%s, %s)", (ids["case1"], ids["case2"]))
-            cur.execute("DELETE FROM workflows WHERE case_id IN (%s, %s)", (ids["case1"], ids["case2"]))
-            cur.execute("DELETE FROM case_events WHERE case_id IN (%s, %s)", (ids["case1"], ids["case2"]))
+            cur.execute("DELETE FROM staff_client_assignments WHERE user_id IN (%s, %s)", (ids["staff"], ids["staff2"]))
+            cur.execute("DELETE FROM case_notes WHERE case_id IN (%s, %s, %s)", (ids["case1"], ids["case2"], ids["case3"]))
+            cur.execute("DELETE FROM workflows WHERE case_id IN (%s, %s, %s)", (ids["case1"], ids["case2"], ids["case3"]))
+            cur.execute("DELETE FROM case_events WHERE case_id IN (%s, %s, %s)", (ids["case1"], ids["case2"], ids["case3"]))
             cur.execute("DELETE FROM approval_log WHERE document_id IN (SELECT id FROM documents WHERE client_id IN (%s, %s))", (ids["client1"], ids["client2"]))
             cur.execute("DELETE FROM document_chunks WHERE document_id IN (SELECT id FROM documents WHERE client_id IN (%s, %s))", (ids["client1"], ids["client2"]))
             cur.execute("DELETE FROM documents WHERE client_id IN (%s, %s)", (ids["client1"], ids["client2"]))
-            cur.execute("DELETE FROM cases WHERE id IN (%s, %s)", (ids["case1"], ids["case2"]))
-            cur.execute("DELETE FROM properties WHERE id = %s", (ids["property2"],))
-            cur.execute("DELETE FROM users WHERE id = %s", (ids["staff"],))
+            cur.execute("DELETE FROM cases WHERE id IN (%s, %s, %s)", (ids["case1"], ids["case2"], ids["case3"]))
+            cur.execute("DELETE FROM properties WHERE id IN (%s, %s, %s)", (ids["property1"], ids["property2"], ids["property3"]))
+            cur.execute("DELETE FROM users WHERE id IN (%s, %s)", (ids["staff"], ids["staff2"]))
             cur.execute("DELETE FROM clients WHERE id IN (%s, %s)", (ids["client1"], ids["client2"]))
             conn.commit()
 
@@ -187,6 +225,19 @@ def _staff_user(staff_id: int) -> dict:
         "id": staff_id,
         "email": STAFF_EMAIL,
         "full_name": "Factpath Staff",
+        "is_active": True,
+        "audience": "staff",
+        "role": "loan_officer",
+        "department": "general",
+        "allowed_departments": ["general"],
+    }
+
+
+def _staff2_user(staff2_id: int) -> dict:
+    return {
+        "id": staff2_id,
+        "email": STAFF2_EMAIL,
+        "full_name": "Factpath Staff 2",
         "is_active": True,
         "audience": "staff",
         "role": "loan_officer",
@@ -240,7 +291,8 @@ class TestFactPathIntegration:
     def test_client_auto_resolves_own_most_recent_case(self, fact_db):
         from app.query_processing.fact_path import run_fact_path
 
-        # No case_id passed; client1 has exactly one active case.
+        # No case_id passed; client1 has two active cases, auto-resolve
+        # picks the most recent one (case3, id DESC tie-break).
         with acquire() as conn:
             package = run_fact_path(
                 conn=conn,
@@ -251,7 +303,7 @@ class TestFactPathIntegration:
             )
 
         assert package is not None
-        assert any(f.kind == "amount" and f.value == "250000.00" for f in package.facts)
+        assert any(f.kind == "amount" and f.value == "175000.00" for f in package.facts)
 
     def test_assigned_staff_sees_facts(self, fact_db):
         from app.query_processing.fact_path import run_fact_path
@@ -394,3 +446,255 @@ class TestFactPathIntegration:
             assert package.routing == "answer", f"chip {chip!r} did not resolve to a full answer"
             assert package.facts, f"chip {chip!r} returned no facts"
             assert all(f.source and "#" in f.source for f in package.facts)
+
+    def test_staff_resolves_case_by_property_mention(self, fact_db):
+        """Staff with no case_id resolves via the property address in the query."""
+        from app.query_processing.fact_path import run_fact_path
+
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on 99 factpath ave?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=None,
+                query_text="what is the loan amount on 99 factpath ave?",
+            )
+
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        assert any(f.label == "Loan amount" and f.value == "250000.00" for f in package.facts)
+
+    def test_staff_resolves_case_by_case_number_mention(self, fact_db):
+        """Staff can name the case number directly without selecting it in the UI."""
+        from app.query_processing.fact_path import run_fact_path
+
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the status of FACT-2026-0001?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=None,
+                query_text="what is the status of FACT-2026-0001?",
+            )
+
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        assert any(f.label == "Status" and f.value == "under_review" for f in package.facts)
+
+    def test_client_name_mention_is_ambiguous_when_client_has_multiple_cases(self, fact_db):
+        """A client-name mention with several cases asks which one via chips."""
+        from app.query_processing.fact_path import run_fact_path
+
+        # Client1 ("Factpath Client") has two cases → the name mention is
+        # ambiguous and returns candidate chips for client1's cases only.
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount for Factpath Client?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=None,
+                query_text="what is the loan amount for Factpath Client?",
+            )
+
+        assert package is not None
+        assert package.routing == "no_answer"
+        chips = " | ".join(package.related_questions)
+        assert CASE1_NUMBER in chips
+        assert CASE3_NUMBER in chips
+        assert CASE2_NUMBER not in chips  # client2's case out of scope
+
+    def test_ambiguous_property_returns_candidate_case_chips(self, fact_db):
+        """A property matching multiple accessible cases asks which one, via chips."""
+        from app.query_processing.fact_path import run_fact_path
+
+        # Client1 has two cases, both on "Factpath Ave" (99 and 77). The
+        # staff member (assigned only to client1) asking about "factpath
+        # ave" matches both → ambiguous → candidate-case chips.
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on factpath ave?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=None,
+                query_text="what is the loan amount on factpath ave?",
+            )
+
+        assert package is not None
+        assert package.routing == "no_answer"
+        assert package.no_answer_reason == (
+            "I found a few cases matching your question. Which case did you mean?"
+        )
+        # Both candidate case numbers appear as click-to-ask chips.
+        chips = " | ".join(package.related_questions)
+        assert CASE1_NUMBER in chips
+        assert CASE3_NUMBER in chips
+        assert CASE2_NUMBER not in chips  # client2's case is out of scope
+
+    def test_mention_resolution_never_leaks_other_clients_case(self, fact_db):
+        """A client mentioning another client's address never surfaces that case."""
+        from app.query_processing.fact_path import run_fact_path
+
+        # "1 Factpath Ave" is client2's address (number 1 ≠ client1's 99/77),
+        # so the property tie-break rejects it for both of client1's
+        # properties. The query falls back to client1's own most recent case
+        # (case3, 175000) — never client2's case2 (185000).
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on 1 factpath ave?",
+                user=_client_user(fact_db["client1"]),
+                case_id=None,
+                query_text="what is the loan amount on 1 factpath ave?",
+            )
+
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        amounts = {f.value for f in package.facts if f.label == "Loan amount"}
+        assert amounts == {"175000.00"}
+        assert "185000.00" not in amounts
+
+    def test_candidate_chips_click_through_to_facts(self, fact_db):
+        """Candidate chips re-ask with the case number and resolve deterministically."""
+        from app.query_processing.fact_path import _candidate_cases_package, run_fact_path
+
+        # Build a synthetic ambiguous resolution for client1's two addresses.
+        from app.query_processing.case_resolver import CaseCandidate, CaseResolution, resolve_case_from_query
+
+        with acquire() as conn:
+            resolution = resolve_case_from_query(
+                conn,
+                _staff_user(fact_db["staff"]),
+                "what is the loan amount on 99 factpath ave?",
+            )
+
+        assert resolution.case_id is not None
+        assert resolution.matched_by == "property"
+
+        with acquire() as conn:
+            package = _candidate_cases_package(
+                "what is the loan amount on 99 factpath ave?",
+                [CaseCandidate(case_id=resolution.case_id, case_number="FACT-2026-0001")],
+            )
+
+        assert package.routing == "no_answer"
+        assert package.no_answer_reason == (
+            "I found a few cases matching your question. Which case did you mean?"
+        )
+        chip = package.related_questions[0]
+        assert "FACT-2026-0001" in chip
+
+        # Clicking the chip re-enters mention resolution via the case number.
+        with acquire() as conn:
+            re_run = run_fact_path(
+                conn=conn,
+                normalized_query=chip,
+                user=_staff_user(fact_db["staff"]),
+                case_id=None,
+                query_text=chip,
+            )
+
+        assert re_run is not None
+        assert re_run.retrieval_path == "structured_fact"
+        # Case1's loan amount (250000) is the resolved case's fact.
+        assert any(f.label == "Loan amount" and f.value == "250000.00" for f in re_run.facts)
+
+    def test_explicit_mention_beats_dropdown_case_id(self, fact_db):
+        """A property mention in the text wins over the selected dropdown case.
+
+        Staff (assigned to client1) selects case1 (99 Factpath, 250000) in
+        the UI but asks about 77 Factpath (case3, 175000). The mention must
+        resolve to case3 rather than silently answering about the selected
+        case1. Both cases are in scope, so this is a precedence test, not a
+        leak test.
+        """
+        from app.query_processing.fact_path import run_fact_path
+
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on 77 factpath ave?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=fact_db["case1"],
+                query_text="what is the loan amount on 77 factpath ave?",
+            )
+
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        amounts = {f.value for f in package.facts if f.label == "Loan amount"}
+        assert amounts == {"175000.00"}  # case3's loan, not case1's 250000
+
+    def test_dropdown_disambiguates_ambiguous_mention(self, fact_db):
+        """When a mention is ambiguous but the selected case is one candidate,
+        the dropdown resolves it instead of offering chips."""
+        from app.query_processing.fact_path import run_fact_path
+
+        # "Factpath Ave" matches client1's two cases (99 and 77). The staff
+        # member has case1 selected → the dropdown disambiguates to case1,
+        # so no candidate chips and no ambiguity.
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on factpath ave?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=fact_db["case1"],
+                query_text="what is the loan amount on factpath ave?",
+            )
+
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        assert package.routing == "answer"
+        amounts = {f.value for f in package.facts if f.label == "Loan amount"}
+        assert amounts == {"250000.00"}  # case1's loan
+
+    def test_staff_single_case_auto_resolves_without_selection(self, fact_db):
+        """Staff with exactly one accessible case gets an answer, no selection needed."""
+        from app.query_processing.fact_path import run_fact_path
+
+        # staff2 is assigned only to client2, who has one case (case2).
+        # A vague question with no mention and no case_id auto-resolves to
+        # that single accessible case instead of dead-ending.
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on this case?",
+                user=_staff2_user(fact_db["staff2"]),
+                case_id=None,
+                query_text="what is the loan amount on this case?",
+            )
+
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        assert package.routing == "answer"
+        amounts = {f.value for f in package.facts if f.label == "Loan amount"}
+        assert amounts == {"185000.00"}  # case2's loan, auto-resolved
+
+    def test_staff_multiple_cases_vague_query_returns_suggestion_chips(self, fact_db):
+        """Staff with several accessible cases and no mention gets suggestion chips.
+
+        The staff fixture is assigned to client1, who has two cases
+        (case1 + case3). A vague case question with no mention, no case_id
+        must offer both cases as chips instead of a dead-end — the end user
+        can't always pick the right case from a dropdown.
+        """
+        from app.query_processing.fact_path import run_fact_path
+
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="what is the loan amount on this case?",
+                user=_staff_user(fact_db["staff"]),
+                case_id=None,
+                query_text="what is the loan amount on this case?",
+            )
+
+        assert package is not None
+        assert package.routing == "no_answer"
+        assert package.no_answer_reason == (
+            "I found a few cases matching your question. Which case did you mean?"
+        )
+        chips = " | ".join(package.related_questions)
+        assert CASE1_NUMBER in chips
+        assert CASE3_NUMBER in chips
+        assert CASE2_NUMBER not in chips  # client2's case is out of scope
+
+
