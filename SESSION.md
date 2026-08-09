@@ -251,7 +251,43 @@ to these ports.
 - Phase E docs (README/design-doc) not re-touched for streaming; this entry is
   the record.
 
+### Session 7 — 2026-08-10 (Unified single sign-in — no Staff/Client selector)
 
+**Done:**
+- **Unified `POST /auth/login`:** `api/v1/auth.py` now resolves the identity
+  across both tables in one request — checks `users` (staff) first, then
+  `clients` (external). Returns the audience-scoped JWT (staff →
+  role/department claims; client → `audience="client"` + `client_id`). The
+  frontend already auto-routed by JWT claims, so removing the tabs completes
+  the flow: **one login form, identity auto-detected from email/password.**
+- **Single generic 401:** a failed match on both tables returns one
+  "Invalid credentials" error, so the response never reveals which table an
+  email belongs to.
+- **Deterministic precedence:** an email present in both tables resolves as
+  staff (documented in `auth.py` docstring).
+- **Frontend:** `app/login/page.tsx` rewritten as a single form (email +
+  password + remember-me + forgot-password), tabs removed. Removed the now
+  unused `clientLogin` helper from `lib/api-client.ts`; `/auth/client-login`
+  endpoint kept for backward compatibility.
+- **Tests:** new `tests/integration/test_unified_login.py` (4 tests) — staff
+  and client both resolve via `/auth/login` with correct JWT claims, bad
+  password/unknown email → generic 401, legacy `/auth/client-login` still
+  works. Full suite: **315 passed** (unit + integration, live Postgres).
+- **Live verified:** rebuilt `asto-backend` + `frontend`. `admin@asto.local`
+  and `client@asto.local` both log in via `/auth/login`; wrong password → 401;
+  `/login` serves 200 and the login page chunk contains zero `TabsTrigger`
+  references.
+
+**Not done / carry to next session:**
+- Admin analytics tab still shows the raw knowledge-gap list (no charts yet) —
+  the analytics endpoints are verified; a chart UI is the remaining piece.
+- Seeded demo docs still reference `/docs/*.pdf` that were never placed on
+  disk (they 404 on view) — place PDFs in `storage/processed/` matching their
+  basenames or upload fresh docs to see view/download end-to-end.
+
+### Session 3 — 2026-08-08
+
+**Done (Phase B3 + Phase C — approval workflow + client auth backend):**
 - **Approval workflow (B3):**
   - `indexing.py` now inserts documents/chunks with `approval_status='pending'`,
     `is_approved=false` by default (opt-in `approval_status="approved"` for seed/backfill).

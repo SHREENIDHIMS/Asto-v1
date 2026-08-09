@@ -58,7 +58,19 @@ class ChangePasswordResponse(BaseModel):
 
 @router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest) -> LoginResponse:
-    """Authenticate with email + password, return a JWT."""
+    """Authenticate with email + password, return a JWT.
+
+    Single sign-in for both audiences: resolves the identity from the
+    ``users`` table first (staff), then the ``clients`` table (external
+    clients), so the frontend needs no Staff/Client selector. The JWT is
+    scoped by the resolved audience (staff -> role/department claims,
+    client -> audience="client" + client_id) and the client is routed by
+    those claims after login.
+
+    An email present in both tables resolves as staff (deterministic).
+    A failed match on both tables raises a single generic 401 so the
+    response does not reveal which table an email belongs to.
+    """
     with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -69,23 +81,43 @@ async def login(request: LoginRequest) -> LoginResponse:
             )
             row = cur.fetchone()
 
-    if row is None or not bcrypt.verify(request.password, row["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
+    if row is not None and bcrypt.verify(request.password, row["password_hash"]):
+        token = create_token(
+            subject=str(row["id"]),
+            role=row["role"],
+            department=row["department"],
+            allowed_departments=list(row["allowed_departments"] or []),
+            audience="staff",
+        )
+        return LoginResponse(
+            access_token=token,
+            expires_in=settings.jwt_expiry_minutes * 60,
         )
 
-    token = create_token(
-        subject=str(row["id"]),
-        role=row["role"],
-        department=row["department"],
-        allowed_departments=list(row["allowed_departments"] or []),
-        audience="staff",
-    )
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, password_hash FROM clients "
+                "WHERE email = %s AND is_active = true",
+                (request.email,),
+            )
+            row = cur.fetchone()
 
-    return LoginResponse(
-        access_token=token,
-        expires_in=settings.jwt_expiry_minutes * 60,
+    if row is not None and bcrypt.verify(request.password, row["password_hash"]):
+        token = create_token(
+            subject=str(row["id"]),
+            role="client",
+            audience="client",
+            client_id=int(row["id"]),
+        )
+        return LoginResponse(
+            access_token=token,
+            expires_in=settings.jwt_expiry_minutes * 60,
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials",
     )
 
 

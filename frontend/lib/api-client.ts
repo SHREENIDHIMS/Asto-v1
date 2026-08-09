@@ -305,24 +305,6 @@ export async function changePassword(
 // Client (external) auth + portal
 // ---------------------------------------------------------------------------
 
-export async function clientLogin(
-  email: string,
-  password: string
-): Promise<AuthLoginResponse> {
-  const response = await fetch(`${API_BASE_URL}/auth/client-login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Client login failed');
-  }
-
-  return response.json();
-}
-
 export interface ClientProfile {
   id: number;
   email: string;
