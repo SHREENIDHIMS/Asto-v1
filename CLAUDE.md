@@ -32,6 +32,14 @@ Companion docs (read these for full detail, this file is the summary):
 - Adding any **abstractive** summarizer (an LLM, T5/BART-style models, or
   a "rewrite this in your own words" step) is prohibited without an
   explicit decision to revisit this rule.
+- **One explicitly sanctioned exception (documented, 2026-08-09):** the
+  fact path's `answer` bubble and the document path's server-side `answer`
+  are deterministic assemblies. Per-intent templates in
+  `query_processing/fact_path.py` and joined verbatim summary sentences
+  insert fact/summary values **verbatim only** — no paraphrase, no
+  generation, no placeholder text, every value still sourced. Reasoning and
+  rules in `docs/architecture/dual_path_assistant.md` §9a. Re-adding an LLM
+  or abstractive rephrasing still requires an explicit decision.
 
 ## Hard architectural constraints
 

@@ -64,11 +64,16 @@ function FactRows({ facts }: { facts: ChatTurn["response"]["facts"] }) {
   );
 }
 
-/** Join the verbatim summary sentences into one concise paragraph, deduplicating
- *  exact-duplicate sentences. Relevance ranking is already done by the backend
- *  summarizer, so we preserve order and simply collapse duplicates so the
- *  unified extractive answer stays tight. */
+/** Answer text shown in the bubble.
+ *
+ * Prefers the backend-assembled `answer` (fact-path template bubble or
+ * document-path extractive summary — both are verbatim-value only). Falls
+ * back to joining summary sentences client-side for older cached turns,
+ * then the first excerpt. */
 function buildAnswerText(turn: ChatTurn): string {
+  if (turn.response.answer && turn.response.answer.trim()) {
+    return turn.response.answer.trim();
+  }
   const parts: string[] = [];
   const seen = new Set<string>();
   for (const s of turn.response.summary ?? []) {

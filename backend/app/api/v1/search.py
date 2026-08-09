@@ -58,6 +58,7 @@ class SearchRequest(BaseModel):
 class SearchResponse(BaseModel):
     response_id: str
     title: str
+    answer: str = ""
     excerpts: list[dict]
     summary: list[dict]
     confidence: float
@@ -73,6 +74,7 @@ def _serialize(package) -> dict:
     payload = {
         "response_id": package.response_id,
         "title": package.title,
+        "answer": package.answer,
         "excerpts": [
             {
                 "text": e.text,
@@ -129,6 +131,7 @@ def _no_sub_queries_response(user_id, query: str, start_ms: float) -> SearchResp
     return SearchResponse(
         response_id="",
         title="No Results",
+        answer="",
         excerpts=[],
         summary=[],
         confidence=0.0,
@@ -210,6 +213,7 @@ def _run_pipeline(
         fact_package = run_fact_path(
             conn=conn,
             normalized_query=plan.normalized,
+            sub_queries=[sq.display for sq in plan.sub_queries],
             user=user,
             case_id=case_id,
             query_text=query,
@@ -291,6 +295,12 @@ def _run_pipeline(
         query_text=query,
         user_departments=user_depts,
     )
+
+    # Extractively assembled bubble for the document path (verbatim
+    # summary sentences only — no synthesis). Mirrors the fact-path bubble.
+    package.answer = " ".join(
+        s.text for s in package.summary if s.text.strip()
+    ).strip()
 
     package.routing = route_by_confidence(package.confidence)
 

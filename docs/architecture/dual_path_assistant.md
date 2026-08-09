@@ -209,6 +209,39 @@ Rules:
   retrievals log the SQL rows touched (case/event ids).
 - `audit_log` is never skipped, even for test queries against prod data.
 
+## 9a. Multi-question fact resolution (explicitly sanctioned exception)
+
+A single message that contains several questions (e.g. "what's my status?
+what's missing?") is split by `query_processing.multi_question` into
+`plan.sub_queries`. The fact path now classifies **each sub-query
+independently** and resolves **every** matched intent, merging the facts
+into ONE `ResponsePackage` (retrieval_path `structured_fact`).
+
+The single-bubble `answer` field is a **deliberate, documented exception**
+to the "never assemble sentences from multiple sources" doctrine
+(CLAUDE.md §Non-negotiable). It is implemented strictly deterministically:
+
+- Per-intent sentence templates in `fact_path.py` (`_sentences_for_intent`)
+  insert each fact's `value` **verbatim** — no paraphrase, no generation.
+- A template slot with no fact emits NO sentence (no placeholder text).
+- Every fact still carries an explicit source (`cases#204`), rendered under
+  the bubble.
+- Confidence = mean of per-intent completeness, routed through the shared
+  `route_by_confidence` thresholds (answers that are fully covered stay
+  `answer`; partially covered get `partial`).
+- Sub-questions that match no fact intent are ignored (they fall through to
+  the document path message-wide); unrecognized intents never poison the
+  supported ones.
+- If ANY resolved sub-question is inaccessible (RLS), the whole bubble
+  returns `no_answer` — nothing is silently dropped.
+- Duplicate intents ("status? also status?") resolve once; identical facts
+  are deduplicated.
+
+The document path's `answer` is likewise extractive-only: verbatim summary
+sentences joined server-side (no synthesis). Adding any LLM or abstractive
+rephrasing here is prohibited without an explicit decision to revisit this
+rule.
+
 ## 10. Testing gate
 
 - Unit: `fact_router` classification, each resolver's RLS behavior (client

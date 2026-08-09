@@ -57,6 +57,7 @@ class Excerpt:
 class ResponsePackage:
     response_id: str
     title: str
+    answer: str = ""                          # fact-path assembled bubble (verbatim facts, templates)
     excerpts: list[Excerpt] = field(default_factory=list)
     summary: list[SummarySentence] = field(default_factory=list)
     related_questions: list[str] = field(default_factory=list)

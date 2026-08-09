@@ -1,4 +1,4 @@
-"""Structured-fact path orchestrator (Phase 1 dual-path assistant).
+"""Structured-fact answer orchestrator (multi-turn dual-track pathway).
 
 Decides whether a processed query should take the structured-fact path
 (typed SQL on the operational schema) or fall through to the document
@@ -6,25 +6,33 @@ path (vector + BM25).
 
 Flow (per docs/architecture/dual_path_assistant.md §3/§4):
 
-1. ``classify_fact_intent`` over the normalized query.
-2. No intent match → return ``None`` (document path).
-3. Intent match but no case context → return ``None`` so the query falls
-   through instead of emitting a misleading empty fact package. (A
-   conversation binds to a ``case_id`` at creation — §8. For a client
-   audience we auto-resolve their most recent active case.)
-4. Resolve facts via ``fact_resolvers.resolve_fact`` (RLS bound in SQL).
-5. Build a ``ResponsePackage`` with ``retrieval_path="structured_fact"``,
-   confidence = completeness-based, routing via the existing confidence
-   thresholds.
+1. Multi-question split has already produced ``plan.sub_queries``; each
+   sub-question is classified independently via ``classify_fact_intent``.
+2. No intent match anywhere → return ``None`` (document path).
+3. Intent(s) match but no case context → return ``None`` so the query
+   falls through instead of emitting a misleading empty answer. (For a
+   client audience we auto-resolve their most recent active case.)
+4. Resolve facts for every matched intent via
+   ``fact_resolvers.resolve_fact`` (RLS bound in SQL).
+5. Merge the facts for all matched intents into ONE ``ResponsePackage``
+   with ``retrieval_path="structured_fact"``, confidence = mean per-intent
+   completeness, routing via the existing confidence thresholds.
 
-This module never generates text: every ``answer``/``facts`` value is a
-verbatim stored value with an explicit source (``cases#204``).
+The single-bubble ``answer`` is AN EXPLICITLY SANCTIONED deterministic
+assembly (documented in docs/architecture/dual_path_assistant.md §9 /
+CLAUDE.md "revisit on demand"). It is NOT an LLM and it never paraphrases
+or invents content: it inserts each fact's ``value`` VERBATIM into fixed,
+per-intent sentence templates (e.g. "Case {Case number} is currently
+{Status}."). Every value still carries its source row (``cases#204``),
+shown under the bubble. If a template slot has no fact, the sentence is
+omitted — no placeholder text is emitted.
 """
 
 from __future__ import annotations
 
 import hashlib
 import uuid
+from collections import OrderedDict
 
 import psycopg
 
@@ -32,6 +40,7 @@ from app.query_processing.fact_router import classify_fact_intent
 from app.query_processing.fact_resolvers import (
     FactContext,
     FactRecord,
+    FactResult,
     resolve_fact,
 )
 from app.response.confidence_thresholds import route_by_confidence
@@ -88,6 +97,142 @@ RELATED_QUESTIONS_BY_INTENT: dict[str, list[str]] = {
 }
 
 
+def _fact_map(facts: list[FactRecord]) -> dict[str, str | int | float | None]:
+    """First value per label (labels are unique within one resolver result)."""
+    out: dict[str, str | int | float | None] = {}
+    for f in facts:
+        out.setdefault(f.label, f.value)
+    return out
+
+
+def _sentence(parts: list[str]) -> str:
+    """Join non-empty template fragments without placeholder text."""
+    joined = " ".join(p for p in parts if p)
+    return joined.strip().rstrip(".;,") + "."
+
+
+def _sentences_for_intent(intent: str, result: FactResult) -> list[str]:
+    """Deterministic per-intent answer sentences.
+
+    Only slots that have an actual fact are emitted — there are NO
+    placeholder sentences, NO paraphrase, and NO invented content. Every
+    inserted value is the verbatim stored value (see module docstring).
+    """
+    if not result.accessible or not result.facts:
+        return []
+    m = _fact_map(result.facts)
+
+    def get(label: str) -> str:
+        v = m.get(label)
+        return "" if v is None or v == "" else str(v)
+
+    if intent == "case_status":
+        return [
+            _sentence([
+                "Your case",
+                get("Case number"),
+                "is currently",
+                get("Status") + "." if get("Status") else "",
+                f"Latest update: {get('Latest update')}." if get("Latest update") else "",
+                f'The latest note reads: "{get("Latest note")}".' if get("Latest note") else "",
+            ])
+        ]
+    if intent == "case_next_step":
+        return [
+            _sentence([
+                "You are waiting on the following",
+                get("Workflow"),
+                "which is currently",
+                get("Workflow status") + ".",
+                f'Latest note: {get("Latest update")}.' if get("Latest update") else "",
+            ])
+        ]
+    if intent == "missing_documents":
+        pending = [f.value for f in result.facts if f.kind == "document"]
+        if not pending:
+            return ["There are no missing documents on your case right now."]
+        count = get("Pending documents")
+        return [
+            _sentence([
+                "Your case still needs",
+                f"{len(pending)} {'document' if len(pending) == 1 else 'documents'}",
+                "before it can proceed:",
+                "; ".join(str(p) for p in pending) + ".",
+            ])
+        ]
+    if intent == "case_documents":
+        docs = [f.value for f in result.facts if f.kind == "document"]
+        if not docs:
+            return ["No approved documents are attached to your case."]
+        return [
+            _sentence([
+                "These approved documents are on file for your case:",
+                "; ".join(str(d) for d in docs) + ".",
+            ])
+        ]
+    if intent == "case_property":
+        address = get("Property address")
+        ptype = get("Property type")
+        if not address:
+            return []
+        parts = ["The property on this case is", address + "."]
+        if ptype:
+            parts.append(f"Its property type is {ptype}.")
+        return [_sentence(parts)]
+    if intent == "case_timeline":
+        events = [f.value for f in result.facts if f.kind == "event"]
+        if not events:
+            return ["There are no recorded events on this case yet."]
+        return [
+            _sentence([
+                "Here is the history of your case:",
+                "; ".join(str(e) for e in events) + ".",
+            ])
+        ]
+    if intent == "workflow_step":
+        return [
+            _sentence([
+                "Your file currently sits at workflow",
+                get("Workflow"),
+                "with status",
+                get("Workflow status") + ".",
+            ])
+        ]
+    if intent == "client_financials":
+        amount = get("Loan amount")
+        return [
+            _sentence(["The loan amount on this case is", f"{amount} dollars."])
+            if amount else []
+        ]
+    return []
+
+
+def _assemble_answer(intents: list[str], results: dict[str, FactResult]) -> str:
+    """Combine the per-intent sentences into one readable bubble.
+
+    Sentences appear in the same order the intents were fired in. This is
+    deterministic template composition over verbatim facts — no LLM.
+    """
+    parts: list[str] = []
+    for intent in intents:
+        result = results.get(intent)
+        if result is None:
+            continue
+        parts.extend(_sentences_for_intent(intent, result))
+    return " ".join(parts).strip()
+
+
+def _merge_related_questions(intents: list[str]) -> list[str]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for intent in intents:
+        for q in RELATED_QUESTIONS_BY_INTENT.get(intent, []):
+            if q not in seen:
+                seen.add(q)
+                merged.append(q)
+    return merged
+
+
 def _resolve_case_id(conn: psycopg.Connection, user: dict, case_id: int | None) -> int | None:
     """Return the conversation's case id, auto-resolving for client audience.
 
@@ -117,14 +262,40 @@ def _completeness(intent: str, facts: list[FactRecord]) -> float:
 
 
 def _build_fact_package(
-    intent: str,
-    facts: list[FactRecord],
+    intents: list[str],
+    results: dict[str, FactResult],
     query_text: str,
 ) -> ResponsePackage:
-    confidence = round(_completeness(intent, facts) * 100.0, 1)
+    """Merge per-intent facts into ONE answer bubble + fact list.
+
+    Confidence = mean of per-intent completeness (1.0 = all targets met).
+    Routing still goes through the shared confidence thresholds so a fully
+    answered question stays ``answer`` and a partially answered one gets
+    ``partial`` — never a blanket reject.
+    """
+    if not intents:
+        return _no_answer_package("No supported question was found in your message.", query_text)
+
+    all_facts: list[FactRecord] = []
+    ordered: list[tuple[str, FactResult]] = []
+    for intent in intents:
+        result = results.get(intent)
+        if result is None or not result.accessible:
+            continue
+        ordered.append((intent, result))
+        all_facts.extend(result.facts)
+
+    answer = _assemble_answer(intents, results)
+
+    completeness_scores = [
+        _completeness(intent, results[intent].facts)
+        for intent in intents
+        if results.get(intent) is not None
+    ]
+    confidence = round(sum(completeness_scores) / len(completeness_scores) * 100.0, 1) if completeness_scores else 0.0
     routing = route_by_confidence(confidence)
 
-    title = {
+    title = "Summary" if len(intents) > 1 else {
         "case_status": "Case Status",
         "case_next_step": "Next Steps",
         "missing_documents": "Missing Documents",
@@ -133,20 +304,30 @@ def _build_fact_package(
         "case_timeline": "Case Timeline",
         "workflow_step": "Workflow Position",
         "client_financials": "Loan Details",
-    }.get(intent, "Case Details")
+    }.get(intents[0], "Case Details")
 
     response_id = hashlib.sha256(
-        f"fact:{intent}:{query_text}:{uuid.uuid4()}".encode()
+        f"fact:{'+'.join(intents)}:{query_text}:{uuid.uuid4()}".encode()
     ).hexdigest()[:16]
+
+    # Deduplicate identical fact rows across resolvers (same label/value/source).
+    seen_facts: set[tuple[str, str, str]] = set()
+    unique_facts: list[FactRecord] = []
+    for f in all_facts:
+        key = (str(f.label), str(f.value), f.source)
+        if key not in seen_facts:
+            seen_facts.add(key)
+            unique_facts.append(f)
 
     package = ResponsePackage(
         response_id=response_id,
         title=title,
+        answer=answer,
         confidence=confidence,
         routing=routing,
-        related_questions=RELATED_QUESTIONS_BY_INTENT.get(intent, []),
+        related_questions=_merge_related_questions(intents),
     )
-    package.facts = facts
+    package.facts = unique_facts
     package.retrieval_path = "structured_fact"
     return package
 
@@ -157,6 +338,7 @@ def _no_answer_package(reason: str, query_text: str) -> ResponsePackage:
             f"fact:no:{query_text}:{uuid.uuid4()}".encode()
         ).hexdigest()[:16],
         title="No Answer",
+        answer="",
         confidence=0.0,
         routing="no_answer",
         related_questions=[],
@@ -169,17 +351,39 @@ def _no_answer_package(reason: str, query_text: str) -> ResponsePackage:
 def run_fact_path(
     conn: psycopg.Connection,
     normalized_query: str,
-    user: dict,
-    case_id: int | None,
-    query_text: str,
+    sub_queries: list[str] | None = None,
+    user: dict | None = None,
+    case_id: int | None = None,
+    query_text: str = "",
 ) -> ResponsePackage | None:
-    """Run the structured-fact path, or return ``None`` to fall through.
+    """Run the structured-fact path for a whole message, or return ``None``.
 
-    ``None`` means: no supported fact intent, or no case context to scope
-    the facts — the caller should run the document path instead.
+    ``sub_queries`` (optional, from ``plan.sub_queries``) drives per-part
+    intent classification so a compound message like "what's my status?
+    what's missing?" resolves BOTH intents and merges their facts into one
+    bubble. When ``sub_queries`` is ``None`` (legacy single-query callers
+    and tests), the whole ``normalized_query`` is classified directly.
+
+    ``None`` means: no supported fact intent at all — the caller should
+    run the document path instead.
     """
-    intent = classify_fact_intent(normalized_query)
-    if intent is None:
+    if sub_queries is None:
+        intents = [i for i in (classify_fact_intent(normalized_query),) if i is not None]
+    else:
+        parts = [p for p in sub_queries if p and p.strip()]
+        if not parts:
+            return None
+        # Classify each sub-question independently, preserving first-match
+        # order and dropping duplicates so "status? also status?" stays one.
+        intents = []
+        seen: set[str] = set()
+        for part in parts:
+            intent = classify_fact_intent(part)
+            if intent is not None and intent not in seen:
+                seen.add(intent)
+                intents.append(intent)
+
+    if not intents:
         return None
 
     resolved_case_id = _resolve_case_id(conn, user, case_id)
@@ -194,8 +398,17 @@ def run_fact_path(
         case_id=resolved_case_id,
         client_id=user.get("client_id"),
     )
-    result = resolve_fact(conn, intent, ctx)
-    if not result.accessible:
-        return _no_answer_package(result.reason or "This case is not accessible.", query_text)
 
-    return _build_fact_package(intent, result.facts, query_text)
+    results: dict[str, FactResult] = {}
+    for intent in intents:
+        result = resolve_fact(conn, intent, ctx)
+        results[intent] = result
+        if not result.accessible:
+            # Any inaccessible sub-question poisons the whole bubble rather
+            # than silently dropping part of what was asked.
+            return _no_answer_package(result.reason or "This case is not accessible.", query_text)
+
+    if not any(r.facts for r in results.values()):
+        return _no_answer_package("No facts could be retrieved for that question.", query_text)
+
+    return _build_fact_package(intents, results, query_text)

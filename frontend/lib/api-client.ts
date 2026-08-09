@@ -38,6 +38,7 @@ export interface SearchSummarySentence {
 export interface SearchResponse {
   response_id: string;
   title: string;
+  answer: string;
   excerpts: SearchExcerpt[];
   summary: SearchSummarySentence[];
   confidence: number;

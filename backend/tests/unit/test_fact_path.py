@@ -231,7 +231,14 @@ class TestRunFactPath:
         from app.query_processing.fact_path import run_fact_path
 
         conn = _make_conn(None)
-        package = run_fact_path(conn, "how does mortgage insurance work?", CLIENT_USER, None, "how does mortgage insurance work?")
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="how does mortgage insurance work?",
+            sub_queries=None,
+            user=CLIENT_USER,
+            case_id=None,
+            query_text="how does mortgage insurance work?",
+        )
         assert package is None
 
     def test_fact_intent_builds_fact_package_for_client(self):
@@ -247,7 +254,14 @@ class TestRunFactPath:
             "created_at": "2026-01-01T00:00:00Z",
         })
         conn = _make_conn(case)
-        package = run_fact_path(conn, "what is my loan amount?", CLIENT_USER, 10, "what is my loan amount?")
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="what is my loan amount?",
+            sub_queries=None,
+            user=CLIENT_USER,
+            case_id=10,
+            query_text="what is my loan amount?",
+        )
         assert package is not None
         assert package.retrieval_path == "structured_fact"
         assert any(f.kind == "amount" and f.value == "250000.00" for f in package.facts)
@@ -271,7 +285,14 @@ class TestRunFactPath:
         conn = MagicMock()
         conn.cursor.return_value = cur
 
-        package = run_fact_path(conn, "what is my loan amount?", CLIENT_USER, None, "what is my loan amount?")
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="what is my loan amount?",
+            sub_queries=None,
+            user=CLIENT_USER,
+            case_id=None,
+            query_text="what is my loan amount?",
+        )
         assert package is not None
         assert any(f.kind == "amount" for f in package.facts)
 
@@ -280,7 +301,14 @@ class TestRunFactPath:
 
         # Client asks about case 99 which they cannot see → no_answer.
         conn = _make_conn(None)
-        package = run_fact_path(conn, "what is the status of my case?", CLIENT_USER, 99, "what is the status of my case?")
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="what is the status of my case?",
+            sub_queries=None,
+            user=CLIENT_USER,
+            case_id=99,
+            query_text="what is the status of my case?",
+        )
         assert package is not None
         assert package.routing == "no_answer"
         assert package.no_answer_reason
@@ -298,5 +326,131 @@ class TestRunFactPath:
             "created_at": "2026-01-01T00:00:00Z",
         })
         conn = _make_conn(case)
-        package = run_fact_path(conn, "what is my loan amount?", CLIENT_USER, 10, "what is my loan amount?")
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="what is my loan amount?",
+            sub_queries=None,
+            user=CLIENT_USER,
+            case_id=10,
+            query_text="what is my loan amount?",
+        )
         assert package.related_questions  # role-appropriate follow-ups present
+
+
+# ---------------------------------------------------------------------------
+# Multi-question merge — compound messages resolve every fact intent
+# ---------------------------------------------------------------------------
+
+
+def _make_compound_conn(case_row, pending_documents=None):
+    """Fake conn that serves ``case_row`` on EVERY case lookup.
+
+    Compound queries run several resolvers back-to-back, each doing its own
+    ``SELECT ... FROM cases``. A single-shot ``fetchone`` would starve the
+    later resolvers, so this fake inspects the SQL actually executed: case
+    lookups always return ``case_row``, everything else (events etc.) misses,
+    and the documents query returns ``pending_documents`` via ``fetchall``.
+    """
+    last_sql: dict[str, str] = {}
+
+    cur = MagicMock()
+
+    def fake_execute(sql, params=None):
+        last_sql["sql"] = sql
+        return MagicMock()
+
+    def fake_fetchone():
+        sql = last_sql.get("sql", "")
+        if "FROM cases" in sql and "SELECT id FROM cases" not in sql:
+            return case_row
+        return None
+
+    cur.execute.side_effect = fake_execute
+    cur.fetchone.side_effect = fake_fetchone
+    cur.fetchall.return_value = pending_documents or []
+    cur.__enter__ = MagicMock(return_value=cur)
+    cur.__exit__ = MagicMock(return_value=False)
+    conn = MagicMock()
+    conn.cursor.return_value = cur
+    return conn
+
+
+_CASE_ROW = {
+    "id": 10,
+    "case_number": "C-100",
+    "client_id": 7,
+    "property_id": None,
+    "loan_amount": 250000.00,
+    "status": "active",
+    "created_at": "2026-01-01T00:00:00Z",
+}
+
+
+class TestRunFactPathMultiQuestion:
+    def test_compound_query_merges_both_intents(self):
+        from app.query_processing.fact_path import run_fact_path
+
+        conn = _make_compound_conn(
+            _row(_CASE_ROW),
+            pending_documents=[
+                _row({"id": 41, "title": "Pay Stubs", "doc_type": "income"}),
+            ],
+        )
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="what is the status of my case? what documents are missing?",
+            sub_queries=[
+                "what is the status of my case",
+                "what documents are still missing",
+            ],
+            user=CLIENT_USER,
+            case_id=10,
+            query_text="what is the status of my case? what documents are missing?",
+        )
+        assert package is not None
+        # Facts from BOTH resolvers are present in the merged bubble.
+        labels = {f.label for f in package.facts}
+        assert "Status" in labels
+        assert "Pending documents" in labels
+        # verifiable facts → never a blanket no_answer; completeness avg here
+        # is 87.5% (3/4 status + 2/2 docs) so routing is partial-per-thresholds.
+        assert package.routing == "partial"
+        assert package.answer  # deterministic assembled bubble present
+        # Every value in the bubble is a verbatim fact value (no placeholders).
+        assert "None" not in package.answer and "{Status}" not in package.answer
+
+    def test_compound_query_dedupes_same_intent(self):
+        from app.query_processing.fact_path import run_fact_path
+
+        conn = _make_compound_conn(_row(_CASE_ROW))
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="what is my case status? and what is the status again?",
+            sub_queries=["what is my case status", "what is the case status"],
+            user=CLIENT_USER,
+            case_id=10,
+            query_text="what is my case status? and what is the status again?",
+        )
+        assert package is not None
+        assert package.retrieval_path == "structured_fact"
+        # Same intent fired twice → merged once, no duplicate facts.
+        statuses = [f for f in package.facts if f.label == "Status"]
+        assert len(statuses) == 1
+
+    def test_compound_with_unsupported_part_keeps_supported_parts(self):
+        from app.query_processing.fact_path import run_fact_path
+
+        conn = _make_compound_conn(_row(_CASE_ROW))
+        # "how does insurance work?" is not a fact intent → ignored; the
+        # supported "loan amount" part still gets answered.
+        package = run_fact_path(
+            conn=conn,
+            normalized_query="how does mortgage insurance work and what is my loan amount?",
+            sub_queries=["how does mortgage insurance work", "what is my loan amount"],
+            user=CLIENT_USER,
+            case_id=10,
+            query_text="how does mortgage insurance work and what is my loan amount?",
+        )
+        assert package is not None
+        assert any(f.label == "Loan amount" for f in package.facts)
+        assert "insurance" not in package.answer.lower()
