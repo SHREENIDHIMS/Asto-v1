@@ -1,7 +1,7 @@
-"""Auth endpoints (JWT login, verification).
+﻿"""Auth endpoints (JWT login, verification).
 
 Password storage: bcrypt via passlib. This is the production-grade
-password hashing scheme — resistant to brute-force and GPU-accelerated
+password hashing scheme â€” resistant to brute-force and GPU-accelerated
 cracking attacks.
 """
 
@@ -10,11 +10,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.hash import bcrypt
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
 
 from app.auth.jwt_handler import create_token, verify_token
 from app.config import settings
-from app.db.postgres.session import acquire
+from app.db.postgres import session
+from app.dependencies import require_auth
 
 router = APIRouter()
 
@@ -38,10 +40,26 @@ class TokenVerifyResponse(BaseModel):
     email: str | None = None
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
+
+
+class ChangePasswordResponse(BaseModel):
+    updated: bool
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest) -> LoginResponse:
     """Authenticate with email + password, return a JWT."""
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, email, password_hash, role, department, "
@@ -78,7 +96,7 @@ async def client_login(request: LoginRequest) -> LoginResponse:
     The client token is tagged audience="client" with their client_id so
     search is scoped to their own documents at the SQL WHERE clause.
     """
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, email, password_hash, full_name FROM clients "
@@ -123,3 +141,51 @@ async def verify(
         user_id=int(payload["sub"]) if payload.get("sub") else None,
         email=payload.get("email"),
     )
+
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+async def change_password(
+    request: ChangePasswordRequest,
+    user: dict = Depends(require_auth),
+) -> ChangePasswordResponse:
+    """Change the password for the currently authenticated user/client.
+
+    The identity table is resolved from the verified JWT audience
+    (staff -> ``users``, client -> ``clients``). The table name is never
+    user-supplied, so interpolating it here is safe.
+    """
+    table = "clients" if user.get("audience") == "client" else "users"
+    user_id = int(user["id"])
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT password_hash FROM {table} WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Account not found",
+            )
+
+        if not bcrypt.verify(request.current_password, row["password_hash"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect",
+            )
+
+        new_hash = bcrypt.hash(request.new_password)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"UPDATE {table} SET password_hash = %s WHERE id = %s",
+                (new_hash, user_id),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+
+    return ChangePasswordResponse(updated=True)

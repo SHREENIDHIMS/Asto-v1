@@ -1,4 +1,4 @@
-"""Analytics endpoints for admin review."""
+﻿"""Analytics endpoints for admin review."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.auth.permissions import require_role
 from app.dependencies import require_auth
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ async def knowledge_gaps(
     """View low-confidence / no-answer queries. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, query, intent, confidence, created_at "
@@ -45,7 +45,7 @@ async def analytics_summary(
     """
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS n FROM knowledge_gaps")
             total = cur.fetchone()["n"] or 0

@@ -1,14 +1,14 @@
-"""Document ingestion batch pipeline — entry point.
+﻿"""Document ingestion batch pipeline â€” entry point.
 
 Runs as a standalone process (invoked via infra/scripts/run_ingestion.sh),
 NOT inside the FastAPI request handler. Loads the embedding model,
 processes files in storage/pending/, and writes indexed chunks to Postgres.
 
-Pipeline order (per SKILL.md Phase 2 and Final_System_Design.md §6):
-  validation → OCR (optional fallback) → text_extraction →
-  structural_chunking (tables, checklists, sections, paragraphs) →
-  metadata_extraction → entity_extraction (light) →
-  embedding → indexing
+Pipeline order (per SKILL.md Phase 2 and Final_System_Design.md Â§6):
+  validation â†’ OCR (optional fallback) â†’ text_extraction â†’
+  structural_chunking (tables, checklists, sections, paragraphs) â†’
+  metadata_extraction â†’ entity_extraction (light) â†’
+  embedding â†’ indexing
 
 Usage:
     python -m app.documents.ingest_batch --queue-dir /path/to/pending
@@ -24,7 +24,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.db.postgres.schema import ensure_schema
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 from app.documents.chunking.structural_chunker import StructuralChunker
 from app.documents.embedding import generate_embeddings
 from app.documents.entity_extraction import extract_entities
@@ -62,7 +62,7 @@ def _move_to_processed(file_path: Path) -> None:
     dest = processed_dir / file_path.name
     try:
         file_path.rename(dest)
-        logger.info("Moved %s → %s", file_path, dest)
+        logger.info("Moved %s â†’ %s", file_path, dest)
     except FileNotFoundError:
         logger.warning("File already moved: %s", file_path)
 
@@ -150,7 +150,7 @@ def process_file(file_path: Path) -> bool:
             logger.error("Embedding generation failed for %s: %s", file_path.name, e)
             embeddings = None
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         sidecar = _load_sidecar(file_path)
         result = index_document(
             conn=conn,

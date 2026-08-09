@@ -1,4 +1,4 @@
-"""Document management API endpoints.
+﻿"""Document management API endpoints.
 
 Per CLAUDE.md rule 5: the upload endpoint lives in upload.py.
 This file only contains the list endpoint for admin review.
@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from app.auth.permissions import require_role
 from app.dependencies import require_auth
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 from app.documents.file_serve import resolve_stored_file
 
 router = APIRouter()
@@ -26,7 +26,7 @@ async def list_documents(
     """List documents (requires admin role)."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, title, source_path, doc_type, department, client_id, "
@@ -48,7 +48,7 @@ async def get_document_file(
     """Serve a stored document file (requires admin role)."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT source_path, title FROM documents WHERE id = %s",

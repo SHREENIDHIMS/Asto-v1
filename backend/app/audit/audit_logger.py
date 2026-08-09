@@ -1,4 +1,4 @@
-"""Audit logger — immutable record of every query.
+﻿"""Audit logger â€” immutable record of every query.
 
 Per CLAUDE.md rule #8: EVERY query is audit-logged, including
 'no answer found' and test/internal queries against production data.
@@ -15,7 +15,7 @@ from typing import Protocol
 from psycopg.types.json import Json
 
 from app.config import settings
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +47,14 @@ class AuditLogEntry:
 def log_query(entry: AuditLogEntry) -> None:
     """Write an audit log entry to the Postgres audit_log table.
 
-    Never raises — audit logging must not break the request path.
+    Never raises â€” audit logging must not break the request path.
     If the DB write fails, log to stderr as a fallback.
     """
     if not settings.audit_enabled:
         return
 
     try:
-        with acquire() as conn:
+        with session.acquire() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO audit_log "
@@ -78,13 +78,13 @@ def log_query(entry: AuditLogEntry) -> None:
 
 
 class AuditLogger(Protocol):
-    """Protocol for audit logging — allows dependency injection in tests."""
+    """Protocol for audit logging â€” allows dependency injection in tests."""
 
     def log(self, entry: AuditLogEntry) -> None: ...
 
 
 class PostgresAuditLogger:
-    """Production audit logger — writes to Postgres."""
+    """Production audit logger â€” writes to Postgres."""
 
     def log(self, entry: AuditLogEntry) -> None:
         log_query(entry)

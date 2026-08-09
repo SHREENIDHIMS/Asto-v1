@@ -63,6 +63,9 @@ class ResponsePackage:
     confidence: float = 0.0
     routing: str = "answer"
     max_excerpt_chars: int = 600
+    facts: list = field(default_factory=list)          # list[FactRecord]
+    retrieval_path: str = "document"                   # "document" | "structured_fact"
+    no_answer_reason: str | None = None
 
 
 def _truncate(text: str, max_chars: int) -> str:

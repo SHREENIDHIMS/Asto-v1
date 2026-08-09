@@ -1,4 +1,4 @@
-"""Idempotent schema initialization.
+﻿"""Idempotent schema initialization.
 
 Runs `CREATE TABLE IF NOT EXISTS` statements. Safe to run on every
 startup (dev default) or via `scripts/migrate_db.sh` in production.
@@ -8,14 +8,14 @@ Alembic migration approach: for a knowledge assistant with one small
 Postgres schema, an idempotent DDL script is lighter than a full
 migration framework and keeps the shared host's dependency footprint
 small. If the schema ever grows to need multi-step data migrations,
-introduce Alembic then — not before.
+introduce Alembic then â€” not before.
 """
 
 from __future__ import annotations
 
 import psycopg
 
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 
 DDL_STATEMENTS: list[str] = [
     # --- Users (staff) ---
@@ -70,7 +70,7 @@ DDL_STATEMENTS: list[str] = [
         created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # --- Staff ↔ client assignments (scopes staff search to assigned clients) ---
+    # --- Staff â†” client assignments (scopes staff search to assigned clients) ---
     """
     CREATE TABLE IF NOT EXISTS staff_client_assignments (
         user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -168,6 +168,68 @@ DDL_STATEMENTS: list[str] = [
         created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # --- Case status events (client-facing status timeline) ---
+    """
+    CREATE TABLE IF NOT EXISTS case_events (
+        id         BIGSERIAL PRIMARY KEY,
+        case_id    BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL,
+        note       TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- SOPs (official Standard Operating Procedures, department-scoped) ---
+    """
+    CREATE TABLE IF NOT EXISTS sops (
+        id          BIGSERIAL PRIMARY KEY,
+        title       TEXT NOT NULL,
+        department  TEXT NOT NULL DEFAULT 'general',
+        body        TEXT NOT NULL,
+        version     INTEGER NOT NULL DEFAULT 1,
+        created_by  BIGINT REFERENCES users(id),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        is_active   BOOLEAN NOT NULL DEFAULT true
+    )
+    """,
+    # --- SOP access requests (staff request create/edit rights) ---
+    """
+    CREATE TABLE IF NOT EXISTS sop_access_requests (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action      TEXT NOT NULL CHECK (action IN ('create','edit')),
+        department  TEXT NOT NULL,
+        reason      TEXT,
+        status      TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','approved','rejected')),
+        reviewed_by BIGINT REFERENCES users(id),
+        reviewed_at TIMESTAMPTZ,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Workflows (active operational workflows, department-scoped) ---
+    """
+    CREATE TABLE IF NOT EXISTS workflows (
+        id          BIGSERIAL PRIMARY KEY,
+        title       TEXT NOT NULL,
+        department  TEXT NOT NULL DEFAULT 'general',
+        case_id     BIGINT REFERENCES cases(id) ON DELETE SET NULL,
+        status      TEXT NOT NULL DEFAULT 'in_progress'
+                    CHECK (status IN ('in_progress','review','done')),
+        assigned_to BIGINT REFERENCES users(id),
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Case notes (staff collaboration on a client's case) ---
+    """
+    CREATE TABLE IF NOT EXISTS case_notes (
+        id         BIGSERIAL PRIMARY KEY,
+        case_id    BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+        user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body       TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 ]
 
 # Idempotent column additions for schemas created before the dual-audience
@@ -184,7 +246,7 @@ ALTER_STATEMENTS: list[str] = [
 ]
 
 # CHECK constraints added via ALTER (no IF NOT EXISTS for constraints in PG,
-# so guard with a DO block — idempotent across restarts).
+# so guard with a DO block â€” idempotent across restarts).
 CONSTRAINT_STATEMENTS: list[str] = [
     """
     DO $$
@@ -214,6 +276,11 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_cases_property ON cases (property_id)",
     "CREATE INDEX IF NOT EXISTS idx_staff_client_client ON staff_client_assignments (client_id)",
     "CREATE INDEX IF NOT EXISTS idx_approval_log_document ON approval_log (document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_case_events_case ON case_events (case_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_sops_department ON sops (department, is_active)",
+    "CREATE INDEX IF NOT EXISTS idx_sop_req_status ON sop_access_requests (status, department)",
+    "CREATE INDEX IF NOT EXISTS idx_workflows_dept ON workflows (department, status)",
+    "CREATE INDEX IF NOT EXISTS idx_case_notes_case ON case_notes (case_id)",
 ]
 
 
@@ -233,5 +300,5 @@ def init_schema(conn: psycopg.Connection) -> None:
 
 def ensure_schema() -> None:
     """Idempotent; safe to call at app startup."""
-    with acquire() as conn:
+    with session.acquire() as conn:
         init_schema(conn)

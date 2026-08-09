@@ -6,8 +6,10 @@ import {
   AlertCircle,
   Building2,
   ChevronDown,
+  Clock,
   FileText,
   FolderOpen,
+  Landmark,
   Loader2,
   LogOut,
   MessageSquare,
@@ -21,6 +23,8 @@ import {
 } from "lucide-react";
 import {
   clientUploadDocument,
+  getClientCaseDetail,
+  getClientCases,
   getClientDocumentFile,
   getClientDocuments,
   getClientMe,
@@ -30,14 +34,18 @@ import {
   searchKnowledgeBaseStream,
   SearchResponse,
   SearchStage,
+  CaseDetail,
+  ClientCase,
   ClientDocument,
   ClientProfile,
   ClientProperty,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken } from "@/lib/auth";
 import { useChatSessions, ChatSession } from "@/hooks/use-chat-sessions";
-import AppSidebar from "@/components/layout/AppSidebar";
+import AppShell from "@/components/layout/AppShell";
+import { NAV_GROUPS } from "@/config/navigation";
 import ChatMessage from "@/components/chat/ChatMessage";
+import SettingsModal from "@/components/settings/SettingsModal";
 import SearchBar from "@/components/search/SearchBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
 import HeroSection from "@/components/home/HeroSection";
@@ -56,7 +64,60 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-type View = "chat" | "documents" | "properties" | "settings";
+type View = "chat" | "documents" | "properties" | "cases" | "settings";
+
+const VIEW_TO_NAV: Record<View, string> = {
+  chat: "assistant",
+  documents: "documents",
+  properties: "property",
+  cases: "case",
+  settings: "assistant",
+};
+
+const NAV_TO_VIEW: Record<string, View> = {
+  assistant: "chat",
+  documents: "documents",
+  property: "properties",
+  case: "cases",
+};
+
+function statusTone(status: string): "default" | "success" | "warning" | "destructive" | "secondary" {
+  switch (status.toLowerCase()) {
+    case "submitted":
+      return "secondary";
+    case "under_review":
+      return "warning";
+    case "active":
+    case "approved":
+    case "done":
+      return "success";
+    case "rejected":
+    case "closed":
+      return "destructive";
+    default:
+      return "default";
+  }
+}
+
+function statusLabel(status: string): string {
+  switch (status.toLowerCase()) {
+    case "under_review":
+      return "Under review";
+    case "in_progress":
+      return "In progress";
+    default:
+      return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+}
+
+function formatMoney(value: number | null): string {
+  if (value == null) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
 
 function initials(name: string | null, email: string): string {
   const src = (name ?? email).trim();
@@ -81,28 +142,37 @@ function ChatView({
   isLoading,
   error,
   stage,
-  pendingQuestion,
-  isClient,
-  onSearch,
-  onAskRelated,
-  onNewChat,
+    pendingQuestion,
+    pendingUrgency,
+    isClient,
+    onSearch,
+    onAskRelated,
+    onNewChat,
+    regeneratingTurnId,
+    onRegenerateTurn,
+    showSuggestions,
 }: {
   session: ChatSession | null;
   isLoading: boolean;
   error: string | null;
   stage: SearchStage | null;
   pendingQuestion: string | null;
+  pendingUrgency: boolean;
   isClient: boolean;
-  onSearch: (q: string) => void;
+  onSearch: (q: string, urgency?: boolean) => void;
   onAskRelated: (q: string) => void;
   onNewChat: () => void;
+  regeneratingTurnId: string | null;
+  onRegenerateTurn: (turnId: string, query: string) => void;
+  showSuggestions: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Scroll only when a new message/response begins.
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [session?.turns.length, isLoading, pendingQuestion]);
+  }, [session?.turns.length, isLoading, pendingQuestion, regeneratingTurnId]);
 
   const stageLabel =
     stage === "processing"
@@ -134,14 +204,19 @@ function ChatView({
           {session && session.turns.length > 0 && (
             <div className="space-y-8 mt-4">
               {session.turns.map((turn) => (
-                <div key={turn.id}>
-                  <ChatMessage turn={turn} />
-                  {turn.response.related_questions.length > 0 && (
-                    <RelatedQuestions
-                      questions={turn.response.related_questions}
-                      onAskQuestion={onAskRelated}
-                    />
-                  )}
+                <div key={turn.id} className="relative group">
+                  <ChatMessage
+                    turn={turn}
+                    onRegenerate={() => onRegenerateTurn(turn.id, turn.query)}
+                    isRegenerating={regeneratingTurnId === turn.id}
+                  />
+                  {showSuggestions &&
+                    turn.response.related_questions.length > 0 && (
+                      <RelatedQuestions
+                        questions={turn.response.related_questions}
+                        onAskQuestion={onAskRelated}
+                      />
+                    )}
                 </div>
               ))}
             </div>
@@ -150,7 +225,12 @@ function ChatView({
           {isLoading && pendingQuestion && (
             <div className="space-y-4 mt-8">
               <div className="flex justify-end">
-                <div className="bg-muted text-foreground rounded-2xl rounded-br-sm px-4 py-2.5 text-sm leading-relaxed">
+                <div
+                  className={cn(
+                    "rounded-2xl rounded-br-sm bg-muted text-foreground px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
+                    pendingUrgency && "border-2 border-destructive"
+                  )}
+                >
                   {pendingQuestion}
                 </div>
               </div>
@@ -199,6 +279,7 @@ function ChatView({
           <SearchBar
             onSearch={onSearch}
             isLoading={isLoading}
+            showUrgency={true}
             placeholder="Ask about your loans, policies, or documents..."
           />
         </div>
@@ -530,58 +611,168 @@ function PropertiesView({
 }
 
 // ---------------------------------------------------------------------------
-// Settings view
+// Cases view
 // ---------------------------------------------------------------------------
 
-function SettingsView({
-  profile,
-  onSignOut,
+function CasesView({
+  token,
+  cases,
+  onError,
 }: {
-  profile: ClientProfile;
-  onSignOut: () => void;
+  token: string;
+  cases: ClientCase[];
+  onError: (msg: string) => void;
 }) {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [details, setDetails] = useState<Record<number, CaseDetail>>({});
+  const [loadingId, setLoadingId] = useState<number | null>(null);
+
+  const toggleCase = async (c: ClientCase) => {
+    if (expandedId === c.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(c.id);
+    if (!details[c.id]) {
+      setLoadingId(c.id);
+      try {
+        const detail = await getClientCaseDetail(token, c.id);
+        setDetails((prev) => ({ ...prev, [c.id]: detail }));
+      } catch (err) {
+        onError(err instanceof Error ? err.message : "Failed to load case");
+      } finally {
+        setLoadingId(null);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
         <h2 className="text-2xl font-bold flex items-center gap-2">
-          <Settings className="w-6 h-6 text-primary" />
-          Settings
+          <Landmark className="w-6 h-6 text-primary" />
+          Cases
         </h2>
         <p className="text-sm text-muted-foreground">
-          Your account details.
+          Track your mortgage and application statuses in real time.
         </p>
       </div>
 
-      <Card>
-        <CardContent className="p-6 space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-primary text-primary-foreground text-lg font-bold">
-              {initials(profile.full_name, profile.email)}
-            </div>
-            <div>
-              <p className="font-semibold text-lg">
-                {profile.full_name || profile.email}
-              </p>
-              <p className="text-sm text-muted-foreground">{profile.email}</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Member since</p>
-              <p className="font-medium">{formatDate(profile.created_at)}</p>
-            </div>
-            <div className="rounded-lg border border-border p-3">
-              <p className="text-xs text-muted-foreground">Access</p>
-              <p className="font-medium">Client portal — your documents only</p>
-            </div>
-          </div>
-          <Button type="button" variant="destructive" onClick={onSignOut}>
-            <LogOut className="h-4 w-4 mr-2" />
-            Sign out
-          </Button>
-        </CardContent>
-      </Card>
+      {cases.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            No cases on file yet.
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {cases.map((c) => (
+            <Card key={c.id}>
+              <CardContent className="p-5">
+                <button
+                  type="button"
+                  onClick={() => toggleCase(c)}
+                  className="w-full text-left"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold">{c.case_number}</p>
+                        <Badge variant={statusTone(c.status)}>
+                          {statusLabel(c.status)}
+                        </Badge>
+                        {c.latest_event?.created_at && (
+                          <span className="text-xs text-muted-foreground">
+                            Updated {formatDate(c.latest_event.created_at)}
+                          </span>
+                        )}
+                      </div>
+                      {c.property_address && (
+                        <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
+                          <Building2 className="w-3.5 h-3.5" />
+                          {c.property_address}
+                          {c.property_type ? ` · ${c.property_type}` : ""}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="text-right">
+                        <p className="text-sm text-muted-foreground">Loan amount</p>
+                        <p className="font-semibold">{formatMoney(c.loan_amount)}</p>
+                      </div>
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 text-muted-foreground transition-transform",
+                          expandedId === c.id && "rotate-180"
+                        )}
+                      />
+                    </div>
+                  </div>
+                </button>
+
+                {expandedId === c.id && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    {loadingId === c.id ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading timeline…
+                      </div>
+                    ) : (
+                      <Timeline detail={details[c.id]} />
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function Timeline({ detail }: { detail: CaseDetail | undefined }) {
+  if (!detail || detail.events.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No status history recorded yet.
+      </p>
+    );
+  }
+  return (
+    <ol className="space-y-0">
+      {detail.events.map((ev, i) => {
+        const isLast = i === detail.events.length - 1;
+        return (
+          <li key={ev.id} className="relative pl-6 pb-4">
+            {!isLast && (
+              <span className="absolute left-2 top-2 bottom-0 w-px bg-border" />
+            )}
+            <span
+              className={cn(
+                "absolute left-0 top-1.5 h-3 w-3 rounded-full border-2 bg-background",
+                isLast ? "border-primary" : "border-muted-foreground/40"
+              )}
+            />
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium">{statusLabel(ev.status)}</span>
+                <Badge variant={statusTone(ev.status)}>{ev.status}</Badge>
+                {ev.created_at && (
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {formatDate(ev.created_at)}
+                  </span>
+                )}
+              </div>
+              {ev.note && (
+                <p className="text-sm text-muted-foreground mt-0.5">{ev.note}</p>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -595,29 +786,31 @@ export default function ClientPage() {
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [properties, setProperties] = useState<ClientProperty[]>([]);
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
+  const [cases, setCases] = useState<ClientCase[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("chat");
-  const [collapsed, setCollapsed] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatStage, setChatStage] = useState<SearchStage | null>(null);
   const [chatPending, setChatPending] = useState<string | null>(null);
+  const [pendingUrgency, setPendingUrgency] = useState(false);
+  const [regeneratingTurnId, setRegeneratingTurnId] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("asto_smart_suggestions") !== "0";
+  });
+  const [sessionTimeout, setSessionTimeout] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const raw = localStorage.getItem("asto_session_timeout");
+    return raw ? Number(raw) : 0;
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const clientKey = token
     ? (decodeToken(token)?.client_id ?? "unknown")
     : "unknown";
   const sessions = useChatSessions(`client:${clientKey}`);
-
-  // Sidebar collapse preference
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      setCollapsed(localStorage.getItem("asto_sidebar_collapsed") === "1");
-    } catch {
-      // ignore
-    }
-  }, []);
 
   useEffect(() => {
     const t = getToken();
@@ -634,14 +827,16 @@ export default function ClientPage() {
     const t = getToken();
     if (!t) return;
     try {
-      const [me, props, docsRes] = await Promise.all([
+      const [me, props, docsRes, casesRes] = await Promise.all([
         getClientMe(t),
         getClientProperties(t),
         getClientDocuments(t),
+        getClientCases(t),
       ]);
       setProfile(me.client);
       setProperties(props.properties);
       setDocuments(docsRes.documents);
+      setCases(casesRes.cases);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load portal data");
     } finally {
@@ -665,11 +860,12 @@ export default function ClientPage() {
   }, [sessions]);
 
   const handleSearch = useCallback(
-    async (q: string) => {
+    async (q: string, urgency: boolean = false) => {
       if (chatLoading) return;
       const t = getToken();
       if (!t) return;
       setChatPending(q);
+      setPendingUrgency(urgency);
       setChatStage(null);
       setChatLoading(true);
       setChatError(null);
@@ -679,9 +875,10 @@ export default function ClientPage() {
         const result: SearchResponse = await searchKnowledgeBaseStream(
           q,
           t,
-          (s) => setChatStage(s)
+          (s) => setChatStage(s),
+          cases[0]?.id ?? null
         );
-        sessions.appendTurn(sid, q, result);
+        sessions.appendTurn(sid, q, result, urgency);
         setChatPending(null);
         setChatStage(null);
       } catch (err) {
@@ -691,23 +888,78 @@ export default function ClientPage() {
         setChatPending(null);
         setChatStage(null);
       } finally {
+        setPendingUrgency(false);
         setChatLoading(false);
+        setRegeneratingTurnId(null);
       }
     },
-    [chatLoading, sessions]
+    [chatLoading, sessions, cases]
   );
 
-  const handleToggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
+  const handleRegenerateTurn = useCallback(
+    async (turnId: string, query: string) => {
+      if (chatLoading) return;
+      const t = getToken();
+      if (!t) return;
+      const sid = sessions.activeId;
+      if (!sid) return;
+      setRegeneratingTurnId(turnId);
+      setChatStage(null);
       try {
-        localStorage.setItem("asto_sidebar_collapsed", next ? "1" : "0");
-      } catch {
-        // ignore
+        const result: SearchResponse = await searchKnowledgeBaseStream(
+          query,
+          t,
+          (s) => setChatStage(s),
+          cases[0]?.id ?? null
+        );
+        // Replace the assistant response in place — do not append.
+        sessions.replaceTurnResponse(sid, turnId, result);
+      } catch (err) {
+        setChatError(
+          err instanceof Error ? err.message : "Something went wrong"
+        );
+      } finally {
+        setRegeneratingTurnId(null);
+        setChatStage(null);
       }
-      return next;
-    });
-  }, []);
+    },
+    [chatLoading, sessions, cases]
+  );
+
+  // Session auto-timeout (client-side idle timer). 0 = disabled.
+  useEffect(() => {
+    if (!sessionTimeout || sessionTimeout <= 0) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (
+          window.confirm(
+            "Your session is about to time out due to inactivity. Stay signed in?"
+          )
+        ) {
+          return;
+        }
+        handleLogout();
+      }, sessionTimeout);
+    };
+    const events: Array<keyof DocumentEventMap> = [
+      "mousemove",
+      "keydown",
+      "mousedown",
+      "touchstart",
+      "scroll",
+    ];
+    const onActivity = () => reset();
+    reset();
+    events.forEach((e) =>
+      window.addEventListener(e, onActivity, { passive: true })
+    );
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, onActivity));
+    };
+  }, [sessionTimeout, handleLogout]);
 
   if (isLoading) {
     return (
@@ -717,214 +969,187 @@ export default function ClientPage() {
     );
   }
 
-  const navItems = [
-    {
-      id: "chat",
-      label: "Chat",
-      icon: <MessageSquare className="h-4 w-4" />,
-      active: view === "chat",
-      onClick: () => setView("chat"),
-    },
-    {
-      id: "documents",
-      label: "Documents",
-      icon: <FolderOpen className="h-4 w-4" />,
-      active: view === "documents",
-      badge: documents.length || undefined,
-      onClick: () => setView("documents"),
-    },
-    {
-      id: "properties",
-      label: "Properties",
-      icon: <Building2 className="h-4 w-4" />,
-      active: view === "properties",
-      badge: properties.length || undefined,
-      onClick: () => setView("properties"),
-    },
-  ];
+  const headerTitle =
+    view === "chat"
+      ? "AI Assistant"
+      : view === "documents"
+        ? "Documents"
+        : view === "cases"
+          ? "My Case"
+          : "Property";
 
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      <AppSidebar
-        collapsed={collapsed}
-        onToggleCollapsed={handleToggleCollapsed}
-        brandTitle="Asto"
-        brandSubtitle="Client Portal"
-        navItems={navItems}
-        topContent={
-          <div className="space-y-4">
-            <Button
-              type="button"
-              className="w-full justify-start gap-3"
-              onClick={handleNewChat}
-            >
-              <MessageSquarePlus className="h-4 w-4" />
-              New chat
-            </Button>
+    <>
+      <AppShell
+        navGroups={NAV_GROUPS.client}
+        activeNavId={VIEW_TO_NAV[view]}
+        onNavigate={(id) => setView(NAV_TO_VIEW[id] ?? "chat")}
+      brandTitle="Asto"
+      brandSubtitle="Client Portal"
+      mobile="bottom-tabs"
+      headerTitle={headerTitle}
+      headerSubtitle="Everything about your case in one place"
+      sidebarTop={
+        <div className="space-y-4">
+          <Button
+            type="button"
+            className="w-full justify-start gap-3"
+            onClick={handleNewChat}
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            New chat
+          </Button>
 
-            <div className="space-y-1">
-              <div className="flex items-center justify-between px-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  Recent chats
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-1">
+              <p className="text-xs font-medium text-muted-foreground">
+                Recent chats
+              </p>
+              {sessions.sessions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={sessions.clearAllSessions}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+              {sessions.sessions.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-1 py-1">
+                  No recent chats
                 </p>
-                {sessions.sessions.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={sessions.clearAllSessions}
-                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    Clear
-                  </button>
-                )}
-              </div>
-              <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
-                {sessions.sessions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground px-1 py-1">
-                    No recent chats
-                  </p>
-                ) : (
-                  sessions.sessions.map((s) => (
-                    <div key={s.id} className="group flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant={
-                          sessions.activeId === s.id ? "secondary" : "ghost"
-                        }
-                        onClick={() => {
-                          sessions.activateSession(s.id);
-                          setView("chat");
-                        }}
-                        className="flex-1 justify-start gap-2 font-normal text-sm h-8 px-2"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                        <span className="truncate">{s.title}</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 flex-shrink-0 opacity-0 group-hover:opacity-100"
-                        onClick={() => sessions.deleteSession(s.id)}
-                        aria-label={`Delete ${s.title}`}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ))
-                )}
-              </div>
+              ) : (
+                sessions.sessions.map((s) => (
+                  <div key={s.id} className="group flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant={
+                        sessions.activeId === s.id ? "secondary" : "ghost"
+                      }
+                      onClick={() => {
+                        sessions.activateSession(s.id);
+                        setView("chat");
+                      }}
+                      className="flex-1 justify-start gap-2 font-normal text-sm h-8 px-2"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                      <span className="truncate">{s.title}</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 flex-shrink-0 opacity-0 group-hover:opacity-100"
+                      onClick={() => sessions.deleteSession(s.id)}
+                      aria-label={`Delete ${s.title}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
-        }
-        footerContent={
-          <div className="space-y-1">
-            <button
-              type="button"
-              onClick={() => setView("settings")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg p-2 hover:bg-muted transition-colors",
-                collapsed && "justify-center"
-              )}
-              title={collapsed ? "Account" : undefined}
-            >
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-xs font-bold flex-shrink-0">
-                {profile
-                  ? initials(profile.full_name, profile.email)
-                  : "?"}
-              </div>
-              {!collapsed && (
-                <div className="min-w-0 text-left">
-                  <p className="text-sm font-medium truncate">
-                    {profile ? profile.full_name || profile.email : "Client"}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {profile?.email ?? ""}
-                  </p>
-                </div>
-              )}
-            </button>
-            <Button
-              type="button"
-              variant={view === "settings" ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setView("settings")}
-              className={cn(
-                "w-full justify-start gap-3 font-normal",
-                collapsed && "justify-center px-2"
-              )}
-              title={collapsed ? "Settings" : undefined}
-            >
-              <Settings className="h-4 w-4 flex-shrink-0" />
-              {!collapsed && "Settings"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleLogout}
-              className={cn(
-                "w-full justify-start gap-3 text-muted-foreground",
-                collapsed && "justify-center px-2"
-              )}
-              title={collapsed ? "Sign out" : undefined}
-            >
-              <LogOut className="h-4 w-4 flex-shrink-0" />
-              {!collapsed && "Sign out"}
-            </Button>
-          </div>
-        }
-      />
+        </div>
+      }
+      user={{
+        name: profile?.full_name || profile?.email || "Client",
+        email: profile?.email,
+        role: "Client",
+      }}
+      onSettings={() => setSettingsOpen(true)}
+      onSignOut={handleLogout}
+    >
+      {error && (
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Something went wrong</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        </div>
+      )}
 
-      <div className="flex-1 min-w-0 h-full">
-        {error && (
-          <div className="max-w-3xl mx-auto px-4 py-4">
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Something went wrong</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          </div>
-        )}
+      {view === "chat" && (
+        <ChatView
+          session={sessions.activeSession}
+          isLoading={chatLoading}
+          error={chatError}
+          stage={chatStage}
+          pendingQuestion={chatPending}
+          isClient
+          onSearch={handleSearch}
+          onAskRelated={handleSearch}
+          onNewChat={handleNewChat}
+          regeneratingTurnId={regeneratingTurnId}
+          onRegenerateTurn={handleRegenerateTurn}
+          pendingUrgency={pendingUrgency}
+          showSuggestions={showSuggestions}
+        />
+      )}
 
-        {view === "chat" && (
-          <ChatView
-            session={sessions.activeSession}
-            isLoading={chatLoading}
-            error={chatError}
-            stage={chatStage}
-            pendingQuestion={chatPending}
-            isClient
-            onSearch={handleSearch}
-            onAskRelated={handleSearch}
-            onNewChat={handleNewChat}
+      {view === "documents" && token && (
+        <div className="h-full overflow-y-auto p-6">
+          <DocumentsView
+            token={token}
+            documents={documents}
+            properties={properties}
+            onUploaded={loadData}
+            onError={setError}
           />
-        )}
+        </div>
+      )}
 
-        {view === "documents" && token && (
-          <div className="h-full overflow-y-auto p-6">
-            <DocumentsView
-              token={token}
-              documents={documents}
-              properties={properties}
-              onUploaded={loadData}
-              onError={setError}
-            />
-          </div>
-        )}
+      {view === "properties" && token && (
+        <div className="h-full overflow-y-auto p-6">
+          <PropertiesView token={token} properties={properties} onError={setError} />
+        </div>
+      )}
 
-        {view === "properties" && token && (
-          <div className="h-full overflow-y-auto p-6">
-            <PropertiesView token={token} properties={properties} onError={setError} />
-          </div>
-        )}
+      {view === "cases" && token && (
+        <div className="h-full overflow-y-auto p-6">
+          <CasesView token={token} cases={cases} onError={setError} />
+        </div>
+      )}
+    </AppShell>
 
-        {view === "settings" && profile && (
-          <div className="h-full overflow-y-auto p-6">
-            <SettingsView profile={profile} onSignOut={handleLogout} />
-          </div>
-        )}
-      </div>
-    </div>
+    <SettingsModal
+      open={settingsOpen}
+      onOpenChange={setSettingsOpen}
+      user={{
+        name: profile?.full_name || profile?.email,
+        email: profile?.email,
+        role: "Client",
+      }}
+      onSignOut={handleLogout}
+      onSignOutAll={handleLogout}
+      onNewChat={handleNewChat}
+      onClearHistory={() => {
+        sessions.clearAllSessions();
+        setSettingsOpen(false);
+      }}
+      suggestionsEnabled={showSuggestions}
+      onToggleSuggestions={(next) => {
+        setShowSuggestions(next);
+        try {
+          localStorage.setItem("asto_smart_suggestions", next ? "1" : "0");
+        } catch {
+          // ignore
+        }
+      }}
+      timeoutSeconds={sessionTimeout}
+      onTimeoutChange={(v) => {
+        setSessionTimeout(v);
+        try {
+          localStorage.setItem("asto_session_timeout", String(v));
+        } catch {
+          // ignore
+        }
+      }}
+    />
+    </>
   );
 }

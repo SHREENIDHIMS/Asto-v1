@@ -1,4 +1,4 @@
-"""Knowledge gap detection.
+﻿"""Knowledge gap detection.
 
 Logs queries that result in low confidence or no answer, so the
 content team can identify gaps in the knowledge base and prioritize
@@ -10,7 +10,7 @@ Uses the no-answer threshold from response.confidence_thresholds
 
 from __future__ import annotations
 
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 from app.response.confidence_thresholds import DEFAULT_THRESHOLDS
 
 
@@ -27,14 +27,14 @@ def detect_and_log(
       (ConfidenceLevel.low, default 50)
 
     These are written to the knowledge_gaps table for analytics review.
-    Never raises — gap detection must not break the request path.
+    Never raises â€” gap detection must not break the request path.
     """
     threshold = DEFAULT_THRESHOLDS.low
     if confidence is not None and confidence >= threshold:
-        return  # high enough confidence — not a gap
+        return  # high enough confidence â€” not a gap
 
     try:
-        with acquire() as conn:
+        with session.acquire() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO knowledge_gaps (query, intent, confidence) "
@@ -43,4 +43,4 @@ def detect_and_log(
                 )
                 conn.commit()
     except Exception:
-        pass  # silently fail — gap detection is best-effort
+        pass  # silently fail â€” gap detection is best-effort

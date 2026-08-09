@@ -1,12 +1,12 @@
-"""Document approval workflow API (Phase B3).
+﻿"""Document approval workflow API (Phase B3).
 
 Admin-only endpoints implementing the Pending/Approved/Rejected state
 machine with a full reviewer audit trail (approval_log):
 
-- GET  /admin/documents/pending  — list documents awaiting review
-- POST /admin/documents/{id}/approve — set approved (writes approval_log)
-- POST /admin/documents/{id}/reject  — set rejected (writes approval_log)
-- GET  /admin/documents/{id}/history — approval audit trail for a document
+- GET  /admin/documents/pending  â€” list documents awaiting review
+- POST /admin/documents/{id}/approve â€” set approved (writes approval_log)
+- POST /admin/documents/{id}/reject  â€” set rejected (writes approval_log)
+- GET  /admin/documents/{id}/history â€” approval audit trail for a document
 
 State changes are transactional: the document AND all its chunks move
 together, so a partially-approved document can never leak into search.
@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth.permissions import require_role
 from app.dependencies import require_auth
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ def _apply_document_status(document_id: int, to_status: str, reviewer_id: int, r
             detail=f"Invalid status '{to_status}'",
         )
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT approval_status FROM documents WHERE id = %s",
@@ -87,7 +87,7 @@ async def list_pending_documents(
     """List documents awaiting approval. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -135,7 +135,7 @@ async def approval_history(
     """Return the approval audit trail for a document. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

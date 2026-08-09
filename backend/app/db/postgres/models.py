@@ -61,3 +61,69 @@ def case_row_to_dict(row: dict) -> dict:
         "is_active": row["is_active"],
         "created_at": row.get("created_at"),
     }
+
+
+def case_event_row_to_dict(row: dict) -> dict:
+    """Shape a case_events table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "case_id": row["case_id"],
+        "status": row["status"],
+        "note": row.get("note"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def sop_row_to_dict(row: dict) -> dict:
+    """Shape a sops table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "department": row["department"],
+        "body": row["body"],
+        "version": row["version"],
+        "created_by": row.get("created_by"),
+        "updated_at": row.get("updated_at"),
+        "is_active": row["is_active"],
+    }
+
+
+def sop_request_row_to_dict(row: dict) -> dict:
+    """Shape a sop_access_requests table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "action": row["action"],
+        "department": row["department"],
+        "reason": row.get("reason"),
+        "status": row["status"],
+        "reviewed_by": row.get("reviewed_by"),
+        "reviewed_at": row.get("reviewed_at"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def workflow_row_to_dict(row: dict) -> dict:
+    """Shape a workflows table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "department": row["department"],
+        "case_id": row.get("case_id"),
+        "status": row["status"],
+        "assigned_to": row.get("assigned_to"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def case_note_row_to_dict(row: dict) -> dict:
+    """Shape a case_notes table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "case_id": row["case_id"],
+        "user_id": row["user_id"],
+        "author_name": row.get("author_name"),
+        "body": row["body"],
+        "created_at": row.get("created_at"),
+    }

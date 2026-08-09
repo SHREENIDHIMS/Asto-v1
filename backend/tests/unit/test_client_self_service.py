@@ -1,4 +1,4 @@
-"""Unit tests for client self-service endpoints (Phase 6.5 extension).
+﻿"""Unit tests for client self-service endpoints (Phase 6.5 extension).
 
 Covers: client upload route wiring, staff-token denial, sidecar creation
 with client_id/property_id, property ownership checks, and the
@@ -131,13 +131,13 @@ class TestClientUploadBehavior:
                 files={"file": ("", b"", "text/plain")},
             )
             # Framework may reject the empty filename at parse time (422)
-            # or our endpoint rejects it (400) — either is correct.
+            # or our endpoint rejects it (400) â€” either is correct.
             assert response.status_code in (400, 422)
         finally:
             app.dependency_overrides.pop(require_auth, None)
 
     def test_upload_property_ownership_enforced(self, pending_dir):
-        # The client does NOT own property 999 → 404, nothing written.
+        # The client does NOT own property 999 â†’ 404, nothing written.
         cur = MagicMock()
         cur.__enter__ = MagicMock(return_value=cur)
         cur.__exit__ = MagicMock(return_value=False)
@@ -146,7 +146,7 @@ class TestClientUploadBehavior:
         conn.__enter__ = MagicMock(return_value=conn)
         conn.__exit__ = MagicMock(return_value=False)
         conn.cursor.return_value = cur
-        with patch("app.api.v1.client.acquire", return_value=conn):
+        with patch("app.db.postgres.session.acquire", return_value=conn):
             response = self._post_upload(property_id=999)
         assert response.status_code == 404
         assert list(pending_dir.iterdir()) == []
@@ -160,7 +160,7 @@ class TestClientUploadBehavior:
         conn.__enter__ = MagicMock(return_value=conn)
         conn.__exit__ = MagicMock(return_value=False)
         conn.cursor.return_value = cur
-        with patch("app.api.v1.client.acquire", return_value=conn):
+        with patch("app.db.postgres.session.acquire", return_value=conn):
             response = self._post_upload(property_id=3)
         assert response.status_code == 200
         assert response.json()["property_id"] == 3

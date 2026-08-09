@@ -1,4 +1,4 @@
-"""Admin endpoints for user and client management."""
+﻿"""Admin endpoints for user and client management."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from app.auth.permissions import require_role
 from app.dependencies import require_auth
-from app.db.postgres.session import acquire
+from app.db.postgres.models import sop_request_row_to_dict
+from app.db.postgres import session
 
 router = APIRouter()
 
@@ -38,7 +39,7 @@ async def list_users(user: dict = Depends(require_auth)) -> dict:
     """List users. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, email, full_name, role, department, allowed_departments, "
@@ -57,7 +58,7 @@ async def create_user(
     """Create a staff user. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id FROM users WHERE email = %s",
@@ -92,7 +93,7 @@ async def list_clients(user: dict = Depends(require_auth)) -> dict:
     """List clients. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, email, full_name, is_active, created_at "
@@ -111,7 +112,7 @@ async def create_client(
     """Create an external client account. Requires admin role."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id FROM clients WHERE email = %s",
@@ -142,7 +143,7 @@ async def assign_staff_to_client(
     """Assign a staff user to a client (scopes staff search to that client)."""
     require_role(user, "admin")
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO staff_client_assignments (user_id, client_id) "
@@ -153,3 +154,67 @@ async def assign_staff_to_client(
         conn.commit()
 
     return {"message": "Staff assigned to client"}
+
+
+class ReviewSopAccessRequest(BaseModel):
+    decision: str
+    reason: str | None = None
+
+
+@router.get("/sop-access-requests")
+async def list_sop_access_requests(
+    status_filter: str | None = None,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List SOP access requests (optionally filtered by status)."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if status_filter:
+                cur.execute(
+                    "SELECT r.*, u.email AS requester_email "
+                    "FROM sop_access_requests r JOIN users u ON u.id = r.user_id "
+                    "WHERE r.status = %s ORDER BY r.created_at DESC",
+                    (status_filter,),
+                )
+            else:
+                cur.execute(
+                    "SELECT r.*, u.email AS requester_email "
+                    "FROM sop_access_requests r JOIN users u ON u.id = r.user_id "
+                    "ORDER BY r.created_at DESC"
+                )
+            requests = [dict(row) for row in cur.fetchall()]
+    return {"requests": [sop_request_row_to_dict(dict(r)) for r in requests]}
+
+
+@router.post("/sop-access-requests/{request_id}/review")
+async def review_sop_access_request(
+    request_id: int,
+    request: ReviewSopAccessRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Approve or reject an SOP access request."""
+    require_role(user, "admin")
+    if request.decision not in ("approved", "rejected"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Decision must be 'approved' or 'rejected'",
+        )
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM sop_access_requests WHERE id = %s",
+                (request_id,),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="SOP access request not found",
+                )
+            cur.execute(
+                "UPDATE sop_access_requests SET status = %s, reason = COALESCE(%s, reason), "
+                "reviewed_by = %s, reviewed_at = now() WHERE id = %s",
+                (request.decision, request.reason, user["id"], request_id),
+            )
+        conn.commit()
+    return {"message": f"Request {request.decision}", "request_id": request_id}

@@ -1,18 +1,18 @@
-"""Search endpoint — full pipeline implementation.
+﻿"""Search endpoint â€” full pipeline implementation.
 
 Pipeline (no LLM anywhere in the serving path):
-  query_processing.process_query →
-  search.hybrid_orchestrator.search_knowledge_base →
-  ranking.rrf.rank_fusion →
-  ranking.reranker.rerank (optional, cross-encoder) →
-  response.package_builder.build_response_package →
-  response.validation.validate_package →
+  query_processing.process_query â†’
+  search.hybrid_orchestrator.search_knowledge_base â†’
+  ranking.rrf.rank_fusion â†’
+  ranking.reranker.rerank (optional, cross-encoder) â†’
+  response.package_builder.build_response_package â†’
+  response.validation.validate_package â†’
   audit.audit_logger.log_query
 
 Every response field traces back verbatim to a source chunk.
 
-``POST /search/``  — plain JSON request/response.
-``POST /search/stream`` — SSE (text/event-stream) version that emits
+``POST /search/``  â€” plain JSON request/response.
+``POST /search/stream`` â€” SSE (text/event-stream) version that emits
 ``status`` events as the pipeline advances, then one ``result`` event
 with the same payload as the sync endpoint. This is "streaming-lite":
 there is no token generation in this system (answers are composed from
@@ -32,9 +32,10 @@ from pydantic import BaseModel
 from app.audit.audit_logger import AuditLogEntry, log_query
 from app.auth.rbac import resolve_user_departments
 from app.config import settings
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 from app.dependencies import require_auth
 from app.knowledge_gap.gap_detector import detect_and_log
+from app.query_processing.fact_path import run_fact_path
 from app.query_processing.pipeline import process_query
 from app.ranking.reranker import rerank
 from app.ranking.rrf import rank_fusion
@@ -51,6 +52,7 @@ STAGES = ["processing", "searching", "ranking", "packaging", "done"]
 
 class SearchRequest(BaseModel):
     query: str
+    case_id: int | None = None
 
 
 class SearchResponse(BaseModel):
@@ -61,11 +63,14 @@ class SearchResponse(BaseModel):
     confidence: float
     routing: str
     related_questions: list[str]
+    facts: list[dict] = []
+    retrieval_path: str = "document"
+    no_answer_reason: str | None = None
 
 
 def _serialize(package) -> dict:
     """Convert a ResponsePackage into the public SearchResponse shape."""
-    return {
+    payload = {
         "response_id": package.response_id,
         "title": package.title,
         "excerpts": [
@@ -93,7 +98,21 @@ def _serialize(package) -> dict:
         ],
         "confidence": package.confidence,
         "routing": package.routing,
+        "related_questions": package.related_questions or [],
+        "facts": [
+            {
+                "label": f.label,
+                "value": f.value,
+                "source": f.source,
+                "kind": f.kind,
+                "retrieved_at": f.retrieved_at,
+            }
+            for f in package.facts
+        ],
+        "retrieval_path": package.retrieval_path,
+        "no_answer_reason": package.no_answer_reason,
     }
+    return payload
 
 
 def _no_sub_queries_response(user_id, query: str, start_ms: float) -> SearchResponse:
@@ -115,18 +134,61 @@ def _no_sub_queries_response(user_id, query: str, start_ms: float) -> SearchResp
         confidence=0.0,
         routing="no_answer",
         related_questions=[],
+        retrieval_path="document",
+        no_answer_reason=None,
     )
+
+
+def _fact_audit_ids(package) -> list[int]:
+    """Collect SQL row ids touched by a fact package for the audit trail."""
+    ids: list[int] = []
+    for f in package.facts:
+        src = f.source
+        if "#" in src:
+            tail = src.rsplit("#", 1)[-1]
+            try:
+                ids.append(int(tail))
+            except ValueError:
+                pass
+    return ids
+
+
+def _log_audit(
+    user_id: int | None,
+    query: str,
+    sub_query_displays: list[str],
+    retrieved_ids: list[int],
+    confidence: float,
+    response_id: str,
+    outcome: str,
+    latency_ms: float,
+) -> None:
+    log_query(AuditLogEntry(
+        user_id=user_id,
+        query=query,
+        sub_queries=sub_query_displays,
+        retrieved_ids=retrieved_ids,
+        confidence=confidence,
+        response_id=response_id,
+        outcome=outcome,
+        latency_ms=latency_ms,
+    ))
 
 
 def _run_pipeline(
     query: str,
     user: dict,
+    case_id: int | None = None,
     emit: Callable[[str], None] | None = None,
 ) -> SearchResponse:
     """Execute the full search pipeline and return a SearchResponse.
 
     ``emit`` (optional) is called with a stage name at each pipeline
     phase so the streaming endpoint can report progress.
+
+    The structured-fact path (if the query matches a fact intent and a
+    case context exists) short-circuits the document search â€” see
+    docs/architecture/dual_path_assistant.md Â§3.
     """
     start_ms = time.time() * 1000
 
@@ -138,10 +200,42 @@ def _run_pipeline(
         return _no_sub_queries_response(user["id"], query, start_ms)
 
     sub_query_texts = [sq.expanded for sq in plan.sub_queries]
+    sub_query_displays = [sq.display for sq in plan.sub_queries]
 
+    # Structured-fact path â€” deterministic SQL, no vector search. Falls
+    # through to the document path when run_fact_path returns None.
     if emit:
         emit("searching")
-    with acquire() as conn:
+    with session.acquire() as conn:
+        fact_package = run_fact_path(
+            conn=conn,
+            normalized_query=plan.normalized,
+            user=user,
+            case_id=case_id,
+            query_text=query,
+        )
+
+    if fact_package is not None:
+        if emit:
+            emit("packaging")
+
+        latency_ms = time.time() * 1000 - start_ms
+        _log_audit(
+            user_id=user["id"],
+            query=query,
+            sub_query_displays=sub_query_displays,
+            retrieved_ids=_fact_audit_ids(fact_package),
+            confidence=round(fact_package.confidence, 1),
+            response_id=fact_package.response_id,
+            outcome=fact_package.routing,
+            latency_ms=round(latency_ms, 1),
+        )
+
+        if emit:
+            emit("done")
+        return SearchResponse(**_serialize(fact_package))
+
+    with session.acquire() as conn:
         result = search_knowledge_base(
             conn=conn,
             sub_queries=sub_query_texts,
@@ -226,21 +320,23 @@ def _run_pipeline(
         )
 
     latency_ms = time.time() * 1000 - start_ms
-    log_query(AuditLogEntry(
+    _log_audit(
         user_id=user["id"],
         query=query,
-        sub_queries=[sq.display for sq in plan.sub_queries],
+        sub_query_displays=[sq.display for sq in plan.sub_queries],
         retrieved_ids=[c.chunk_id for c in ranked[:25]],
         confidence=round(package.confidence, 1),
         response_id=package.response_id,
         outcome=package.routing,
         latency_ms=round(latency_ms, 1),
-    ))
+    )
+
+    if not package.related_questions:
+        package.related_questions = (
+            [sq.display for sq in plan.sub_queries[:3]] if plan.sub_queries else []
+        )
 
     payload = _serialize(package)
-    payload["related_questions"] = (
-        [sq.display for sq in plan.sub_queries[:3]] if plan.sub_queries else []
-    )
 
     if emit:
         emit("done")
@@ -253,7 +349,7 @@ async def search(
     user: Annotated[dict, Depends(require_auth)],
 ) -> SearchResponse:
     """Search the knowledge base for the user's query (sync, JSON)."""
-    return _run_pipeline(request.query, user)
+    return _run_pipeline(request.query, user, case_id=request.case_id)
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -276,7 +372,7 @@ async def search_stream(
 
     async def gen():
         try:
-            result = _run_pipeline(request.query, user, emit=emit)
+            result = _run_pipeline(request.query, user, case_id=request.case_id, emit=emit)
             for event in stage_events:
                 yield event
             yield _sse_event("result", result.model_dump())

@@ -2,14 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   AlertCircle,
-  Home,
-  LayoutDashboard,
-  LogOut,
   MessageSquarePlus,
-  ShieldCheck,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -20,8 +15,9 @@ import ChatMessage from "@/components/chat/ChatMessage";
 import SearchBar from "@/components/search/SearchBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
 import HeroSection from "@/components/home/HeroSection";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import SettingsModal from "@/components/settings/SettingsModal";
+import AppShell from "@/components/layout/AppShell";
+import { NAV_GROUPS } from "@/config/navigation";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,26 +28,35 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export default function ChatPage() {
   const router = useRouter();
-  const { turns, loaded, appendTurn, clearHistory, removeTurn } = useChatHistory();
+  const { turns, appendTurn, clearHistory, removeTurn, replaceTurnResponse } = useChatHistory();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [stage, setStage] = useState<SearchStage | null>(null);
-  const [isAuthed, setIsAuthed] = useState(false);
-  const [audience, setAudience] = useState<"staff" | "client" | null>(null);
   const [role, setRole] = useState<string | null>(null);
-  const [showSignOutDialog, setShowSignOutDialog] = useState(false);
   const [showClearDialog, setShowClearDialog] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("asto_smart_suggestions") !== "0";
+  });
+  const [sessionTimeout, setSessionTimeout] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const raw = localStorage.getItem("asto_session_timeout");
+    return raw ? Number(raw) : 0;
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const token = getToken();
-    setIsAuthed(Boolean(token));
     const claims = token ? decodeToken(token) : null;
-    setAudience(claims?.audience ?? null);
     setRole(claims?.role ?? null);
 
     if (!token) {
@@ -71,19 +76,56 @@ export default function ChatPage() {
   }, [router]);
 
   useEffect(() => {
-    // Scroll to bottom whenever the conversation changes or loading starts.
+    // Scroll to bottom only when a new message/response begins.
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [turns.length, isLoading, pendingQuestion]);
+  }, [turns.length, isLoading, pendingQuestion, regeneratingId]);
 
   const handleLogout = useCallback(() => {
     clearToken();
-    setIsAuthed(false);
-    setAudience(null);
     setRole(null);
-    setShowSignOutDialog(false);
     router.push("/login");
   }, [router]);
+
+  const handleClearHistory = useCallback(() => {
+    clearHistory();
+    setShowClearDialog(false);
+  }, [clearHistory]);
+
+  // Session auto-timeout (client-side idle timer). 0 = disabled.
+  useEffect(() => {
+    if (!sessionTimeout || sessionTimeout <= 0) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (
+          window.confirm(
+            "Your session is about to time out due to inactivity. Stay signed in?"
+          )
+        ) {
+          return;
+        }
+        handleLogout();
+      }, sessionTimeout);
+    };
+    const events: Array<keyof DocumentEventMap> = [
+      "mousemove",
+      "keydown",
+      "mousedown",
+      "touchstart",
+      "scroll",
+    ];
+    const onActivity = () => reset();
+    reset();
+    events.forEach((e) =>
+      window.addEventListener(e, onActivity, { passive: true })
+    );
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, onActivity));
+    };
+  }, [sessionTimeout, handleLogout]);
 
   const handleSearch = async (q: string) => {
     if (isLoading) return;
@@ -108,6 +150,7 @@ export default function ChatPage() {
       setStage(null);
     } finally {
       setIsLoading(false);
+      setRegeneratingId(null);
     }
   };
 
@@ -115,8 +158,30 @@ export default function ChatPage() {
     handleSearch(question);
   };
 
-  const isAdmin = role === "admin";
-  const isClient = audience === "client";
+  const handleRegenerateTurn = useCallback(
+    async (turnId: string, query: string) => {
+      if (isLoading) return;
+      setRegeneratingId(turnId);
+      setError(null);
+      try {
+        const token = getToken() ?? undefined;
+        const result: SearchResponse = await searchKnowledgeBaseStream(
+          query,
+          token,
+          (s) => setStage(s)
+        );
+        // Replace the assistant response in place — do not append.
+        replaceTurnResponse(turnId, result);
+        setStage(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+        setStage(null);
+      } finally {
+        setRegeneratingId(null);
+      }
+    },
+    [isLoading, replaceTurnResponse]
+  );
 
   const stageLabel =
     stage === "processing"
@@ -130,79 +195,107 @@ export default function ChatPage() {
             : null;
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10 flex-shrink-0">
-        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground">
-              <Sparkles className="w-4 h-4" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Asto</h1>
-              <p className="text-xs text-muted-foreground -mt-0.5">
-                {isClient ? "Client Portal" : "Knowledge Assistant"}
-              </p>
-            </div>
-          </div>
+    <>
+      <AppShell
+        navGroups={NAV_GROUPS.staff}
+      activeNavId="assistant"
+      onNavigate={() => {}}
+      brandTitle="Asto"
+      brandSubtitle="Staff Workspace"
+      headerTitle="AI Assistant"
+      headerSubtitle="Ask about cases, requirements, or documents"
+      sidebarTop={
+        <div className="space-y-4">
+          <Button
+            type="button"
+            className="w-full justify-start gap-3"
+            onClick={() => setShowClearDialog(true)}
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            New chat
+          </Button>
 
-          <div className="flex items-center gap-2">
-            {isClient && (
-              <Button asChild variant="outline" size="sm">
-                <Link href="/portal">
-                  <Home className="h-4 w-4 mr-2" />
-                  My Dashboard
-                </Link>
-              </Button>
-            )}
-            {isAdmin && (
-              <Button asChild variant="outline" size="sm">
-                <Link href="/admin">
-                  <LayoutDashboard className="h-4 w-4 mr-2" />
-                  Admin
-                </Link>
-              </Button>
-            )}
-            {isAuthed ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setShowSignOutDialog(true)}
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign out
-              </Button>
-            ) : (
-              <Button asChild size="sm">
-                <Link href="/login">Sign in</Link>
-              </Button>
-            )}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-1">
+              <p className="text-xs font-medium text-muted-foreground">
+                Recent chats
+              </p>
+              {turns.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+              {turns.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-1 py-1">
+                  No recent chats
+                </p>
+              ) : (
+                [...turns]
+                  .reverse()
+                  .map((t) => (
+                    <div key={t.id} className="group flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="flex-1 justify-start gap-2 font-normal text-sm h-8 px-2 text-left rounded-md hover:bg-muted"
+                        onDoubleClick={() => {}}
+                        title={t.query}
+                      >
+                        <span className="truncate text-xs">
+                          {t.query || "Untitled"}
+                        </span>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 flex-shrink-0 opacity-0 group-hover:opacity-100"
+                        onClick={() => removeTurn(t.id)}
+                        aria-label={`Remove "${t.query}"`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))
+              )}
+            </div>
           </div>
         </div>
-      </header>
+      }
+      user={{ name: "Staff", role: role ?? "Staff" }}
+      onSettings={() => setSettingsOpen(true)}
+      onSignOut={handleLogout}
+    >
+      <div className="flex h-full flex-col">
+        <main ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+          <div className="max-w-3xl mx-auto px-4 py-6 pb-24">
+            {turns.length === 0 && !isLoading && !error && (
+              <HeroSection onSearch={handleSearch} />
+            )}
 
-      <main
-        ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto"
-      >
-        <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
-          {turns.length === 0 && !isLoading && !error && (
-            <HeroSection onSearch={handleSearch} />
-          )}
-
-          {error && (
-            <Alert variant="destructive" className="mt-8 mx-auto max-w-2xl">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Search failed</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+            {error && (
+              <Alert variant="destructive" className="mt-8 mx-auto max-w-2xl">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Search failed</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
           {turns.length > 0 && (
             <div className="space-y-8 mt-4">
               {turns.map((turn) => (
                 <div key={turn.id} className="relative group">
-                  <ChatMessage turn={turn} />
+                  <ChatMessage
+                    turn={turn}
+                    onRegenerate={() => handleRegenerateTurn(turn.id, turn.query)}
+                    isRegenerating={regeneratingId === turn.id}
+                  />
                   <div className="mt-2 flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
                       type="button"
@@ -215,12 +308,13 @@ export default function ChatPage() {
                       Remove
                     </Button>
                   </div>
-                  {turn.response.related_questions.length > 0 && (
-                    <RelatedQuestions
-                      questions={turn.response.related_questions}
-                      onAskQuestion={handleAskRelated}
-                    />
-                  )}
+                  {showSuggestions &&
+                    turn.response.related_questions.length > 0 && (
+                      <RelatedQuestions
+                        questions={turn.response.related_questions}
+                        onAskQuestion={handleAskRelated}
+                      />
+                    )}
                 </div>
               ))}
             </div>
@@ -255,7 +349,7 @@ export default function ChatPage() {
       </main>
 
       <div className="border-t border-border flex-shrink-0 bg-background">
-        <div className="max-w-4xl mx-auto px-4 py-4">
+        <div className="max-w-3xl mx-auto px-4 py-4">
           <div className="flex items-center gap-2 mb-2">
             {turns.length > 0 && (
               <Button
@@ -269,6 +363,18 @@ export default function ChatPage() {
                 New conversation
               </Button>
             )}
+            {!showSuggestions && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowSuggestions(true)}
+                className="text-xs text-muted-foreground"
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                Show suggestions
+              </Button>
+            )}
             <p className="text-xs text-muted-foreground ml-auto">
               Responses are sourced verbatim from internal documents.
             </p>
@@ -280,23 +386,10 @@ export default function ChatPage() {
           />
         </div>
       </div>
+      </div>
+    </AppShell>
 
-      <AlertDialog open={showSignOutDialog} onOpenChange={setShowSignOutDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure you want to sign out?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You&apos;ll need to sign in again to search the knowledge base.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleLogout}>Sign out</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
+    <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Start a new conversation?</AlertDialogTitle>
@@ -319,15 +412,41 @@ export default function ChatPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {!loaded && null}
-      {audience === "client" && (
-        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-10">
-          <div className="bg-primary text-primary-foreground text-xs px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            You can only see your own approved documents
-          </div>
-        </div>
-      )}
-    </div>
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        user={{ name: "Staff", role: role ?? "Staff" }}
+        onSignOut={handleLogout}
+        onSignOutAll={handleLogout}
+        onNewChat={() => setShowClearDialog(true)}
+        onClearHistory={() => {
+          clearHistory();
+          setShowClearDialog(false);
+          setSettingsOpen(false);
+        }}
+        suggestionsEnabled={showSuggestions}
+        onToggleSuggestions={(next) => {
+          setShowSuggestions(next);
+          try {
+            localStorage.setItem(
+              "asto_smart_suggestions",
+              next ? "1" : "0"
+            );
+          } catch {
+            // ignore
+          }
+        }}
+        timeoutSeconds={sessionTimeout}
+        onTimeoutChange={(v) => {
+          setSessionTimeout(v);
+          try {
+            localStorage.setItem("asto_session_timeout", String(v));
+          } catch {
+            // ignore
+          }
+        }}
+      />
+    </>
   );
 }
+

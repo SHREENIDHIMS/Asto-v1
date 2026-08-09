@@ -1,4 +1,4 @@
-"""Feedback endpoints for response quality signals."""
+﻿"""Feedback endpoints for response quality signals."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.dependencies import require_auth
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 
 router = APIRouter()
 
@@ -29,7 +29,7 @@ async def submit_feedback(
             detail="Rating must be 1 or -1",
         )
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO feedback (user_id, response_id, rating, comment) "

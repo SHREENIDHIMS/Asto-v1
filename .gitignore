@@ -27,6 +27,7 @@ out/
 *.log
 dist/
 build/
+*.tsbuildinfo
 
 # Runtime storage & downloaded models
 storage/

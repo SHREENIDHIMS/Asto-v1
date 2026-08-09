@@ -8,6 +8,7 @@ export interface ChatTurn {
   query: string;
   response: SearchResponse;
   timestamp: number;
+  urgency?: boolean;
 }
 
 const HISTORY_KEY = "asto_chat_history";
@@ -45,11 +46,11 @@ export function useChatHistory() {
     setLoaded(true);
   }, []);
 
-  const appendTurn = useCallback((query: string, response: SearchResponse) => {
+  const appendTurn = useCallback((query: string, response: SearchResponse, urgency: boolean = false) => {
     setTurns((prev) => {
       const next = [
         ...prev,
-        { id: crypto.randomUUID(), query, response, timestamp: Date.now() },
+        { id: crypto.randomUUID(), query, response, timestamp: Date.now(), urgency },
       ];
       persistHistory(next);
       return next;
@@ -69,5 +70,18 @@ export function useChatHistory() {
     });
   }, []);
 
-  return { turns, loaded, appendTurn, clearHistory, removeTurn };
+  const replaceTurnResponse = useCallback(
+    (id: string, response: SearchResponse) => {
+      setTurns((prev) => {
+        const next = prev.map((turn) =>
+          turn.id === id ? { ...turn, response } : turn
+        );
+        persistHistory(next);
+        return next;
+      });
+    },
+    []
+  );
+
+  return { turns, loaded, appendTurn, clearHistory, removeTurn, replaceTurnResponse };
 }

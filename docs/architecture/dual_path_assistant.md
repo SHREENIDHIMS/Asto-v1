@@ -1,0 +1,219 @@
+# AsTo Dual-Path Assistant — Architecture
+
+> **Gate document for Phase 1.** Read before writing any Phase 1 code.
+> Governs the intent-based query router, structured-fact path, document path,
+> authorization, and the unified package schema.
+
+## 1. Non-negotiable principles
+
+1. **Strict extractive model.** No LLM-generated facts, no hallucinated text.
+   Answers derive ONLY from (a) retrieved document chunks or (b) deterministic
+   SQL records. No generative summarization step beyond the existing
+   verbatim TextRank extractive summary already approved in CLAUDE.md.
+2. **Never mix SQL structured data into unstructured vector context.** The
+   vector index contains document chunks only. Structured facts are fetched
+   via typed SQL — never embedded, never appended into a prompt, never passed
+   through the embedding model.
+3. **Authorization before retrieval.** Row-level security parameters
+   (`client_id`, `department`, assigned case/client scope) are applied in the
+   SQL `WHERE` clause **before execution**. No post-hoc filtering only.
+4. **One conversation, one entity.** Conversation context is fixed per active
+   Case ID at conversation creation. No mid-conversation entity switching.
+
+## 2. Pipeline overview
+
+```
+User query + identity (JWT) + optional case context
+        │
+        ▼
+┌─────────────────────────────────────────────┐
+│ 1. Intent-Based Query Router                │
+│    classify: STRUCTURED_FACT | DOCUMENT     │
+│    (deterministic rules, no LLM)            │
+└──────────────┬──────────────────────────────┘
+               │
+       ┌───────┴────────┐
+       ▼                ▼
+  ┌──────────────┐ ┌──────────────────────────┐
+  │ 2a. Structured │ │ 2b. Document path       │
+  │ Fact Path     │ │ (hybrid vector + BM25)   │
+  │ typed SQL     │ │ WHERE rbac + is_approved │
+  │ lookup scoped │ │                          │
+  │ by RLS params │ │                          │
+  └──────┬───────┘ └───────────┬──────────────┘
+         │                     │
+         ▼                     ▼
+  ┌─────────────────────────────────────────────┐
+  │ 3. Unified Response Package                 │
+  │ facts | excerpts | sources | confidence |   │
+  │ related_questions | routing | no-answer     │
+  └─────────────────────────────────────────────┘
+```
+
+## 3. Intent-based query router
+
+Deterministic, rule-driven classifier in `app/query_processing/`
+(extends existing `intent_detection.py`). No ML, no LLM.
+
+### Structured-fact intent table
+
+| Intent | Example query | SQL source | RLS scope |
+|---|---|---|---|
+| `case_status` | "What is the current status of my application?" | `cases.status` + latest `case_events` | `client_id` = caller (client) or assigned case (staff) |
+| `case_next_step` | "What happens next?" | latest `case_events` + `workflows` | case scope |
+| `missing_documents` | "What documents are still missing?" | documents with `requested`/`pending` status on the case | case scope |
+| `case_documents` | "Show me the documents I submitted" | `documents` for the case, approved | case scope |
+| `case_property` | "Which property is this for?" | `properties` for the case | case scope |
+| `case_timeline` | "What's the history of my case?" | `case_events` ordered | case scope |
+| `due_date` | "When is the deadline?" | case/workflow due fields | case scope |
+| `workflow_step` | "Where is my file in the process?" | `workflows` + `case_events` | case scope |
+| `client_financials` | "What is my loan amount?" | `cases.loan_amount` | case scope |
+
+### Fallback rule
+- If a query matches no structured-fact intent (or matches a fuzzy intent
+  with no supported fact), it falls through to the **document path**.
+- Document path = existing hybrid search (pgvector + BM25) with the RBAC
+  filter already in the WHERE clause (`hybrid_orchestrator.py`).
+
+## 4. Structured-fact path
+
+### 4.1 Router contract
+
+```py
+# app/query_processing/fact_router.py
+@dataclass
+class FactRoute:
+    intent: str
+    resolver: Callable[[Connection, FactContext], list[FactRecord]]
+
+@dataclass
+class FactContext:
+    user: dict            # decoded JWT claims
+    case_id: int | None   # fixed per conversation
+    client_id: int | None # resolved from JWT for clients
+```
+
+### 4.2 Fact resolution (deterministic SQL)
+
+Each intent maps to one resolver. Example (pseudocode):
+
+```sql
+-- case_status resolver (client audience)
+SELECT c.case_number, c.status, c.loan_amount,
+       (SELECT status FROM case_events e
+         WHERE e.case_id = c.id ORDER BY e.created_at DESC LIMIT 1) AS latest,
+       (SELECT note FROM case_events e
+         WHERE e.case_id = c.id ORDER BY e.created_at DESC LIMIT 1) AS latest_note,
+       (SELECT created_at FROM case_events e
+         WHERE e.case_id = c.id ORDER BY e.created_at DESC LIMIT 1) AS latest_at
+FROM cases c
+WHERE c.id = %(case_id)s
+  AND c.is_active = true
+  AND c.client_id = %(client_id)s   -- ROW-LEVEL SCOPE, always
+```
+
+Rules:
+- **RLS parameters are bound in SQL before execution**, derived from the JWT
+  (never from request body).
+- Client → `c.client_id = <jwt.client_id>`.
+- Staff → case must belong to an assigned client
+  (`staff_client_assignments`) AND match the user's department scope where
+  applicable.
+- Admin/super_admin → no `client_id` filter (still respect explicit case id).
+- Missing/inaccessible case → return a `no_answer` package, never an empty
+  or generic fabricated value.
+
+### 4.3 FactRecord → package
+
+Every fact is wrapped with:
+- `label` (human field name), `value` (verbatim stored value),
+- `source` (table + row id + event id, e.g. `case_events#42`),
+- `retrieved_at`.
+
+Facts are displayed as verbatim values with an explicit source line —
+identical trust posture to document citations.
+
+## 5. Document path (unchanged core)
+
+- Existing `search_knowledge_base` in `hybrid_orchestrator.py`.
+- RBAC + `is_approved`/`is_active` already enforced in the WHERE clause.
+- Sub-queries, spelling correction, multi-question split remain untouched.
+- Cross-encoder rerank (if enabled) stays under the <200ms p95 budget
+  (CLAUDE.md rule 6).
+
+## 6. Unified Response Package schema
+
+Extends the existing `SearchResponse` shape. Both paths emit the same
+package. (Frontend types live in `frontend/lib/api-client.ts`.)
+
+```ts
+interface ResponsePackage {
+  routing: "answer" | "partial" | "no_answer";
+  answer: string;                       // always verbatim/extractive only
+  sources: SourceRef[];                 // docs AND/OR structured facts
+  facts: StructuredFact[];              // populated on fact path
+  excerpts: Excerpt[];                  // populated on document path
+  confidence: number;                   // 0..1
+  related_questions: string[];          // role-scoped
+  retrieval_path: "structured_fact" | "document" | "mixed";
+  no_answer_reason?: string;            // set only when no_answer
+}
+
+interface StructuredFact {
+  label: string;
+  value: string | number | null;
+  source: string;                       // "cases#204" | "case_events#42"
+  kind: "status" | "date" | "document" | "amount" | "note" | ...
+}
+
+interface SourceRef {
+  kind: "document" | "fact";
+  id: string;                           // document chunk id OR fact row id
+  title?: string;                       // doc title for documents
+  ref?: string;                         // "cases#204"
+}
+```
+
+Rules:
+- `answer` is assembled from **retrieved excerpts verbatim** or **fact values
+  verbatim** — never rewritten prose.
+- `confidence` for the fact path reflects completeness (all fields resolved)
+  and may use the existing confidence-threshold routing for `answer` /
+  `partial` / `no_answer`.
+- `related_questions` must be role-appropriate and context-aware (e.g. a
+  client who just learned their status should see "What do I need to do
+  next?").
+
+## 7. Authorization matrix (enforced in SQL, not post-hoc)
+
+| Caller | cases | documents | case_events | workflows |
+|---|---|---|---|---|
+| client | own `client_id` | own + approved | own case | none |
+| staff | assigned clients' cases | department + (company-wide OR assigned clients) + approved | assigned cases | department |
+| admin/super_admin | all | all | all | all |
+
+## 8. Conversation context
+
+- A chat conversation binds to a `case_id` (staff: from workspace context;
+  client: resolved from their case list) at **creation** time.
+- Mid-conversation, all fact-path queries reuse that `case_id`.
+- Document-path queries additionally receive case-derived context terms
+  (case number, client name, property address) for retrieval relevance —
+  still fully RBAC-filtered.
+- Switching entity = new conversation (explicit UX, no ambiguity).
+
+## 9. Audit & compliance
+
+- Every query (fact or document path) writes to `audit_log` — user, query,
+  routing, retrieved IDs, confidence, latency, response id. Fact-path
+  retrievals log the SQL rows touched (case/event ids).
+- `audit_log` is never skipped, even for test queries against prod data.
+
+## 10. Testing gate
+
+- Unit: `fact_router` classification, each resolver's RLS behavior (client
+  cannot read another client's case; staff cannot read unassigned case).
+- Integration: end-to-end fact query for a seeded client; document fallback
+  for non-fact queries.
+- Benchmark: run `evaluation/run_benchmark.py` before/after any change to
+  ranking or packaging; record delta in `evaluation/reports/`.

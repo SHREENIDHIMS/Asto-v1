@@ -8,6 +8,7 @@ export interface ChatTurn {
   query: string;
   response: SearchResponse;
   timestamp: number;
+  urgency?: boolean;
 }
 
 export interface ChatSession {
@@ -118,7 +119,7 @@ export function useChatSessions(scope: string) {
   );
 
   const appendTurn = useCallback(
-    (sessionId: string, query: string, response: SearchResponse) => {
+    (sessionId: string, query: string, response: SearchResponse, urgency: boolean = false) => {
       const now = Date.now();
       update((prev) =>
         prev.map((s) => {
@@ -132,7 +133,7 @@ export function useChatSessions(scope: string) {
             title,
             turns: [
               ...s.turns,
-              { id: crypto.randomUUID(), query, response, timestamp: now },
+              { id: crypto.randomUUID(), query, response, timestamp: now, urgency },
             ],
             updatedAt: now,
           };
@@ -148,6 +149,25 @@ export function useChatSessions(scope: string) {
         prev.map((s) =>
           s.id === sessionId
             ? { ...s, turns: s.turns.filter((t) => t.id !== turnId), updatedAt: Date.now() }
+            : s
+        )
+      );
+    },
+    [update]
+  );
+
+  const replaceTurnResponse = useCallback(
+    (sessionId: string, turnId: string, response: SearchResponse) => {
+      update((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                turns: s.turns.map((t) =>
+                  t.id === turnId ? { ...t, response } : t
+                ),
+                updatedAt: Date.now(),
+              }
             : s
         )
       );
@@ -180,6 +200,7 @@ export function useChatSessions(scope: string) {
     renameSession,
     appendTurn,
     removeTurn,
+    replaceTurnResponse,
     deleteSession,
     clearAllSessions,
   };

@@ -9,9 +9,7 @@ import {
   Clock,
   FileText,
   History,
-  LayoutDashboard,
   Loader2,
-  LogOut,
   MessageSquare,
   RefreshCw,
   ShieldAlert,
@@ -46,6 +44,8 @@ import {
   KnowledgeGap,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken } from "@/lib/auth";
+import AppShell from "@/components/layout/AppShell";
+import { NAV_GROUPS } from "@/config/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1104,6 +1104,7 @@ export default function AdminPage() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [activeNavId, setActiveNavId] = useState("approvals");
 
   useEffect(() => {
     const t = getToken();
@@ -1130,37 +1131,27 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground">
-              <LayoutDashboard className="w-4 h-4" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-foreground">Asto Admin</h1>
-              <p className="text-xs text-muted-foreground -mt-0.5">
-                Approvals · Documents · Users · Clients
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/">
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Ask Asto
-              </Link>
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign out
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        <Tabs defaultValue="approvals">
+    <AppShell
+      navGroups={NAV_GROUPS.admin}
+      activeNavId={activeNavId}
+      onNavigate={(id) => setActiveNavId(id)}
+      brandTitle="Asto"
+      brandSubtitle="Admin Control Hub"
+      headerTitle="Admin"
+      headerSubtitle="Approvals · Documents · Users · Clients"
+      headerActions={
+        <Button asChild variant="outline" size="sm">
+          <Link href="/">
+            <MessageSquare className="h-4 w-4 mr-2" />
+            Ask Asto
+          </Link>
+        </Button>
+      }
+      user={{ name: "Administrator", role: "admin" }}
+      onSignOut={handleLogout}
+    >
+      <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">
+        <Tabs value={activeNavId} onValueChange={setActiveNavId}>
           <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
@@ -1184,14 +1175,14 @@ export default function AdminPage() {
             <AnalyticsTab token={token} />
           </TabsContent>
         </Tabs>
-      </main>
 
-      <footer className="border-t border-border py-4">
-        <div className="max-w-5xl mx-auto px-4 flex items-center gap-2 text-xs text-muted-foreground">
-          <Sparkles className="w-3.5 h-3.5" />
-          Asto — every decision here is written to the audit trail.
-        </div>
-      </footer>
-    </div>
+        <footer className="border-t border-border py-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Sparkles className="w-3.5 h-3.5" />
+            Asto — every decision here is written to the audit trail.
+          </div>
+        </footer>
+      </div>
+    </AppShell>
   );
 }

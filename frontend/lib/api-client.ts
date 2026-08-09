@@ -5,6 +5,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8011/a
 
 export interface SearchRequest {
   query: string;
+  case_id?: number | null;
 }
 
 export interface SearchExcerpt {
@@ -15,6 +16,14 @@ export interface SearchExcerpt {
     chunk_type: string;
   };
   confidence: number;
+}
+
+export interface StructuredFact {
+  label: string;
+  value: string | number | null;
+  source: string;
+  kind: string;
+  retrieved_at?: string | null;
 }
 
 export interface SearchSummarySentence {
@@ -34,6 +43,9 @@ export interface SearchResponse {
   confidence: number;
   routing: 'answer' | 'partial' | 'no_answer';
   related_questions: string[];
+  facts?: StructuredFact[];
+  retrieval_path?: 'document' | 'structured_fact';
+  no_answer_reason?: string | null;
 }
 
 export interface AuthLoginRequest {
@@ -49,7 +61,8 @@ export interface AuthLoginResponse {
 
 export async function searchKnowledgeBase(
   query: string,
-  token?: string
+  token?: string,
+  caseId?: number | null
 ): Promise<SearchResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -61,7 +74,7 @@ export async function searchKnowledgeBase(
   const response = await fetch(`${API_BASE_URL}/search/`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, case_id: caseId ?? null }),
   });
 
   if (!response.ok) {
@@ -87,7 +100,8 @@ export type SearchStage =
 export async function searchKnowledgeBaseStream(
   query: string,
   token: string | undefined,
-  onStage?: (stage: SearchStage) => void
+  onStage?: (stage: SearchStage) => void,
+  caseId?: number | null
 ): Promise<SearchResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -100,7 +114,7 @@ export async function searchKnowledgeBaseStream(
   const response = await fetch(`${API_BASE_URL}/search/stream`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, case_id: caseId ?? null }),
   });
 
   if (!response.ok) {
@@ -228,6 +242,36 @@ export async function submitFeedback(
     throw new Error(error.detail || 'Feedback submission failed');
   }
 
+   return response.json();
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export async function changePassword(
+  request: ChangePasswordRequest,
+  token?: string
+): Promise<{ updated: boolean }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Password change failed');
+  }
+
   return response.json();
 }
 
@@ -282,6 +326,26 @@ export interface ClientCase {
   status: string;
   is_active: boolean;
   created_at: string | null;
+  property_address?: string | null;
+  property_type?: string | null;
+  latest_event?: {
+    status: string;
+    note: string | null;
+    created_at: string | null;
+  } | null;
+}
+
+export interface CaseEvent {
+  id: number;
+  case_id: number;
+  status: string;
+  note: string | null;
+  created_at: string | null;
+}
+
+export interface CaseDetail {
+  case: ClientCase;
+  events: CaseEvent[];
 }
 
 export interface ClientDocument {
@@ -328,6 +392,20 @@ export async function getClientCases(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to load cases');
+  }
+  return response.json();
+}
+
+export async function getClientCaseDetail(
+  token: string,
+  caseId: number
+): Promise<CaseDetail> {
+  const response = await fetch(`${API_BASE_URL}/client/cases/${caseId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load case');
   }
   return response.json();
 }
@@ -559,6 +637,227 @@ export function openBlobInNewTab(blob: Blob, fallbackName = 'document') {
   document.body.removeChild(a);
   // Revoke after a delay so the download/new-tab has time to open.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// ---------------------------------------------------------------------------
+// Staff portal: dashboard, cases, workflows, SOPs, access requests (§1B)
+// ---------------------------------------------------------------------------
+
+export interface StaffDashboardCase {
+  id: number;
+  case_number: string;
+  client_id: number;
+  loan_amount: number | null;
+  status: string;
+  created_at: string | null;
+  client_name: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+export interface StaffWorkflow {
+  id: number;
+  title: string;
+  department: string;
+  case_id: number | null;
+  status: 'in_progress' | 'review' | 'done';
+  assigned_to: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  case_number?: string | null;
+}
+
+export interface StaffSop {
+  id: number;
+  title: string;
+  department: string;
+  body: string;
+  version: number;
+  created_by: number | null;
+  updated_at: string | null;
+  is_active: boolean;
+}
+
+export interface StaffDashboardResponse {
+  cases: StaffDashboardCase[];
+  workflows: StaffWorkflow[];
+  sops: StaffSop[];
+  sop_access: boolean;
+}
+
+export interface CaseNote {
+  id: number;
+  case_id: number;
+  user_id: number;
+  author_name?: string | null;
+  body: string;
+  created_at: string | null;
+}
+
+export interface SopAccessRequest {
+  id: number;
+  user_id: number;
+  action: 'create' | 'edit';
+  department: string;
+  reason: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  created_at: string | null;
+  requester_email?: string;
+}
+
+export async function getStaffDashboard(token: string): Promise<StaffDashboardResponse> {
+  const response = await fetch(`${API_BASE_URL}/staff/dashboard`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load dashboard');
+  }
+  return response.json();
+}
+
+export async function getCaseNotes(token: string, caseId: number): Promise<{ notes: CaseNote[] }> {
+  const response = await fetch(`${API_BASE_URL}/staff/cases/${caseId}/notes`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load notes');
+  }
+  return response.json();
+}
+
+export async function addCaseNote(
+  token: string,
+  caseId: number,
+  body: string
+): Promise<{ note: CaseNote }> {
+  const response = await fetch(`${API_BASE_URL}/staff/cases/${caseId}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ body }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to add note');
+  }
+  return response.json();
+}
+
+export async function advanceWorkflow(
+  token: string,
+  workflowId: number
+): Promise<{ workflow_id: number; status: string }> {
+  const response = await fetch(`${API_BASE_URL}/staff/workflows/${workflowId}/advance`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to advance workflow');
+  }
+  return response.json();
+}
+
+export interface SopInput {
+  title: string;
+  department: string;
+  body: string;
+}
+
+export async function createSop(
+  token: string,
+  input: SopInput
+): Promise<{ message: string; sop_id: number }> {
+  const response = await fetch(`${API_BASE_URL}/staff/sops`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create SOP');
+  }
+  return response.json();
+}
+
+export async function updateSop(
+  token: string,
+  sopId: number,
+  input: SopInput
+): Promise<{ message: string; sop_id: number }> {
+  const response = await fetch(`${API_BASE_URL}/staff/sops/${sopId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update SOP');
+  }
+  return response.json();
+}
+
+export async function getMySopRequests(token: string): Promise<{ requests: SopAccessRequest[] }> {
+  const response = await fetch(`${API_BASE_URL}/staff/sop-access-requests`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load access requests');
+  }
+  return response.json();
+}
+
+export async function createSopAccessRequest(
+  token: string,
+  input: { action: 'create' | 'edit'; department: string; reason?: string }
+): Promise<{ id: number; status: string }> {
+  const response = await fetch(`${API_BASE_URL}/staff/sop-access-requests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to submit access request');
+  }
+  return response.json();
+}
+
+export async function listSopAccessRequests(
+  token: string,
+  statusFilter?: string
+): Promise<{ requests: SopAccessRequest[] }> {
+  const query = statusFilter ? `?status_filter=${statusFilter}` : '';
+  const response = await fetch(`${API_BASE_URL}/admin/sop-access-requests${query}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load access requests');
+  }
+  return response.json();
+}
+
+export async function reviewSopAccessRequest(
+  token: string,
+  requestId: number,
+  decision: 'approved' | 'rejected'
+): Promise<{ message: string; request_id: number }> {
+  const response = await fetch(`${API_BASE_URL}/admin/sop-access-requests/${requestId}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ decision }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to review access request');
+  }
+  return response.json();
 }
 
 // ---------------------------------------------------------------------------

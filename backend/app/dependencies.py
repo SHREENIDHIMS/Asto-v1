@@ -1,12 +1,12 @@
-"""FastAPI dependency injection.
+﻿"""FastAPI dependency injection.
 
 Provides:
-- ``get_db`` — yields a pooled Postgres connection per request
-- ``get_current_user`` — extracts and verifies JWT, returns the user row
-- ``require_department_access`` — RBAC scope resolver from the JWT
+- ``get_db`` â€” yields a pooled Postgres connection per request
+- ``get_current_user`` â€” extracts and verifies JWT, returns the user row
+- ``require_department_access`` â€” RBAC scope resolver from the JWT
 
 Authentication is enforced backend-side. The frontend (static export) has
-no server-side auth layer — it stores the JWT client-side and sends it
+no server-side auth layer â€” it stores the JWT client-side and sends it
 per-request via the Authorization header.
 """
 
@@ -20,14 +20,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.auth.jwt_handler import verify_token
 from app.config import settings
-from app.db.postgres.session import acquire
+from app.db.postgres import session
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_db() -> psycopg.Connection:
     """Yield a pooled Postgres connection for a single request."""
-    with acquire() as conn:
+    with session.acquire() as conn:
         yield conn
 
 
@@ -37,8 +37,8 @@ async def get_current_user(
     """Extract and verify JWT from the Authorization header.
 
     Resolves identity for BOTH audiences:
-    - staff audience → the ``users`` row
-    - client audience → the ``clients`` row, tagged ``audience="client"``
+    - staff audience â†’ the ``users`` row
+    - client audience â†’ the ``clients`` row, tagged ``audience="client"``
       and carrying ``client_id`` so metadata_filters.py can scope search.
 
     Returns the user dict if valid, None if no token provided
@@ -67,7 +67,7 @@ async def get_current_user(
     audience = payload.get("audience", "staff")
 
     if audience == "client":
-        with acquire() as conn:
+        with session.acquire() as conn:
             with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
                 cur.execute(
                     "SELECT id, email, full_name, is_active FROM clients "
@@ -92,7 +92,7 @@ async def get_current_user(
             "allowed_departments": [],
         }
 
-    with acquire() as conn:
+    with session.acquire() as conn:
         with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
             cur.execute(
                 "SELECT id, email, full_name, role, department, allowed_departments, is_active "
