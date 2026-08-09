@@ -215,6 +215,7 @@ export default function AssistantMessage({
   }
 
   const noAnswerText =
+    response.no_answer_reason ||
     "I couldn't find enough information in the available documents to answer that confidently.";
 
   return (

@@ -107,6 +107,85 @@ class TestClassifyFactIntent:
 
 
 # ---------------------------------------------------------------------------
+# Soft-matching router — asymmetric thresholds + clarifying prompt
+# (design decision 2026-08-09, docs/architecture/dual_path_assistant.md §9a)
+# ---------------------------------------------------------------------------
+
+
+class TestRouteFactIntent:
+    def test_natural_wording_routes_to_case_status(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        assert route_fact_intent("where is my app at").intent == "case_status"
+        assert route_fact_intent("whats happening with my app").intent == "case_status"
+        assert route_fact_intent("any word on my application").intent == "case_status"
+
+    def test_natural_wording_routes_to_documents(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        assert route_fact_intent("did you get my documents").intent == "case_documents"
+        assert route_fact_intent("do you need my w2").intent == "missing_documents"
+
+    def test_natural_wording_routes_to_financials(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        assert route_fact_intent("how much did i borrow").intent == "client_financials"
+
+    def test_fragment_is_never_routed(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        assert route_fact_intent("status").intent is None
+        assert route_fact_intent("missing").intent is None
+        assert route_fact_intent("hello").intent is None
+        assert not route_fact_intent("status").needs_clarification
+
+    def test_document_path_questions_are_not_intercepted(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        for q in (
+            "can i get a loan with 620 score",
+            "do i qualify for a fha loan",
+            "what is the interest rate",
+            "can i afford a 300000 mortgage",
+            "what is a conventional loan",
+            "what is the minimum credit score",
+            "how does mortgage insurance work",
+            "when is the deadline",
+            "what documents do i need to apply",
+        ):
+            r = route_fact_intent(q)
+            assert r.intent is None, f"{q} should not route to a fact intent"
+            assert not r.needs_clarification, f"{q} should not clarify (doc path)"
+
+    def test_conditional_policy_questions_fall_through(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        r = route_fact_intent("what happens if i miss a payment")
+        assert r.intent is None
+        assert not r.needs_clarification
+
+    def test_personal_ambiguous_question_requests_clarification(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        for q in (
+            "is my loan being processed",
+            "is my payment late",
+            "whats going on with my loan",
+        ):
+            r = route_fact_intent(q)
+            assert r.intent is None, f"{q} should not guess an intent"
+            assert r.needs_clarification, f"{q} should request clarification"
+
+    def test_exact_phrase_routes_at_full_confidence(self):
+        from app.query_processing.fact_router import route_fact_intent
+
+        r = route_fact_intent("what is my loan amount")
+        assert r.intent == "client_financials"
+        assert r.confidence == 1.0
+        assert not r.needs_clarification
+
+
+# ---------------------------------------------------------------------------
 # Resolvers — RLS behavior
 # ---------------------------------------------------------------------------
 

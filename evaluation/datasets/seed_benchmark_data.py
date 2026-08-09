@@ -16,6 +16,13 @@ from collections import defaultdict
 from app.db.postgres.session import acquire
 
 
+# Marker written to documents.source_path for every row this seeder
+# creates. clear_benchmark_data() deletes ONLY rows carrying this marker,
+# so it can never wipe unrelated (dev/production) documents — see the
+# docstring of clear_benchmark_data (design decision 2026-08-09).
+BENCHMARK_SOURCE = "__benchmark_seed__"
+
+
 BENCHMARK_DOCS = [
     {
         "title": "Mortgage Eligibility Guidelines",
@@ -182,16 +189,16 @@ def seed_benchmark_data() -> dict[str, set[int]]:
         with conn.cursor() as cur:
             for doc in BENCHMARK_DOCS:
                 cur.execute(
-                    "INSERT INTO documents (title, doc_type, department, is_active, is_approved, version) "
-                    "VALUES (%s, %s, %s, true, true, 1) RETURNING id",
-                    (doc["title"], doc["doc_type"], doc["department"]),
+                    "INSERT INTO documents (title, doc_type, department, is_active, is_approved, version, source_path) "
+                    "VALUES (%s, %s, %s, true, true, 1, %s) RETURNING id",
+                    (doc["title"], doc["doc_type"], doc["department"], BENCHMARK_SOURCE),
                 )
                 doc_id = cur.fetchone()["id"]
 
             for doc in BENCHMARK_DOCS:
                 cur.execute(
-                    "SELECT id FROM documents WHERE title = %s",
-                    (doc["title"],),
+                    "SELECT id FROM documents WHERE title = %s AND source_path = %s",
+                    (doc["title"], BENCHMARK_SOURCE),
                 )
                 doc_id = cur.fetchone()["id"]
 
@@ -304,22 +311,33 @@ def seed_benchmark_data() -> dict[str, set[int]]:
 
 
 def clear_benchmark_data() -> None:
-    """Reset the document corpus to a controlled empty state.
+    """Remove benchmark-seeded rows, leaving unrelated data untouched.
 
-    Deletes ALL documents and chunks (and their approval log entries) so
-    the benchmark always measures retrieval against exactly the corpus it
-    seeds. Leftover dev fixtures (e.g. the sample docs created by
-    scripts/seed_db.py) are near-duplicates of the seed content and would
-    otherwise outrank seed chunks, corrupting the metrics.
-
-    This is intentionally destructive: it is a controlled test harness and
-    must never be pointed at a production database.
+    Deletes only documents/chunks/approval entries marked with
+    ``BENCHMARK_SOURCE`` in ``documents.source_path``. A previous version
+    deleted ALL documents and chunks so the benchmark always measured
+    retrieval against exactly the seeded corpus — safe in CI (ephemeral
+    Postgres container) but destructive when run against a developer's
+    real database. Scoping to the seeder's own rows keeps both safe: CI's
+    container is empty anyway, so the corpus is still exactly the seeded
+    content (design decision 2026-08-09).
     """
     with acquire() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM approval_log")
-            cur.execute("DELETE FROM document_chunks")
-            cur.execute("DELETE FROM documents")
+            cur.execute(
+                "DELETE FROM approval_log WHERE document_id IN "
+                "(SELECT id FROM documents WHERE source_path = %s)",
+                (BENCHMARK_SOURCE,),
+            )
+            cur.execute(
+                "DELETE FROM document_chunks WHERE document_id IN "
+                "(SELECT id FROM documents WHERE source_path = %s)",
+                (BENCHMARK_SOURCE,),
+            )
+            cur.execute(
+                "DELETE FROM documents WHERE source_path = %s",
+                (BENCHMARK_SOURCE,),
+            )
             conn.commit()
 
 

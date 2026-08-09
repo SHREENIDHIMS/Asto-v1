@@ -76,7 +76,7 @@ jobs:
         run: |
           python -c "
           import json, glob
-          reports = sorted(glob.glob('evaluation/reports/*.json'), reverse=True)
+          reports = sorted(glob.glob('evaluation/reports/benchmark_*.json'), reverse=True)
           if len(reports) < 2:
               print('Not enough reports for comparison, skipping regression check')
               exit(0)

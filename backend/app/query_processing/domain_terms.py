@@ -161,6 +161,72 @@ COMMON_WORDS: set[str] = {
      "lender", "borrower", "applicant", "mortgage", "refinance",
      "application", "approval", "finance", "require", "statement", "statements",
      "hello", "help", "thanks", "thank", "okay", "urgent", "asap",
+     # Common conversational query words (design decision 2026-08-09).
+     # These must never be "corrected" into a domain term — e.g. the valid
+     # English word "borrow" must NOT become "borrower", and "owe" must not
+     # become "owed" unless the user wrote it. Includes verbs, simple tenses,
+     # and filler that real clients type.
+     "borrow", "borrowed", "borrowing", "borrows",
+     "owe", "owed", "owes", "owing",
+     "pay", "pays", "paid", "paying", "payments", "payment",
+     "upload", "uploads", "uploaded", "uploading",
+     "submit", "submits", "submitted", "submitting",
+     "send", "sends", "sent", "sending",
+     "receive", "receives", "received", "receiving",
+     "wait", "waits", "waiting",
+     "check", "checks", "checked", "checking",
+     "update", "updates", "updated", "updating",
+     "happen", "happens", "happened", "happening",
+     "going", "gone", "go",
+     "know", "knows", "known", "knew",
+     "see", "sees", "saw", "seen", "looking", "look", "looks", "looked",
+     "want", "wants", "wanted",
+     "soon", "status", "statuses", "status", "progress", "progressed",
+     "file", "files", "filed", "docs", "docus", "documentation",
+     "open", "opens", "opened", "close", "closes", "closed",
+     "start", "starts", "started", "starting",
+     "finish", "finishes", "finished", "finishing",
+     "ready", "readied", "wrong", "issue", "issues", "problem", "problems",
+     "question", "questions", "answer", "answers", "explain", "explained",
+     "confirm", "confirms", "confirmed", "confirmation",
+     "quote", "quotes", "quoted", "estimate", "estimates", "estimated",
+     "schedule", "scheduled", "schedules", "expect", "expects", "expected",
+     "today", "tomorrow", "yesterday", "week", "weeks", "today", "soon",
+     "this", "that", "there", "their", "they", "them", "then", "than",
+     "first", "last", "next", "any", "anyone", "anywhere", "somewhere",
+     "should", "could", "would", "might", "must", "may", "can", "will",
+     "do", "does", "did", "done", "doing", "have", "has", "had", "having",
+     "be", "been", "being", "am", "is", "are", "was", "were", "will",
+     "would", "could", "should", "might", "may", "can", "shall",
+     # Ordinals / number words. "second" must NOT become "send" (it was
+     # being fuzzy-corrected into the verb at ratio 80 — see the length-
+     # difference guard in spell_correction._correct_token).
+     "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
+     "ninth", "tenth", "twelfth", "twentieth", "thirty", "forty", "fifty",
+     "sixty", "seventy", "eighty", "ninety", "hundred", "hundreds",
+     "thousand", "thousands", "million", "millions", "single", "married",
+     "divorced", "separated", "citizen", "resident", "nonresident",
+     "address", "street", "city", "state", "zip", "works", "working",
+     "work", "employed", "buy", "buys", "buying", "bought", "sell",
+     "sells", "selling", "sold", "own", "owns", "owning", "rent", "rents",
+     "rented", "renting", "lease", "leases", "leased", "leasing", "new",
+     "old", "large", "small", "high", "low", "big", "little", "both",
+     "every", "few", "several", "own", "something", "anything",
+     "everything", "nothing", "someone", "everyone", "everybody",
+     "somebody", "nobody", "inside", "outside", "below", "above", "around",
+     "behind", "beside", "toward", "whether", "though", "although",
+     "maybe", "perhaps", "almost", "always", "never", "often",
+     "sometimes", "usually", "again", "once", "twice", "three", "four",
+     "five", "six", "seven", "eight", "nine", "ten",
+     # Case-processing vocabulary. "processed" was being fuzzy-corrected
+     # into "progressed" (ratio ~83, len 9->10) and "stage" into "state" —
+     # both valid English words with near matches in the vocab.
+     "processed", "processing", "processes", "stage", "stages", "pending",
+     "approved", "approve", "approves", "approving", "review", "reviews",
+     "reviewed", "reviewing", "decision", "decisions", "decide", "decides",
+     "decided", "proceed", "proceeds", "proceeded", "proceeding",
+     "reject", "rejects", "rejected", "rejecting", "denied", "denial",
+     "accepted", "accept", "accepts", "accepting",
 }
 
 # Phrases that indicate a new question when they start a fragment.

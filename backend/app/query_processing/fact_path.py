@@ -7,8 +7,13 @@ path (vector + BM25).
 Flow (per docs/architecture/dual_path_assistant.md §3/§4):
 
 1. Multi-question split has already produced ``plan.sub_queries``; each
-   sub-question is classified independently via ``classify_fact_intent``.
-2. No intent match anywhere → return ``None`` (document path).
+   sub-question is classified independently via ``route_fact_intent``
+   (exact phrase first, then asymmetric-soft matching — see fact_router).
+2. No intent match anywhere and no clarification needed → return ``None``
+   (document path).
+2b. No intent match, but the query reads personally/about the caller's
+   case → return a ``no_answer`` package with the deterministic clarifying
+   prompt instead of guessing an intent.
 3. Intent(s) match but no case context → return ``None`` so the query
    falls through instead of emitting a misleading empty answer. (For a
    client audience we auto-resolve their most recent active case.)
@@ -36,7 +41,7 @@ from collections import OrderedDict
 
 import psycopg
 
-from app.query_processing.fact_router import classify_fact_intent
+from app.query_processing.fact_router import route_fact_intent
 from app.query_processing.fact_resolvers import (
     FactContext,
     FactRecord,
@@ -348,6 +353,43 @@ def _no_answer_package(reason: str, query_text: str) -> ResponsePackage:
     return package
 
 
+# Deterministic clarifying prompt (design decision 2026-08-09). When a query
+# reads like a personal case question but no single intent cleared the soft
+# routing bar, we ask rather than best-guess. The prompt is a FIXED string —
+# no template slots, no generated text — and carries the intent example
+# chips so the client can click-to-ask.
+CLARIFY_PROMPT = (
+    "I'm not sure which detail of your case you're asking about. "
+    "Can you rephrase your question? For example: your case status, "
+    "what documents are still needed, or your loan details."
+)
+
+
+def _clarify_package(query_text: str) -> ResponsePackage:
+    """A no-answer package that asks the user to rephrase instead of guessing.
+
+    ``related_questions`` doubles as the click-to-ask example chips the
+    frontend already renders (no new UI plumbing needed).
+    """
+    package = ResponsePackage(
+        response_id=hashlib.sha256(
+            f"fact:clarify:{query_text}:{uuid.uuid4()}".encode()
+        ).hexdigest()[:16],
+        title="Could you rephrase?",
+        answer="",
+        confidence=0.0,
+        routing="no_answer",
+        related_questions=[
+            "What is the current status of my case?",
+            "What documents are still missing?",
+            "What is the loan amount on this case?",
+        ],
+    )
+    package.retrieval_path = "structured_fact"
+    package.no_answer_reason = CLARIFY_PROMPT
+    return package
+
+
 def run_fact_path(
     conn: psycopg.Connection,
     normalized_query: str,
@@ -365,25 +407,35 @@ def run_fact_path(
     and tests), the whole ``normalized_query`` is classified directly.
 
     ``None`` means: no supported fact intent at all — the caller should
-    run the document path instead.
+    run the document path instead. A ``no_answer`` package with the
+    clarifying prompt is returned when the query reads personally/about the
+    caller's case but no intent cleared the soft routing bar (we ask rather
+    than best-guess — design decision 2026-08-09).
     """
     if sub_queries is None:
-        intents = [i for i in (classify_fact_intent(normalized_query),) if i is not None]
+        parts = [normalized_query]
     else:
         parts = [p for p in sub_queries if p and p.strip()]
         if not parts:
             return None
-        # Classify each sub-question independently, preserving first-match
-        # order and dropping duplicates so "status? also status?" stays one.
-        intents = []
-        seen: set[str] = set()
-        for part in parts:
-            intent = classify_fact_intent(part)
-            if intent is not None and intent not in seen:
-                seen.add(intent)
-                intents.append(intent)
+
+    # Soft-match each sub-question independently, preserving first-match
+    # order and dropping duplicates so "status? also status?" stays one.
+    intents: list[str] = []
+    seen: set[str] = set()
+    needs_clarification = False
+    for part in parts:
+        route = route_fact_intent(part)
+        if route.needs_clarification:
+            needs_clarification = True
+            continue
+        if route.intent is not None and route.intent not in seen:
+            seen.add(route.intent)
+            intents.append(route.intent)
 
     if not intents:
+        if needs_clarification:
+            return _clarify_package(query_text)
         return None
 
     resolved_case_id = _resolve_case_id(conn, user, case_id)

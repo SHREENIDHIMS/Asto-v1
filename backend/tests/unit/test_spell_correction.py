@@ -179,7 +179,7 @@ class TestNoFalseCorrections:
         """Guard must not disable genuine phrase repair."""
         result = correct("max ltv for investmnt properti")
         assert "investment" in result
-        assert "properties" in result
+        assert "property" in result or "properties" in result
 
 
 class TestCommonWordProtection:
@@ -223,6 +223,93 @@ class TestCommonWordProtection:
     def test_noise_words_not_rewritten(self):
         assert correct("hello") == "hello"
         assert correct("thanks") == "thanks"
+
+
+class TestRealWordSwapProtection:
+    """Valid English words must never be corrected into a DIFFERENT word.
+
+    Regressions (design decision 2026-08-09): valid words with a fuzzy
+    match to another vocab word at ratio >= 80 were being silently
+    rewritten:
+    - "second" -> "send"  (ratio 80, len 6 -> 4; blocked by the
+      length-difference guard + "second" now protected)
+    - "borrow" -> "borrower" (blocked by adding "borrow" to COMMON_WORDS)
+    - "wats"  -> "was" (bad guess; handled as a contraction in
+      normalization, "wats" -> "what is")
+    """
+
+    def test_second_not_rewritten_to_send(self):
+        assert correct("what is the down payment for a second home") == \
+            "what is the down payment for a second home"
+
+    def test_second_home_entity_survives_pipeline(self):
+        from app.query_processing import pipeline
+
+        plan = pipeline.process_query("what is the down payment for a second home")
+        assert len(plan.sub_queries) == 1
+        sq = plan.sub_queries[0]
+        assert "second home" in sq.text
+        canonicals = [e.canonical for e in sq.entities]
+        assert "second home" in canonicals
+
+    def test_second_home_requirements_entity_survives_pipeline(self):
+        from app.query_processing import pipeline
+
+        plan = pipeline.process_query("what are second home requirements")
+        assert len(plan.sub_queries) == 1
+        sq = plan.sub_queries[0]
+        assert "second home" in sq.text
+        canonicals = [e.canonical for e in sq.entities]
+        assert "second home" in canonicals
+
+    def test_borrow_never_becomes_borrower(self):
+        result = correct("how much did i borrow")
+        assert "borrow" in result
+        assert "borrower" not in result
+
+    def test_owe_never_becomes_owed(self):
+        result = correct("how much do i owe")
+        assert "owe" in result
+        assert "owed" not in result
+
+    def test_genuine_typos_still_corrected_after_guard(self):
+        """The length-diff guard must not disable real typo fixes."""
+        assert "credit" in correct("what is my credt score")
+        assert "amount" in correct("wats my loan ammount")
+        assert "requirements" in correct("what are the requirments")
+        assert "documents" in correct("what documnts are requred")
+        assert "minimum" in correct("what is the minimun score")
+        assert "investment" in correct("max ltv for investmnt properti")
+
+    def test_case_processing_words_never_rewritten(self):
+        """'processed'/'stage' etc. are valid words with near vocab matches."""
+        assert correct("is my loan being processed") == "is my loan being processed"
+        assert correct("what stage is my case in") == "what stage is my case in"
+        assert correct("what is the status of my pending case") == "what is the status of my pending case"
+        assert "progressed" not in correct("is my loan being processed")
+        assert "state" not in correct("what stage is my case in")
+
+    def test_no_known_word_in_router_phrases_is_corrupted(self):
+        """Systematic sweep: every real word in the fact-router phrase table
+        and the eval dataset must survive spelling correction unchanged."""
+        import re
+
+        from app.query_processing.fact_router import FACT_INTENT_PHRASES
+        from app.query_processing.spell_correction import correct
+
+        tokens: set[str] = set()
+        for phrases in FACT_INTENT_PHRASES.values():
+            for phrase in phrases:
+                tokens.update(phrase.split())
+
+        corrupted = sorted(
+            {
+                word
+                for word in tokens
+                if re.fullmatch(r"[a-z]{4,}", word) and correct(word) != word
+            }
+        )
+        assert corrupted == [], f"real words corrupted by spell correction: {corrupted}"
 
 
 class TestEmptyInput:

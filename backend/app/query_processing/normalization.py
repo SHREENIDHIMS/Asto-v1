@@ -16,6 +16,8 @@ import unicodedata
 
 CONTRACTIONS: dict[str, str] = {
     "whats": "what is", "what's": "what is", "whatre": "what are", "what're": "what are",
+    "wat": "what", "wats": "what is", "wat's": "what is",
+    "wut": "what", "wuts": "what is", "huh": "what",
     "what've": "what have", "whos": "who is", "who's": "who is", "who're": "who are",
     "hows": "how is", "how's": "how is", "whys": "why is", "why's": "why is",
     "whens": "when is", "when's": "when is", "wheres": "where is", "where's": "where is",

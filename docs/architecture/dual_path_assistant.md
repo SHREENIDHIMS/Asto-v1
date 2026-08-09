@@ -242,6 +242,64 @@ sentences joined server-side (no synthesis). Adding any LLM or abstractive
 rephrasing here is prohibited without an explicit decision to revisit this
 rule.
 
+## 9b. Soft-match routing & clarification (design decision 2026-08-09)
+
+Exact-phrase matching (§3) is a HIGH bar: a client who types "where is my
+app at" or "any word on my application" matches nothing literally, so the
+router falls back to a deterministic **soft-match stage** in
+`fact_router.py` (`route_fact_intent`). It scores every intent as a
+weighted blend of fuzzy phrase similarity (`rapidfuzz.partial_ratio`) and
+a light keyword-overlap signal — still zero ML, zero LLM.
+
+Asymmetric thresholds (constants, not config — see CLAUDE.md rule 7):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `ROUTE_SCORE` | 0.85 | soft match must clear this to route to an intent |
+| `ROUTE_MARGIN` | 0.08 | top intent must beat the runner-up by this much |
+| `CLARIFY_FLOOR` | 0.30 | weak-but-personal signal → ask, don't guess |
+
+Decision tree, in order:
+
+1. **Fragment guard.** Fewer than 2 words ("status?", "missing?") never
+   route — no guessing from a bare fragment.
+2. **Exact phrase** → route at confidence 1.0.
+3. **Decisive soft winner** (score ≥ `ROUTE_SCORE` and ahead by
+   `ROUTE_MARGIN`) → route to that intent.
+4. **Personal gray zone.** Score ≥ `CLARIFY_FLOOR`, the query is phrased
+   about the caller's own case (`_PERSONAL_RE`: "my case/app/loan/…",
+   "do you need", "from me"), and it does NOT map to a hard document-path
+   intent (`_HARD_DOC_INTENTS`: eligibility / costs / limits / definition)
+   → return a **clarifying prompt** instead of best-guessing.
+5. Otherwise → fall through to the document path.
+
+**Why ask instead of best-guess.** Routing a query to a fact intent is a
+high-stakes act — the answer is a *stored value* ("$240,000", "in
+underwriting") shown as authoritative. Guessing wrong is worse than
+saying "I'm not sure". For genuinely ambiguous personal questions the
+caller returns `_clarify_package`: routing `no_answer`, a FIXED
+deterministic prompt in `no_answer_reason`, and the intent's example
+questions in `related_questions` so the frontend renders them as
+click-to-ask chips (no new UI plumbing).
+
+**Never clarified:** conditional/hypothetical phrasing ("what happens if i
+miss a payment") is policy, not this caller's case; generic reference
+questions (eligibility, costs, limits, definitions) belong to the document
+path by construction. "documents"/"requirements" are deliberately excluded
+from `_HARD_DOC_INTENTS` because they overlap with legitimate personal
+questions ("do you need my w2?" → missing-documents).
+
+**Spell-correction protection (same decision).** Real-word swaps were
+observed: the valid English word "borrow" was being corrected into the
+domain term "borrower", and the typo "wats" into "was". The correction
+vocabulary (`domain_terms.py` `COMMON_WORDS`) now includes common
+conversational query vocabulary (verbs and tenses: borrow/owe/pay/upload/
+submit/send/check/…, plus personal pronouns and filler), so valid English
+words are treated as protected vocabulary instead of fuzzy-matching a
+domain term. Phonetic contractions ("wats"/"wut" → "what is") are expanded
+in `normalization.py`. Typos that are NOT valid words (e.g. "ammount",
+"requirment", "cred") are still corrected.
+
 ## 10. Testing gate
 
 - Unit: `fact_router` classification, each resolver's RLS behavior (client

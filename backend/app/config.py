@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # --- Database ---
     # postgresql://user:password@host:port/dbname
     database_url: str = "postgresql://asto_app:devpass@127.0.0.1:5433/asto_assistant"
+    # Scratch database for the test suite (see backend/tests/conftest.py).
+    # Integration tests seed + clear benchmark rows and must never touch a
+    # developer's real database by accident.
+    test_database_url: str | None = None
     database_pool_max: int = 4
     database_pool_timeout_s: int = 30
 

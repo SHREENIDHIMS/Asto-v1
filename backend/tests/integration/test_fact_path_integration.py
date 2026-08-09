@@ -345,3 +345,52 @@ class TestFactPathIntegration:
         status_fact = next(f for f in data["facts"] if f["label"] == "Status")
         assert status_fact["value"] == "under_review"
         assert status_fact["source"].startswith("cases#")
+
+    def test_ambiguous_personal_query_returns_clarify_chips(self, fact_db):
+        """A personal-but-ambiguous query asks to rephrase with click-to-ask chips."""
+        from app.query_processing.fact_path import CLARIFY_PROMPT, run_fact_path
+
+        with acquire() as conn:
+            package = run_fact_path(
+                conn=conn,
+                normalized_query="is my loan being processed",
+                user=_client_user(fact_db["client1"]),
+                case_id=fact_db["case1"],
+                query_text="is my loan being processed",
+            )
+
+        assert package is not None
+        assert package.routing == "no_answer"
+        assert package.no_answer_reason == CLARIFY_PROMPT
+        assert package.answer == ""
+        # The chips are the frontend click-to-ask affordances.
+        assert "What is the current status of my case?" in package.related_questions
+        assert "What documents are still missing?" in package.related_questions
+        assert "What is the loan amount on this case?" in package.related_questions
+
+    def test_related_question_chips_click_through_to_facts(self, fact_db):
+        """Every click-to-ask chip resolves to a real structured-fact answer.
+
+        Related questions double as the clarify prompt's chips; the round
+        trip must actually work — clicking a chip re-asks it and gets a
+        fact package, not another dead-end.
+        """
+        from app.query_processing.fact_path import RELATED_QUESTIONS_BY_INTENT, run_fact_path
+
+        chips = RELATED_QUESTIONS_BY_INTENT["case_status"]
+        assert len(chips) == 3
+
+        for chip in chips:
+            with acquire() as conn:
+                package = run_fact_path(
+                    conn=conn,
+                    normalized_query=chip,
+                    user=_client_user(fact_db["client1"]),
+                    case_id=fact_db["case1"],
+                    query_text=chip,
+                )
+            assert package is not None, f"chip {chip!r} returned no package"
+            assert package.retrieval_path == "structured_fact", f"chip {chip!r} did not hit the fact path"
+            assert package.routing == "answer", f"chip {chip!r} did not resolve to a full answer"
+            assert package.facts, f"chip {chip!r} returned no facts"
+            assert all(f.source and "#" in f.source for f in package.facts)

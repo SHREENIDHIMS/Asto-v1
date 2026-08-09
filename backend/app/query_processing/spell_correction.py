@@ -34,6 +34,16 @@ _RATIO_THRESHOLD = 80
 # Phrase-level threshold (multi-word aliases) is higher — replacing a
 # whole phrase is more invasive.
 _PHRASE_RATIO_THRESHOLD = 92
+# Real-word-swap guard (design decision 2026-08-09). A valid English word
+# can fuzzy-match a DIFFERENT vocab word at >= 80 with a length jump of 2
+# (e.g. "second" → "send" at 80.0, "borrow" → "borrower" at 83.3 before
+# "borrow" was protected). Legitimate typos almost never move more than 1
+# character in length ("credt" → "credit", "ammount" → "amount",
+# "documnts" → "documents"). Requiring |len(token) - len(best)| <= 1
+# blocks identity swaps while keeping every real typo fix. As a fallback
+# for longer words, allow a 2-char jump only at a much stronger ratio.
+_MAX_LEN_DIFF = 1
+_LEN_DIFF_2_MIN_RATIO = 92
 
 _TOKEN_RE = re.compile(r"[a-z]+")
 _ALPHA_RE = re.compile(r"^[a-z]+$")
@@ -101,7 +111,18 @@ def _correct_token(token: str) -> str:
         return glued
     best, score, _ = process.extractOne(token, _CORRECTION_VOCAB, scorer=fuzz.ratio)
     if score >= _RATIO_THRESHOLD:
-        return best
+        # A single candidate can fail the length guard while a slightly
+        # worse one is a perfect-size fix (e.g. "properti" → "properties"
+        # at 88.9 but len+2, vs "property" at 87.5 and len+0). Walk the
+        # top matches and take the first that respects the length guard.
+        for candidate, candidate_score, _ in process.extract(
+            token, _CORRECTION_VOCAB, scorer=fuzz.ratio, limit=5
+        ):
+            if candidate_score < _RATIO_THRESHOLD:
+                break
+            length_diff = abs(len(token) - len(candidate))
+            if length_diff <= _MAX_LEN_DIFF or (length_diff == 2 and candidate_score >= _LEN_DIFF_2_MIN_RATIO):
+                return candidate
     return token
 
 
