@@ -50,6 +50,49 @@ async def list_users(user: dict = Depends(require_auth)) -> dict:
     return {"users": users}
 
 
+@router.get("/summary")
+async def admin_summary(user: dict = Depends(require_auth)) -> dict:
+    """Aggregate counts for the admin dashboard stat cards."""
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM documents WHERE approval_status = 'pending'"
+            )
+            pending_approvals = cur.fetchone()["n"] or 0
+
+            cur.execute("SELECT COUNT(*) AS n FROM documents")
+            total_documents = cur.fetchone()["n"] or 0
+
+            cur.execute("SELECT COUNT(*) AS n FROM users")
+            total_users = cur.fetchone()["n"] or 0
+
+            cur.execute("SELECT COUNT(*) AS n FROM clients")
+            total_clients = cur.fetchone()["n"] or 0
+
+            cur.execute("SELECT COUNT(*) AS n FROM cases WHERE is_active = true")
+            active_cases = cur.fetchone()["n"] or 0
+
+            cur.execute("SELECT COUNT(*) AS n FROM knowledge_gaps")
+            total_gaps = cur.fetchone()["n"] or 0
+
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM sop_access_requests WHERE status = 'pending'"
+            )
+            pending_sop_requests = cur.fetchone()["n"] or 0
+
+    return {
+        "pending_approvals": pending_approvals,
+        "total_documents": total_documents,
+        "total_users": total_users,
+        "total_clients": total_clients,
+        "active_cases": active_cases,
+        "total_gaps": total_gaps,
+        "pending_sop_requests": pending_sop_requests,
+    }
+
+
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
     request: CreateUserRequest,

@@ -307,9 +307,23 @@ to these ports.
   prior session) have empty `source_path` and no files on disk — View will
   still 404 for them. Flagged; not in seed scope.
 
+**Phase F2 — Admin Dashboard + Settings (same session):**
+- **`GET /admin/summary`:** new endpoint in `api/v1/admin.py` returning 7
+  admin-only aggregate counts (pending approvals, total documents, users,
+  clients, active cases, knowledge gaps, pending SOP access requests).
+- **Frontend:** admin `Dashboard` + `Settings` nav items enabled; new
+  `DashboardTab` (stat-card grid with refresh) and `SettingsTab` (browser-local
+  prefs: default landing tab + audit-banner toggle) in `app/admin/page.tsx`;
+  `getAdminSummary` client added. Default landing tab now honors the saved pref.
+- **Tests:** `tests/unit/test_admin_summary.py` (5 tests) — route wiring, 401,
+  client 403, payload counts, null-count → 0. Full suite: **320 passed**.
+- **Live verified:** rebuilt `asto-backend` + `frontend`; `/admin/summary`
+  returns live counts; admin page 200 and its compiled chunk references the new
+  components.
+
 **Not done / carry to next session:**
-- Remaining Phase F views (F2 admin dashboard/settings, F3 governance, F4 staff
-  ops, F5 tasks/client home, F6 messages, F7 audit log) — next in build order.
+- Remaining Phase F views (F3 governance, F4 staff ops, F5 tasks/client home,
+  F6 messages, F7 audit log) — next in build order.
 
 ### Session 3 — 2026-08-08
 
@@ -470,9 +484,10 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       document View works end-to-end; fix stale analytics carry-over note
       (charts already exist in `/admin` Analytics tab). *(Done Session 8 —
       seed generates PDFs into `storage/processed/`; View returns 200.)*
-- [ ] **F2 Admin Dashboard + Settings:** new `/admin/summary` endpoint
+- [x] **F2 Admin Dashboard + Settings:** new `/admin/summary` endpoint
       (pending approvals, documents, users, clients, gaps) + admin Dashboard
-      stat-card view; admin Settings view (frontend prefs).
+      stat-card view; admin Settings view (frontend prefs). *(Done Session 8 —
+      summary returns 7 counts; Dashboard + Settings tabs live.)*
 - [ ] **F3 Admin governance:** Knowledge Base browse (read-only
       `/admin/documents/{id}/chunks` + view); SOP Management view (reuse
       `/staff/sops` + `/admin/sop-access-requests` review, add admin read-all

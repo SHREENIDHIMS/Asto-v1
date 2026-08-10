@@ -1015,3 +1015,30 @@ export async function getAnalyticsSummary(
   }
   return response.json();
 }
+
+// ---------------------------------------------------------------------------
+// Admin: dashboard summary (Phase F2)
+// ---------------------------------------------------------------------------
+
+export interface AdminSummary {
+  pending_approvals: number;
+  total_documents: number;
+  total_users: number;
+  total_clients: number;
+  active_cases: number;
+  total_gaps: number;
+  pending_sop_requests: number;
+}
+
+export async function getAdminSummary(
+  token: string
+): Promise<AdminSummary> {
+  const response = await fetch(`${API_BASE_URL}/admin/summary`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load admin summary');
+  }
+  return response.json();
+}

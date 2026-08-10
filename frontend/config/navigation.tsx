@@ -51,7 +51,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "dashboard",
           label: "Dashboard",
           icon: <LayoutDashboard className="h-4 w-4" />,
-          disabled: true,
         },
         { id: "approvals", label: "Approval Queue", icon: <Inbox className="h-4 w-4" /> },
         {
@@ -112,7 +111,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "settings",
           label: "Settings",
           icon: <Settings className="h-4 w-4" />,
-          disabled: true,
         },
       ],
     },

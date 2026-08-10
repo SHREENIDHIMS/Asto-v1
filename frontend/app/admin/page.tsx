@@ -33,7 +33,9 @@ import {
   assignStaffToClient,
   getKnowledgeGaps,
   getAnalyticsSummary,
+  getAdminSummary,
   AnalyticsSummary,
+  AdminSummary,
   getDocumentFile,
   openBlobInNewTab,
   ApprovalDocument,
@@ -1097,6 +1099,216 @@ function AnalyticsTab({ token }: { token: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard tab (Phase F2)
+// ---------------------------------------------------------------------------
+
+function DashboardTab({ token }: { token: string }) {
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      setSummary(await getAdminSummary(token));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load summary");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const statCards = [
+    {
+      label: "Pending approvals",
+      value: summary ? summary.pending_approvals.toLocaleString() : "—",
+      hint: "documents awaiting review",
+    },
+    {
+      label: "Documents",
+      value: summary ? summary.total_documents.toLocaleString() : "—",
+      hint: "in the knowledge base",
+    },
+    {
+      label: "Active cases",
+      value: summary ? summary.active_cases.toLocaleString() : "—",
+      hint: "currently open",
+    },
+    {
+      label: "Users",
+      value: summary ? summary.total_users.toLocaleString() : "—",
+      hint: "staff accounts",
+    },
+    {
+      label: "Clients",
+      value: summary ? summary.total_clients.toLocaleString() : "—",
+      hint: "external accounts",
+    },
+    {
+      label: "Knowledge gaps",
+      value: summary ? summary.total_gaps.toLocaleString() : "—",
+      hint: "low/no-answer queries",
+    },
+    {
+      label: "SOP access requests",
+      value: summary ? summary.pending_sop_requests.toLocaleString() : "—",
+      hint: "awaiting review",
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          At-a-glance system health. Deep links live in their own tabs.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {statCards.map((s) => (
+            <Card key={s.label}>
+              <CardHeader className="pb-1">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {s.label}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold">{s.value}</p>
+                <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Settings tab (Phase F2 — frontend preferences)
+// ---------------------------------------------------------------------------
+
+const SETTINGS_STORAGE_KEY = "asto_admin_settings";
+
+interface AdminSettings {
+  showAuditBanner: boolean;
+  defaultTab: string;
+}
+
+function loadSettings(): AdminSettings {
+  if (typeof window === "undefined") return { showAuditBanner: true, defaultTab: "dashboard" };
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (raw) return { showAuditBanner: true, defaultTab: "dashboard", ...JSON.parse(raw) };
+  } catch {
+    // ignore corrupt prefs
+  }
+  return { showAuditBanner: true, defaultTab: "dashboard" };
+}
+
+function SettingsTab({ onDefaultTabChange }: { onDefaultTabChange: (tab: string) => void }) {
+  const [settings, setSettings] = useState<AdminSettings>(loadSettings);
+  const [saved, setSaved] = useState(false);
+
+  const persist = (next: AdminSettings) => {
+    setSettings(next);
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="max-w-xl space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Frontend preferences, stored in this browser. They don&apos;t affect the
+        server or the audit trail.
+      </p>
+
+      {saved && (
+        <Alert>
+          <CheckCircle2 className="h-4 w-4" />
+          <AlertTitle>Saved</AlertTitle>
+          <AlertDescription>Preferences updated.</AlertDescription>
+        </Alert>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Landing view</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Label htmlFor="default-tab">Default tab after sign-in</Label>
+          <Select
+            value={settings.defaultTab}
+            onValueChange={(value) => {
+              persist({ ...settings, defaultTab: value });
+              onDefaultTabChange(value);
+            }}
+          >
+            <SelectTrigger id="default-tab" className="mt-2 w-full">
+              <SelectValue placeholder="Choose a tab" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="dashboard">Dashboard</SelectItem>
+              <SelectItem value="approvals">Approvals</SelectItem>
+              <SelectItem value="documents">Documents</SelectItem>
+              <SelectItem value="analytics">Analytics</SelectItem>
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Audit banner</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Label className="flex items-center justify-between gap-4">
+            <span className="font-normal text-sm">
+              Show the &quot;every decision is written to the audit trail&quot; banner
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.showAuditBanner}
+              onChange={(e) =>
+                persist({ ...settings, showAuditBanner: e.target.checked })
+              }
+              className="h-4 w-4 rounded border-border"
+            />
+          </Label>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Admin page shell
 // ---------------------------------------------------------------------------
 
@@ -1104,7 +1316,7 @@ export default function AdminPage() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [activeNavId, setActiveNavId] = useState("approvals");
+  const [activeNavId, setActiveNavId] = useState("dashboard");
 
   useEffect(() => {
     const t = getToken();
@@ -1115,6 +1327,15 @@ export default function AdminPage() {
     }
     setToken(t);
     setIsAdmin(true);
+    try {
+      const raw = localStorage.getItem("asto_admin_settings");
+      if (raw) {
+        const prefs = JSON.parse(raw);
+        if (prefs.defaultTab) setActiveNavId(prefs.defaultTab);
+      }
+    } catch {
+      // ignore corrupt prefs
+    }
   }, [router]);
 
   const handleLogout = useCallback(() => {
@@ -1152,13 +1373,18 @@ export default function AdminPage() {
     >
       <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-7">
+            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
             <TabsTrigger value="clients">Clients</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
+          <TabsContent value="dashboard">
+            <DashboardTab token={token} />
+          </TabsContent>
           <TabsContent value="approvals">
             <ApprovalsTab token={token} />
           </TabsContent>
@@ -1173,6 +1399,9 @@ export default function AdminPage() {
           </TabsContent>
           <TabsContent value="analytics">
             <AnalyticsTab token={token} />
+          </TabsContent>
+          <TabsContent value="settings">
+            <SettingsTab onDefaultTabChange={setActiveNavId} />
           </TabsContent>
         </Tabs>
 
