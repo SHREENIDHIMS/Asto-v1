@@ -1005,6 +1005,61 @@ export async function sendStaffMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Admin audit log (Phase F7)
+// ---------------------------------------------------------------------------
+
+export interface AuditEntry {
+  id: number;
+  user_id: number | null;
+  actor: string | null;
+  actor_email: string | null;
+  query: string;
+  sub_queries: string[] | null;
+  retrieved_ids: number[] | null;
+  confidence: number | null;
+  response_id: string | null;
+  outcome: string | null;
+  latency_ms: number | null;
+  created_at: string | null;
+}
+
+export interface AuditLogResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  entries: AuditEntry[];
+}
+
+export interface AuditFilters {
+  q?: string;
+  actor?: string;
+  outcome?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function getAdminAudit(
+  token: string,
+  filters: AuditFilters = {}
+): Promise<AuditLogResponse> {
+  const params = new URLSearchParams();
+  if (filters.q) params.set('q', filters.q);
+  if (filters.actor) params.set('actor', filters.actor);
+  if (filters.outcome) params.set('outcome', filters.outcome);
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  if (filters.limit != null) params.set('limit', String(filters.limit));
+  if (filters.offset != null) params.set('offset', String(filters.offset));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const response = await fetch(`${API_BASE_URL}/admin/audit${qs}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return jsonOrThrow(response, 'Failed to load audit log');
+}
+
+// ---------------------------------------------------------------------------
 // Admin: users, clients, assignments (Phase C3)
 // ---------------------------------------------------------------------------
 

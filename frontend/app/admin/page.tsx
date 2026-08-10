@@ -39,12 +39,14 @@ import {
   getGovernance,
   listSopAccessRequests,
   reviewSopAccessRequest,
+  getAdminAudit,
   AnalyticsSummary,
   AdminSummary,
   DocumentChunk,
   Sop,
   GovernanceData,
   SopAccessRequest,
+  AuditEntry,
   getDocumentFile,
   openBlobInNewTab,
   ApprovalDocument,
@@ -79,6 +81,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 function statusBadge(status: string) {
   switch (status) {
@@ -1700,6 +1703,244 @@ function SettingsTab({ onDefaultTabChange }: { onDefaultTabChange: (tab: string)
 }
 
 // ---------------------------------------------------------------------------
+// Audit Log tab (Phase F7)
+// ---------------------------------------------------------------------------
+
+const OUTCOME_TONES: Record<string, string> = {
+  answer: "bg-green-100 text-green-800 border-green-200",
+  partial: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  no_answer: "bg-red-100 text-red-800 border-red-200",
+  no_sub_queries: "bg-red-100 text-red-800 border-red-200",
+};
+
+function AuditLogTab({ token }: { token: string }) {
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [actor, setActor] = useState("");
+  const [outcome, setOutcome] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 25;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await getAdminAudit(token, {
+        q: q || undefined,
+        actor: actor || undefined,
+        outcome: outcome || undefined,
+        from: from || undefined,
+        to: to || undefined,
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+      });
+      setEntries(res.entries);
+      setTotal(res.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load audit log");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, q, actor, outcome, from, to, page]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Every query, decision, and action — recorded per CLAUDE.md rule 8.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <Card>
+        <CardContent className="p-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="space-y-1">
+              <Label htmlFor="audit-q" className="text-xs text-muted-foreground">
+                Query text
+              </Label>
+              <Input
+                id="audit-q"
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search queries…"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="audit-actor" className="text-xs text-muted-foreground">
+                Actor
+              </Label>
+              <Input
+                id="audit-actor"
+                value={actor}
+                onChange={(e) => {
+                  setActor(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Email or name…"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="audit-outcome" className="text-xs text-muted-foreground">
+                Outcome
+              </Label>
+              <Select
+                value={outcome || "__all__"}
+                onValueChange={(v) => {
+                  setOutcome(v === "__all__" ? "" : v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger id="audit-outcome">
+                  <SelectValue placeholder="Any" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Any</SelectItem>
+                  <SelectItem value="answer">answer</SelectItem>
+                  <SelectItem value="partial">partial</SelectItem>
+                  <SelectItem value="no_answer">no_answer</SelectItem>
+                  <SelectItem value="no_sub_queries">no_sub_queries</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="audit-from" className="text-xs text-muted-foreground">
+                From
+              </Label>
+              <Input
+                id="audit-from"
+                type="date"
+                value={from}
+                onChange={(e) => {
+                  setFrom(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="audit-to" className="text-xs text-muted-foreground">
+                To
+              </Label>
+              <Input
+                id="audit-to"
+                type="date"
+                value={to}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              No audit entries match the current filters.
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {entries.map((e) => (
+                <div key={e.id} className="px-4 py-3 space-y-1.5">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-sm font-medium truncate flex items-center gap-2">
+                      <History className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                      {e.query}
+                    </p>
+                    <span
+                      className={cn(
+                        "text-xs px-2 py-0.5 rounded-full border",
+                        OUTCOME_TONES[e.outcome ?? ""] ?? "border-border text-muted-foreground"
+                      )}
+                    >
+                      {e.outcome ?? "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+                    <span>
+                      {e.actor ?? "system"} ({e.actor_email ?? "no account"})
+                    </span>
+                    {e.confidence != null && <span>conf {Math.round(e.confidence * 100)}%</span>}
+                    {e.latency_ms != null && <span>{e.latency_ms.toFixed(0)}ms</span>}
+                    {e.created_at && <span>{formatDate(e.created_at)}</span>}
+                  </div>
+                  {e.retrieved_ids && e.retrieved_ids.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      sources: {e.retrieved_ids.join(", ")}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {total.toLocaleString()} matching entries
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page <= 1 || loading}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            Prev
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages || loading}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Admin page shell
 // ---------------------------------------------------------------------------
 
@@ -1764,7 +2005,7 @@ export default function AdminPage() {
     >
       <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-11">
+          <TabsList className="grid w-full grid-cols-12">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
@@ -1775,6 +2016,7 @@ export default function AdminPage() {
             <TabsTrigger value="roles">Roles</TabsTrigger>
             <TabsTrigger value="departments">Departments</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            <TabsTrigger value="audit">Audit</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           <TabsContent value="dashboard">
@@ -1806,6 +2048,9 @@ export default function AdminPage() {
           </TabsContent>
           <TabsContent value="analytics">
             <AnalyticsTab token={token} />
+          </TabsContent>
+          <TabsContent value="audit">
+            <AuditLogTab token={token} />
           </TabsContent>
           <TabsContent value="settings">
             <SettingsTab onDefaultTabChange={setActiveNavId} />

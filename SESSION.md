@@ -431,10 +431,35 @@ they are assigned to (`staff_client_assignments`); admins see all.
 - Cross-client read of another client's conversation → **404** (SQL scoping
   holds). Left the demo thread in place as sample data.
 
-**Not done / carry to next session:**
-- F7 Audit Log viewer (last remaining Phase F view) — `GET /admin/audit`
-  (filterable: user, date range, outcome) + admin Audit Log view with
-  pagination.
+**Phase F7 — Admin Audit Log viewer (same session):**
+- **`GET /admin/audit`** in `api/v1/admin.py` — filterable + paginated read of
+  the immutable audit_log table (CLAUDE.md rule 8). Filters (AND-combined):
+  `q` (query-text ILIKE), `actor` (email/full_name across BOTH audiences via
+  LEFT JOINs users + clients — audit rows carry no audience tag), `outcome`
+  (exact, e.g. answer/partial/no_answer/no_sub_queries/validation_failed:…),
+  `from`/`to` (created_at range), plus `limit`/`offset` pagination. Returns
+  `{total, limit, offset, entries}`; entries resolved with actor name/email.
+- `db/postgres/models.py`: `audit_row_to_dict` (actor + actor_email fields).
+- Tests: `tests/unit/test_admin_audit.py` (10 tests) — route wiring, 401,
+  client 403, payload shape, q/actor/outcome/date filters land in SQL with
+  correct params, pagination limit/offset, bad limit 422. Full suite:
+  **355 passed** (345 + 10).
+- Frontend: admin `Audit` nav enabled; new `AuditLogTab` in
+  `app/admin/page.tsx` — filter card (query text, actor, outcome select,
+  from/to date pickers), entry list (query, outcome badge, actor, confidence,
+  latency, timestamp, source IDs), pagination (Prev/Next + total count),
+  refresh. TabsList 11 → 12 columns. `getAdminAudit` + `AuditEntry`/
+  `AuditFilters` types in `lib/api-client.ts`.
+- `tsc --noEmit` clean, ESLint clean.
+- **Live verified:** `/admin/audit` returns **671** entries total (50 per
+  page); `?outcome=answer` → 562, `?actor=admin` → 536, pagination
+  offset/limit honored; staff (loan_officer) → **403**; `/admin` page 200
+  with the AuditLogTab in its compiled chunk.
+
+**Phase F now complete — every Phase F view (F1–F7) is built, tested, and
+live. This session also re-verified the F6 messaging flow end-to-end
+(logins, thread, staff scoping) after the user asked for a completeness
+review.**
 
 ### Session 3 — 2026-08-08
 
@@ -619,8 +644,10 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       (CLAUDE.md rule 1). *(Done Session 9 — user chose full messages system:
       `conversations` + `messages` tables, case-anchored; client `messages` +
       staff `collaboration` views; 16 tests; 345 total.)*
-- [ ] **F7 Audit Log viewer (LAST):** new `/admin/audit` endpoint (filterable:
+- [x] **F7 Audit Log viewer (LAST):** new `/admin/audit` endpoint (filterable:
       user, date-range, outcome) + admin Audit Log view with pagination.
+      *(Done Session 9 — filterable + paginated audit view; 10 tests; 355
+      total. Phase F fully complete.)*
 ---
 
 ## Open Questions / Decisions for the User

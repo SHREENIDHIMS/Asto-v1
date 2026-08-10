@@ -101,7 +101,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "audit",
           label: "Audit Log",
           icon: <ScrollText className="h-4 w-4" />,
-          disabled: true,
         },
         {
           id: "settings",

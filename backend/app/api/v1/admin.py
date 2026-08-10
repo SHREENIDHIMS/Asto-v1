@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from passlib.hash import bcrypt
 from pydantic import BaseModel
 
 from app.auth.permissions import require_role
 from app.dependencies import require_auth
-from app.db.postgres.models import sop_request_row_to_dict, sop_row_to_dict
+from app.db.postgres.models import (
+    audit_row_to_dict,
+    sop_request_row_to_dict,
+    sop_row_to_dict,
+)
 from app.db.postgres import session
 
 router = APIRouter()
@@ -323,4 +327,88 @@ async def get_governance(user: dict = Depends(require_auth)) -> dict:
         "roles": ROLES,
         "departments": DEPARTMENTS,
         "role_hierarchy": ROLE_HIERARCHY,
+    }
+
+
+@router.get("/audit")
+async def get_audit_log(
+    user: dict = Depends(require_auth),
+    q: str | None = Query(default=None, max_length=200),
+    actor: str | None = Query(default=None, max_length=200),
+    outcome: str | None = Query(default=None, max_length=50),
+    date_from: str | None = Query(default=None, alias="from", max_length=30),
+    date_to: str | None = Query(default=None, alias="to", max_length=30),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    """Filterable, paginated audit log (Phase F7).
+
+    Filters (all optional, combined with AND):
+    - ``q``: free-text search over the query text.
+    - ``actor``: matches the querying user's email OR full name (staff or
+      client audience — audit rows carry no audience tag, so the actor is
+      resolved by LEFT JOINing both tables; the filter scans both).
+    - ``outcome``: exact outcome (e.g. ``answer``, ``partial``,
+      ``no_answer``, ``no_sub_queries``, ``validation_failed:...``).
+    - ``from``/``to``: ISO date range on ``created_at`` (inclusive).
+    - ``limit``/``offset``: pagination.
+    Returns ``entries`` plus the total match count for the current filter.
+    """
+    require_role(user, "admin")
+
+    where: list[str] = []
+    params: list = []
+
+    if q:
+        where.append("a.query ILIKE %s")
+        params.append(f"%{q}%")
+    if actor:
+        where.append(
+            "(u.email ILIKE %s OR u.full_name ILIKE %s OR c.email ILIKE %s OR c.full_name ILIKE %s)"
+        )
+        like = f"%{actor}%"
+        params.extend([like, like, like, like])
+    if outcome:
+        where.append("a.outcome = %s")
+        params.append(outcome)
+    if date_from:
+        where.append("a.created_at >= %s")
+        params.append(date_from)
+    if date_to:
+        where.append("a.created_at <= %s")
+        params.append(date_to)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM audit_log a "
+                "LEFT JOIN users u ON u.id = a.user_id "
+                "LEFT JOIN clients c ON c.id = a.user_id "
+                f"{where_sql}",
+                params,
+            )
+            total = cur.fetchone()["n"] or 0
+
+            cur.execute(
+                "SELECT a.id, a.user_id, a.query, a.sub_queries, a.retrieved_ids, "
+                "a.confidence, a.response_id, a.outcome, a.latency_ms, a.created_at, "
+                "COALESCE(u.full_name, c.full_name) AS actor, "
+                "COALESCE(u.email, c.email) AS actor_email "
+                "FROM audit_log a "
+                "LEFT JOIN users u ON u.id = a.user_id "
+                "LEFT JOIN clients c ON c.id = a.user_id "
+                f"{where_sql} "
+                "ORDER BY a.created_at DESC, a.id DESC "
+                "LIMIT %s OFFSET %s",
+                [*params, limit, offset],
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "entries": [audit_row_to_dict(r) for r in rows],
     }

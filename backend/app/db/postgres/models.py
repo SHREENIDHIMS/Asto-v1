@@ -153,3 +153,25 @@ def message_row_to_dict(row: dict) -> dict:
         "body": row["body"],
         "created_at": row.get("created_at"),
     }
+
+
+def audit_row_to_dict(row: dict) -> dict:
+    """Shape an audit_log table row for JSON responses (Phase F7).
+
+    ``actor``/``actor_email`` resolve whichever table the user_id belongs to
+    (staff ``users`` or external ``clients``), or None for system rows.
+    """
+    return {
+        "id": row["id"],
+        "user_id": row.get("user_id"),
+        "actor": row.get("actor"),
+        "actor_email": row.get("actor_email"),
+        "query": row["query"],
+        "sub_queries": row.get("sub_queries"),
+        "retrieved_ids": row.get("retrieved_ids"),
+        "confidence": row.get("confidence"),
+        "response_id": row.get("response_id"),
+        "outcome": row.get("outcome"),
+        "latency_ms": row.get("latency_ms"),
+        "created_at": row.get("created_at"),
+    }
