@@ -119,13 +119,11 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "dashboard",
           label: "Dashboard",
           icon: <LayoutDashboard className="h-4 w-4" />,
-          disabled: true,
         },
         {
           id: "cases",
           label: "My Cases",
           icon: <Briefcase className="h-4 w-4" />,
-          disabled: true,
         },
         {
           id: "tasks",
@@ -137,7 +135,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "workflows",
           label: "Workflows",
           icon: <Workflow className="h-4 w-4" />,
-          disabled: true,
         },
       ],
     },
@@ -154,7 +151,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "sops",
           label: "SOPs",
           icon: <ClipboardList className="h-4 w-4" />,
-          disabled: true,
         },
         {
           id: "knowledge",

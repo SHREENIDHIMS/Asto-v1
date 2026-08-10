@@ -340,9 +340,22 @@ to these ports.
 - **Live verified:** all three endpoints return correct data against the live
   DB; admin page 200 with the new components in its compiled chunk.
 
+**Phase F4 — Staff operational views (same session):**
+- **New `/staff` page** (`app/staff/page.tsx`) — four tabs all wired to the
+  existing backend (no backend change): Dashboard (stat cards + recent
+  workflows from `/staff/dashboard`), My Cases (case cards + case-notes
+  view/add via `/staff/cases/{id}/notes`), Workflows (advance stage via
+  `/staff/workflows/{id}/advance`), SOPs (list + create for approved authors +
+  access-request submit + own requests list).
+- **Login routing:** non-admin staff now route to `/staff` (was `/` chat page).
+- **Nav:** staff Dashboard / My Cases / Workflows / SOPs enabled; Tasks and
+  Collaboration stay disabled.
+- **Live verified:** `/staff` serves 200 with the new components in its chunk;
+  `/staff/dashboard` returns live cases + workflows + SOPs for `staff@asto.local`.
+
 **Not done / carry to next session:**
-- Remaining Phase F views (F4 staff ops, F5 tasks/client home, F6 messages,
-  F7 audit log) — next in build order.
+- Remaining Phase F views (F5 tasks/client home, F6 messages, F7 audit log) —
+  next in build order.
 
 ### Session 3 — 2026-08-08
 
@@ -513,10 +526,10 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       SOPs endpoint); Roles & Permissions / Departments — **config-driven**
       editor (`app/auth/roles_config.py` is the single source of truth; admin
       read-only governance view). *(Done Session 8 — decision: config over DB.)*
-- [ ] **F4 Staff operational views (backend exists — frontend only):**
+- [x] **F4 Staff operational views (backend exists — frontend only):**
       Dashboard (`/staff/dashboard`), My Cases (`/staff/cases/{id}/notes`),
       Workflows (`/staff/workflows/{id}/advance`), SOPs (CRUD + access
-      requests). All backend present.
+      requests). *(Done Session 8 — new `/staff` page + login routing.)*
 - [ ] **F5 Staff Tasks + client Home/Help:** Tasks — ⚠️ no table, decide
       workflow/case_notes mapping or new table; client Home (overview cards
       from existing me/properties/cases/documents endpoints); client Help

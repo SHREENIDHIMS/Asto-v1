@@ -36,7 +36,7 @@ export default function LoginPage() {
       } else if (claims?.role === "admin") {
         router.push("/admin");
       } else {
-        router.push("/");
+        router.push("/staff");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
