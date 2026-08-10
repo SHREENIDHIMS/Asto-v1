@@ -166,7 +166,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "collaboration",
           label: "Collaboration",
           icon: <MessagesSquare className="h-4 w-4" />,
-          disabled: true,
         },
         { id: "assistant", label: "AI Assistant", icon: <Sparkles className="h-4 w-4" /> },
       ],
@@ -188,7 +187,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "messages",
           label: "Messages",
           icon: <MessagesSquare className="h-4 w-4" />,
-          disabled: true,
         },
         { id: "assistant", label: "AI Assistant", icon: <Sparkles className="h-4 w-4" /> },
         {

@@ -20,16 +20,22 @@ import {
   createSop,
   getMySopRequests,
   createSopAccessRequest,
+  getStaffConversations,
+  createStaffConversation,
+  getStaffConversationMessages,
+  sendStaffMessage,
   StaffDashboardCase,
   StaffDashboardResponse,
   StaffWorkflow,
   StaffSop,
   CaseNote,
   SopAccessRequest,
+  Conversation,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
+import ConversationThread from "@/components/messages/ConversationThread";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -755,6 +761,161 @@ function SopsTab({
 }
 
 // ---------------------------------------------------------------------------
+// Collaboration tab (Phase F6 — client conversations)
+// ---------------------------------------------------------------------------
+
+function CollaborationTab({
+  token,
+  cases,
+  onError,
+}: {
+  token: string;
+  cases: StaffDashboardCase[];
+  onError: (msg: string) => void;
+}) {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [caseId, setCaseId] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await getStaffConversations(token);
+      setConversations(res.conversations);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load conversations");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const clientOptions = Array.from(
+    new Map(
+      cases.map((c) => [c.client_id, { id: c.client_id, name: c.client_name ?? `client #${c.client_id}` }])
+    ).values()
+  );
+
+  const handleCreate = async () => {
+    if (!subject.trim() || !clientId || creating) return;
+    setCreating(true);
+    try {
+      await createStaffConversation(token, {
+        subject: subject.trim(),
+        client_id: Number(clientId),
+        case_id: caseId ? Number(caseId) : null,
+      });
+      setSubject("");
+      setClientId("");
+      setCaseId("");
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create conversation");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Conversations with clients assigned to you.
+        </p>
+        <Button type="button" size="sm" onClick={() => setShowCreate((v) => !v)}>
+          New conversation
+        </Button>
+      </div>
+
+      {showCreate && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">New conversation</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="collab-subject">Subject</Label>
+              <Input
+                id="collab-subject"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="e.g. Follow-up on documents"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="collab-client">Client</Label>
+              <Select value={clientId} onValueChange={setClientId}>
+                <SelectTrigger id="collab-client">
+                  <SelectValue placeholder="Select a client" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientOptions.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {clientId && (
+              <div className="space-y-1">
+                <Label htmlFor="collab-case">Related case (optional)</Label>
+                <Select value={caseId} onValueChange={setCaseId}>
+                  <SelectTrigger id="collab-case">
+                    <SelectValue placeholder="No case" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cases
+                      .filter((c) => c.client_id === Number(clientId))
+                      .map((c) => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.case_number}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={!subject.trim() || !clientId || creating}
+            >
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start conversation"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <ConversationThread
+        conversations={conversations}
+        selfSenderType="staff"
+        loadMessages={async (id) => (await getStaffConversationMessages(token, id)).messages}
+        sendMessage={async (id, body) => {
+          await sendStaffMessage(token, id, body);
+        }}
+        emptyLabel="No conversations with your clients yet."
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Staff page shell
 // ---------------------------------------------------------------------------
 
@@ -838,12 +999,13 @@ export default function StaffPage() {
         )}
 
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="cases">My Cases</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
             <TabsTrigger value="sops">SOPs</TabsTrigger>
+            <TabsTrigger value="collaboration">Collaboration</TabsTrigger>
           </TabsList>
           <TabsContent value="dashboard">
             <StaffDashboardTab data={data} isLoading={isLoading} onRefresh={load} />
@@ -864,6 +1026,9 @@ export default function StaffPage() {
               token={token}
               onRefresh={load}
             />
+          </TabsContent>
+          <TabsContent value="collaboration">
+            <CollaborationTab token={token} cases={data?.cases ?? []} onError={setError} />
           </TabsContent>
         </Tabs>
 

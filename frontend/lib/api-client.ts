@@ -869,6 +869,142 @@ export async function reviewSopAccessRequest(
 }
 
 // ---------------------------------------------------------------------------
+// Messaging (client <-> staff conversations, Phase F6)
+// ---------------------------------------------------------------------------
+
+export interface Conversation {
+  id: number;
+  case_id: number | null;
+  client_id: number | null;
+  subject: string;
+  case_number?: string | null;
+  client_name?: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface Message {
+  id: number;
+  conversation_id: number;
+  sender_type: 'staff' | 'client';
+  sender_user_id: number | null;
+  sender_client_id: number | null;
+  sender_name: string | null;
+  body: string;
+  created_at: string | null;
+}
+
+async function jsonOrThrow(response: Response, fallback: string) {
+  if (!response.ok) {
+    let detail = fallback;
+    try {
+      const body = await response.json();
+      if (body && body.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body
+    }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+export async function getClientConversations(
+  token: string
+): Promise<{ conversations: Conversation[] }> {
+  const response = await fetch(`${API_BASE_URL}/client/conversations`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return jsonOrThrow(response, 'Failed to load conversations');
+}
+
+export async function createClientConversation(
+  token: string,
+  input: { subject: string; case_id?: number | null }
+): Promise<{ conversation: Conversation }> {
+  const response = await fetch(`${API_BASE_URL}/client/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  return jsonOrThrow(response, 'Failed to create conversation');
+}
+
+export async function getClientConversationMessages(
+  token: string,
+  conversationId: number
+): Promise<{ messages: Message[] }> {
+  const response = await fetch(
+    `${API_BASE_URL}/client/conversations/${conversationId}/messages`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return jsonOrThrow(response, 'Failed to load messages');
+}
+
+export async function sendClientMessage(
+  token: string,
+  conversationId: number,
+  body: string
+): Promise<{ message: Message }> {
+  const response = await fetch(
+    `${API_BASE_URL}/client/conversations/${conversationId}/messages`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ body }),
+    }
+  );
+  return jsonOrThrow(response, 'Failed to send message');
+}
+
+export async function getStaffConversations(
+  token: string
+): Promise<{ conversations: Conversation[] }> {
+  const response = await fetch(`${API_BASE_URL}/staff/conversations`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return jsonOrThrow(response, 'Failed to load conversations');
+}
+
+export async function createStaffConversation(
+  token: string,
+  input: { subject: string; client_id: number; case_id?: number | null }
+): Promise<{ conversation: Conversation }> {
+  const response = await fetch(`${API_BASE_URL}/staff/conversations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  return jsonOrThrow(response, 'Failed to create conversation');
+}
+
+export async function getStaffConversationMessages(
+  token: string,
+  conversationId: number
+): Promise<{ messages: Message[] }> {
+  const response = await fetch(
+    `${API_BASE_URL}/staff/conversations/${conversationId}/messages`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return jsonOrThrow(response, 'Failed to load messages');
+}
+
+export async function sendStaffMessage(
+  token: string,
+  conversationId: number,
+  body: string
+): Promise<{ message: Message }> {
+  const response = await fetch(
+    `${API_BASE_URL}/staff/conversations/${conversationId}/messages`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ body }),
+    }
+  );
+  return jsonOrThrow(response, 'Failed to send message');
+}
+
+// ---------------------------------------------------------------------------
 // Admin: users, clients, assignments (Phase C3)
 // ---------------------------------------------------------------------------
 

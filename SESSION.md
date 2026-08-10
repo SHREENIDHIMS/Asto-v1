@@ -373,6 +373,69 @@ to these ports.
 - Remaining Phase F views (F6 messages/collaboration, F7 audit log) — next in
   build order.
 
+### Session 9 — 2026-08-11 (Phase F6 — Messages + Collaboration)
+
+**Design decision (user):** **Full messages system** — new `conversations` +
+`messages` tables, client-scoped, case-anchored. No shared-storage message bus;
+every conversation belongs to exactly one client, optionally tied to a case.
+RBAC is enforced in the SQL WHERE clause (CLAUDE.md rule 1): clients only see
+`conversations.client_id = their id`; staff only see conversations for clients
+they are assigned to (`staff_client_assignments`); admins see all.
+
+**Backend:**
+- `db/postgres/schema.py`: two new tables — `conversations` (case_id nullable,
+  client_id NOT NULL → clients ON DELETE CASCADE, subject, timestamps) and
+  `messages` (conversation_id → CASCADE, sender_type CHECK staff|client,
+  sender_user_id / sender_client_id, body, created_at) + 3 indexes
+  (conversations by client/case, messages by conversation+time).
+- `db/postgres/models.py`: `conversation_row_to_dict` + `message_row_to_dict`.
+- New `api/v1/messaging.py`: shared helpers — client/staff conversation access
+  checks (`_assert_conversation_access_client/staff`), SQL-scoped listers
+  (`_list_conversations_client/staff`), `_list_messages` (JOINs users + clients
+  for `sender_name`), `_touch_conversation` (bumps `updated_at` for sort).
+- `api/v1/client.py`: `GET/POST /client/conversations`, `GET/POST
+  /client/conversations/{id}/messages` — client-only, scoped by JWT client_id;
+  `_assert_owns_case` gates the optional `case_id`.
+- `api/v1/staff.py`: `GET/POST /staff/conversations`, `GET/POST
+  /staff/conversations/{id}/messages` — staff-only; `_assert_client_visible`
+  and the access helpers enforce assignment scoping (admins unrestricted).
+- Tests: `tests/unit/test_messaging.py` (16 tests) — route wiring, 401, client
+  403 on staff routes, staff 403 on client routes, client list SQL scopes by
+  client_id, create conversation, blank-subject/body 422, ownership 404,
+  staff list admin-all vs assignment-scoped SQL, message read JOINs
+  `sender_name`. Full suite: **345 passed** (329 + 16).
+
+**Frontend:**
+- `lib/api-client.ts`: `Conversation`/`Message` types + `jsonOrThrow` helper +
+  8 functions (client: list/create/conversation messages/send; staff: same).
+- `config/navigation.tsx`: client `messages` and staff `collaboration` nav
+  items enabled (were disabled).
+- New `components/messages/ConversationThread.tsx`: shared two-pane thread —
+  conversation list (subject + case # + client name), message bubbles
+  (mine/other by `selfSenderType`, sender name on the other side, timestamps),
+  auto-scroll, Enter-to-send. Used by both portals.
+- Client `app/client/page.tsx`: `messages` view added to `View`/nav maps +
+  header title; new `MessagesView` (conversation list, New-conversation form
+  with subject + optional linked case, refresh) rendering `ConversationThread`.
+- Staff `app/staff/page.tsx`: new `CollaborationTab` (conversation list,
+  New-conversation form with subject + client picker + optional case filtered
+  to that client) rendering `ConversationThread`; TabsList 5 → 6 columns.
+- `tsc --noEmit` clean, ESLint clean on changed files.
+
+**Live verified (rebuilt + recreated `asto-backend` + `frontend`):**
+- Tables `conversations` + `messages` created on startup schema init.
+- client@asto.local creates a conversation → client sends "Hi, can you review
+  my docs?" → admin sees it under `/staff/conversations` → admin replies →
+  client thread returns both messages with correct `sender_name`s
+  ("Client User" / "Admin User").
+- Cross-client read of another client's conversation → **404** (SQL scoping
+  holds). Left the demo thread in place as sample data.
+
+**Not done / carry to next session:**
+- F7 Audit Log viewer (last remaining Phase F view) — `GET /admin/audit`
+  (filterable: user, date range, outcome) + admin Audit Log view with
+  pagination.
+
 ### Session 3 — 2026-08-08
 
 **Done (Phase B3 + Phase C — approval workflow + client auth backend):**
@@ -551,12 +614,13 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       task with an Advance action); client Home (overview cards from existing
       me/properties/cases/documents endpoints); client Help (static content).
       *(Done Session 8.)*
-- [ ] **F6 Messages + Collaboration (new schema):** ⚠️ neither exists; both
+- [x] **F6 Messages + Collaboration (new schema):** ⚠️ neither exists; both
       need new tables + endpoints with RBAC scoping in the SQL WHERE clause
-      (CLAUDE.md rule 1).
+      (CLAUDE.md rule 1). *(Done Session 9 — user chose full messages system:
+      `conversations` + `messages` tables, case-anchored; client `messages` +
+      staff `collaboration` views; 16 tests; 345 total.)*
 - [ ] **F7 Audit Log viewer (LAST):** new `/admin/audit` endpoint (filterable:
       user, date-range, outcome) + admin Audit Log view with pagination.
-
 ---
 
 ## Open Questions / Decisions for the User

@@ -25,8 +25,11 @@ import {
 } from "lucide-react";
 import {
   clientUploadDocument,
+  createClientConversation,
   getClientCaseDetail,
   getClientCases,
+  getClientConversationMessages,
+  getClientConversations,
   getClientDocumentFile,
   getClientDocuments,
   getClientMe,
@@ -34,6 +37,7 @@ import {
   getClientPropertyDocuments,
   openBlobInNewTab,
   searchKnowledgeBaseStream,
+  sendClientMessage,
   SearchResponse,
   SearchStage,
   StreamedSentence,
@@ -43,6 +47,7 @@ import {
   ClientDocument,
   ClientProfile,
   ClientProperty,
+  Conversation,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken } from "@/lib/auth";
 import { useChatSessions, ChatSession } from "@/hooks/use-chat-sessions";
@@ -54,6 +59,7 @@ import SettingsModal from "@/components/settings/SettingsModal";
 import SearchBar from "@/components/search/SearchBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
 import HeroSection from "@/components/home/HeroSection";
+import ConversationThread from "@/components/messages/ConversationThread";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,7 +75,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-type View = "home" | "chat" | "documents" | "properties" | "cases" | "help" | "settings";
+type View = "home" | "chat" | "documents" | "properties" | "cases" | "messages" | "help" | "settings";
 
 const VIEW_TO_NAV: Record<View, string> = {
   home: "home",
@@ -77,6 +83,7 @@ const VIEW_TO_NAV: Record<View, string> = {
   documents: "documents",
   properties: "property",
   cases: "case",
+  messages: "messages",
   help: "help",
   settings: "assistant",
 };
@@ -87,6 +94,7 @@ const NAV_TO_VIEW: Record<string, View> = {
   documents: "documents",
   property: "properties",
   case: "cases",
+  messages: "messages",
   help: "help",
 };
 
@@ -945,6 +953,136 @@ function HelpView() {
 }
 
 // ---------------------------------------------------------------------------
+// Messages view (Phase F6 — client <-> staff conversations)
+// ---------------------------------------------------------------------------
+
+function MessagesView({
+  token,
+  cases,
+  onError,
+}: {
+  token: string;
+  cases: ClientCase[];
+  onError: (msg: string) => void;
+}) {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [caseId, setCaseId] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await getClientConversations(token);
+      setConversations(res.conversations);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load conversations");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!subject.trim() || creating) return;
+    setCreating(true);
+    try {
+      await createClientConversation(token, {
+        subject: subject.trim(),
+        case_id: caseId ? Number(caseId) : null,
+      });
+      setSubject("");
+      setCaseId("");
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create conversation");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Message your loan team. They can see your case and documents.
+        </p>
+        <Button type="button" size="sm" onClick={() => setShowCreate((v) => !v)}>
+          <MessageSquarePlus className="h-4 w-4 mr-1.5" />
+          New conversation
+        </Button>
+      </div>
+
+      {showCreate && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">New conversation</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="msg-subject">Subject</Label>
+              <Input
+                id="msg-subject"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="e.g. Question about my application"
+              />
+            </div>
+            {cases.length > 0 && (
+              <div className="space-y-1">
+                <Label htmlFor="msg-case">Related case (optional)</Label>
+                <Select value={caseId} onValueChange={setCaseId}>
+                  <SelectTrigger id="msg-case">
+                    <SelectValue placeholder="No case" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cases.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.case_number}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={!subject.trim() || creating}
+            >
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start conversation"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <ConversationThread
+        conversations={conversations}
+        selfSenderType="client"
+        loadMessages={async (id) => (await getClientConversationMessages(token, id)).messages}
+        sendMessage={async (id, body) => {
+          await sendClientMessage(token, id, body);
+        }}
+        emptyLabel="No conversations yet — start one above."
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Client shell
 // ---------------------------------------------------------------------------
 
@@ -1164,9 +1302,11 @@ export default function ClientPage() {
           ? "Documents"
           : view === "cases"
             ? "My Case"
-            : view === "help"
-              ? "Help"
-              : "Property";
+            : view === "messages"
+              ? "Messages"
+              : view === "help"
+                ? "Help"
+                : "Property";
 
   return (
     <>
@@ -1316,6 +1456,12 @@ export default function ClientPage() {
       {view === "cases" && token && (
         <div className="h-full overflow-y-auto p-6">
           <CasesView token={token} cases={cases} onError={setError} />
+        </div>
+      )}
+
+      {view === "messages" && token && (
+        <div className="h-full overflow-y-auto p-6">
+          <MessagesView token={token} cases={cases} onError={setError} />
         </div>
       )}
 

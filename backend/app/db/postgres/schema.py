@@ -230,6 +230,29 @@ DDL_STATEMENTS: list[str] = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # --- Conversations (client<->staff messaging, Phase F6) ---
+    """
+    CREATE TABLE IF NOT EXISTS conversations (
+        id         BIGSERIAL PRIMARY KEY,
+        case_id    BIGINT REFERENCES cases(id) ON DELETE SET NULL,
+        client_id  BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        subject    TEXT NOT NULL DEFAULT 'General',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Messages within a conversation (Phase F6) ---
+    """
+    CREATE TABLE IF NOT EXISTS messages (
+        id              BIGSERIAL PRIMARY KEY,
+        conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        sender_type     TEXT NOT NULL CHECK (sender_type IN ('staff', 'client')),
+        sender_user_id  BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        sender_client_id BIGINT REFERENCES clients(id) ON DELETE SET NULL,
+        body            TEXT NOT NULL,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 ]
 
 # Idempotent column additions for schemas created before the dual-audience
@@ -281,6 +304,9 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_sop_req_status ON sop_access_requests (status, department)",
     "CREATE INDEX IF NOT EXISTS idx_workflows_dept ON workflows (department, status)",
     "CREATE INDEX IF NOT EXISTS idx_case_notes_case ON case_notes (case_id)",
+    "CREATE INDEX IF NOT EXISTS idx_conversations_client ON conversations (client_id)",
+    "CREATE INDEX IF NOT EXISTS idx_conversations_case ON conversations (case_id)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages (conversation_id, created_at)",
 ]
 
 

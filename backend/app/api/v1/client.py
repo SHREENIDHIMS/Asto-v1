@@ -19,6 +19,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.db.postgres import session
@@ -27,6 +28,14 @@ from app.db.postgres.models import (
     case_event_row_to_dict,
     client_row_to_dict,
     case_row_to_dict,
+    conversation_row_to_dict,
+    message_row_to_dict,
+)
+from app.api.v1.messaging import (
+    _assert_conversation_access_client,
+    _list_conversations_client,
+    _list_messages,
+    _touch_conversation,
 )
 from app.documents.file_serve import resolve_stored_file
 from app.documents.validation import validate_upload
@@ -340,3 +349,117 @@ async def client_document_file(
         file_path,
         filename=row["title"] or file_path.name,
     )
+
+
+class MessageRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("body")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Message cannot be empty")
+        return v
+
+
+class ConversationRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    case_id: int | None = Field(default=None)
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Subject cannot be empty")
+        return v
+
+
+def _assert_owns_case(user: dict, case_id: int) -> None:
+    """404 unless the authenticated client owns the case."""
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM cases "
+                "WHERE id = %s AND client_id = %s AND is_active = true",
+                (case_id, user["client_id"]),
+            )
+            owned = cur.fetchone()
+    if owned is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Case not found",
+        )
+
+
+@router.get("/conversations")
+async def client_conversations(user: dict = Depends(require_auth)) -> dict:
+    """List the client's own conversations (SQL-scoped by client_id)."""
+    _require_client(user)
+    with session.acquire() as conn:
+        conversations = _list_conversations_client(conn, user["client_id"])
+    return {
+        "conversations": [
+            conversation_row_to_dict(c) for c in conversations
+        ]
+    }
+
+
+@router.post("/conversations", status_code=status.HTTP_201_CREATED)
+async def client_create_conversation(
+    payload: ConversationRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Open a new conversation with the bank's team."""
+    _require_client(user)
+    if payload.case_id is not None:
+        _assert_owns_case(user, payload.case_id)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO conversations (case_id, client_id, subject) "
+                "VALUES (%s, %s, %s) RETURNING id, case_id, client_id, "
+                "subject, created_at, updated_at",
+                (payload.case_id, user["client_id"], payload.subject.strip()),
+            )
+            row = dict(cur.fetchone())
+    return {"conversation": conversation_row_to_dict(row)}
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def client_conversation_messages(
+    conversation_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return all messages in one of the client's own conversations."""
+    _require_client(user)
+    with session.acquire() as conn:
+        _assert_conversation_access_client(conn, user["client_id"], conversation_id)
+        messages = _list_messages(conn, conversation_id)
+    return {"messages": [message_row_to_dict(m) for m in messages]}
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    status_code=status.HTTP_201_CREATED,
+)
+async def client_send_message(
+    conversation_id: int,
+    payload: MessageRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Send a message to the bank's team within an owned conversation."""
+    _require_client(user)
+    with session.acquire() as conn:
+        _assert_conversation_access_client(conn, user["client_id"], conversation_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO messages (conversation_id, sender_type, "
+                "sender_client_id, body) VALUES (%s, 'client', %s, %s) "
+                "RETURNING id, conversation_id, sender_type, sender_user_id, "
+                "sender_client_id, body, created_at",
+                (conversation_id, user["client_id"], payload.body.strip()),
+            )
+            row = dict(cur.fetchone())
+        _touch_conversation(conn, conversation_id)
+    return {"message": message_row_to_dict(row)}

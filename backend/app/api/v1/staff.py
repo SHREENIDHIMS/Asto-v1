@@ -25,9 +25,17 @@ from pydantic import BaseModel, Field, field_validator
 from app.auth.rbac import is_admin
 from app.db.postgres.models import (
     case_note_row_to_dict,
+    conversation_row_to_dict,
+    message_row_to_dict,
     sop_request_row_to_dict,
     sop_row_to_dict,
     workflow_row_to_dict,
+)
+from app.api.v1.messaging import (
+    _assert_conversation_access_staff,
+    _list_conversations_staff,
+    _list_messages,
+    _touch_conversation,
 )
 from app.db.postgres import session
 from app.dependencies import require_auth
@@ -80,6 +88,30 @@ class SopAccessRequest(BaseModel):
 class SopAccessRequestResponse(BaseModel):
     id: int
     status: str
+
+
+class StaffMessageRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("body")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Message cannot be empty")
+        return v
+
+
+class StaffConversationRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    client_id: int
+    case_id: int | None = Field(default=None)
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Subject cannot be empty")
+        return v
 
 
 def _require_staff(user: dict) -> None:
@@ -488,3 +520,96 @@ async def create_sop_access_request(
             row = dict(cur.fetchone())
         conn.commit()
     return SopAccessRequestResponse(id=row["id"], status=row["status"])
+
+
+# ---------------------------------------------------------------------------
+# Conversations (client <-> staff messaging)
+# ---------------------------------------------------------------------------
+
+
+def _assert_client_visible(user: dict, client_id: int) -> None:
+    """403/404 unless admin or the staff member is assigned to this client."""
+    if is_admin(user):
+        return
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM staff_client_assignments "
+                "WHERE user_id = %s AND client_id = %s",
+                (user["id"], client_id),
+            )
+            visible = cur.fetchone()
+    if visible is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found or not assigned to you",
+        )
+
+
+@router.get("/conversations")
+async def staff_conversations(user: dict = Depends(require_auth)) -> dict:
+    """List conversations for the staff member's assigned clients (admin: all)."""
+    _require_staff(user)
+    with session.acquire() as conn:
+        conversations = _list_conversations_staff(conn, user)
+    return {"conversations": [conversation_row_to_dict(c) for c in conversations]}
+
+
+@router.post("/conversations", status_code=status.HTTP_201_CREATED)
+async def staff_create_conversation(
+    payload: StaffConversationRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Open a conversation with a client the staff member is assigned to."""
+    _require_staff(user)
+    _assert_client_visible(user, payload.client_id)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO conversations (case_id, client_id, subject) "
+                "VALUES (%s, %s, %s) RETURNING id, case_id, client_id, "
+                "subject, created_at, updated_at",
+                (payload.case_id, payload.client_id, payload.subject.strip()),
+            )
+            row = dict(cur.fetchone())
+    return {"conversation": conversation_row_to_dict(row)}
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def staff_conversation_messages(
+    conversation_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return all messages in a conversation the staff member can access."""
+    _require_staff(user)
+    with session.acquire() as conn:
+        _assert_conversation_access_staff(conn, user, conversation_id)
+        messages = _list_messages(conn, conversation_id)
+    return {"messages": [message_row_to_dict(m) for m in messages]}
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    status_code=status.HTTP_201_CREATED,
+)
+async def staff_send_message(
+    conversation_id: int,
+    payload: StaffMessageRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Send a message as staff within an accessible conversation."""
+    _require_staff(user)
+    with session.acquire() as conn:
+        _assert_conversation_access_staff(conn, user, conversation_id)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO messages (conversation_id, sender_type, "
+                "sender_user_id, body) VALUES (%s, 'staff', %s, %s) "
+                "RETURNING id, conversation_id, sender_type, sender_user_id, "
+                "sender_client_id, body, created_at",
+                (conversation_id, user["id"], payload.body.strip()),
+            )
+            row = dict(cur.fetchone())
+        _touch_conversation(conn, conversation_id)
+    return {"message": message_row_to_dict(row)}

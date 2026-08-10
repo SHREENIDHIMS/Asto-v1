@@ -127,3 +127,29 @@ def case_note_row_to_dict(row: dict) -> dict:
         "body": row["body"],
         "created_at": row.get("created_at"),
     }
+
+
+def conversation_row_to_dict(row: dict) -> dict:
+    """Shape a conversations table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "case_id": row.get("case_id"),
+        "client_id": row.get("client_id"),
+        "subject": row.get("subject"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def message_row_to_dict(row: dict) -> dict:
+    """Shape a messages table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "conversation_id": row["conversation_id"],
+        "sender_type": row["sender_type"],
+        "sender_user_id": row.get("sender_user_id"),
+        "sender_client_id": row.get("sender_client_id"),
+        "sender_name": row.get("sender_name"),
+        "body": row["body"],
+        "created_at": row.get("created_at"),
+    }
