@@ -321,9 +321,28 @@ to these ports.
   returns live counts; admin page 200 and its compiled chunk references the new
   components.
 
+**Phase F3 — Admin governance views (same session):**
+- **Design decision (user):** Roles & Permissions / Departments are
+  **config-driven** — `app/auth/roles_config.py` is the single source of truth
+  for roles, their department access, the role hierarchy, and the departments
+  list (Python data, not YAML, to avoid a new dependency). Enforcement stays in
+  `rbac.py`/`permissions.py`; the admin view is read-only for now.
+- **Endpoints** in `api/v1/admin.py`: `GET /admin/documents/{id}/chunks`
+  (read-only KB browse), `GET /admin/sops` (admin read-all SOPs), and
+  `GET /admin/governance` (config-driven roles + departments).
+- **Frontend:** admin `Knowledge`, `SOPs`, `Roles`, `Departments` nav items
+  enabled; new `KnowledgeBaseTab` (document picker + chunk list),
+  `SopManagementTab` (SOP list + access-request approve/reject), and
+  `GovernanceTab` (read-only roles/departments, shared by Roles + Departments).
+- **Tests:** `tests/unit/test_admin_governance.py` (9 tests) — route wiring,
+  401, client 403, chunk payload + 404, SOP payload, governance config.
+  Full suite: **329 passed**.
+- **Live verified:** all three endpoints return correct data against the live
+  DB; admin page 200 with the new components in its compiled chunk.
+
 **Not done / carry to next session:**
-- Remaining Phase F views (F3 governance, F4 staff ops, F5 tasks/client home,
-  F6 messages, F7 audit log) — next in build order.
+- Remaining Phase F views (F4 staff ops, F5 tasks/client home, F6 messages,
+  F7 audit log) — next in build order.
 
 ### Session 3 — 2026-08-08
 
@@ -488,11 +507,12 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       (pending approvals, documents, users, clients, gaps) + admin Dashboard
       stat-card view; admin Settings view (frontend prefs). *(Done Session 8 —
       summary returns 7 counts; Dashboard + Settings tabs live.)*
-- [ ] **F3 Admin governance:** Knowledge Base browse (read-only
+- [x] **F3 Admin governance:** Knowledge Base browse (read-only
       `/admin/documents/{id}/chunks` + view); SOP Management view (reuse
       `/staff/sops` + `/admin/sop-access-requests` review, add admin read-all
-      SOPs endpoint); Roles & Permissions / Departments — ⚠️ free-string
-      columns today, needs config-vs-DB design decision.
+      SOPs endpoint); Roles & Permissions / Departments — **config-driven**
+      editor (`app/auth/roles_config.py` is the single source of truth; admin
+      read-only governance view). *(Done Session 8 — decision: config over DB.)*
 - [ ] **F4 Staff operational views (backend exists — frontend only):**
       Dashboard (`/staff/dashboard`), My Cases (`/staff/cases/{id}/notes`),
       Workflows (`/staff/workflows/{id}/advance`), SOPs (CRUD + access

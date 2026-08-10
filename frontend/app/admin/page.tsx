@@ -34,8 +34,17 @@ import {
   getKnowledgeGaps,
   getAnalyticsSummary,
   getAdminSummary,
+  getDocumentChunks,
+  listAllSops,
+  getGovernance,
+  listSopAccessRequests,
+  reviewSopAccessRequest,
   AnalyticsSummary,
   AdminSummary,
+  DocumentChunk,
+  Sop,
+  GovernanceData,
+  SopAccessRequest,
   getDocumentFile,
   openBlobInNewTab,
   ApprovalDocument,
@@ -1099,6 +1108,388 @@ function AnalyticsTab({ token }: { token: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Knowledge Base tab (Phase F3 — read-only chunk browse)
+// ---------------------------------------------------------------------------
+
+function KnowledgeBaseTab({ token }: { token: string }) {
+  const [documents, setDocuments] = useState<AdminDocument[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [chunks, setChunks] = useState<DocumentChunk[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [chunksLoading, setChunksLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadDocs = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await listAllDocuments(token);
+      setDocuments(res.documents);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load documents");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadDocs();
+  }, [loadDocs]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setChunks([]);
+      return;
+    }
+    setChunksLoading(true);
+    setError(null);
+    getDocumentChunks(Number(selectedId), token)
+      .then((res) => setChunks(res.chunks))
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load chunks")
+      )
+      .finally(() => setChunksLoading(false));
+  }, [selectedId, token]);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Browse the raw text chunks each document contributes to the knowledge
+        base. Read-only view.
+      </p>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <Card>
+        <CardContent className="pt-5 space-y-3">
+          <Label htmlFor="kb-doc">Document</Label>
+          <Select value={selectedId} onValueChange={setSelectedId}>
+            <SelectTrigger id="kb-doc">
+              <SelectValue placeholder="Choose a document…" />
+            </SelectTrigger>
+            <SelectContent>
+              {isLoading ? (
+                <SelectItem value="__loading" disabled>
+                  Loading…
+                </SelectItem>
+              ) : (
+                documents.map((doc) => (
+                  <SelectItem key={doc.id} value={String(doc.id)}>
+                    {doc.title} · {doc.department}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
+
+      {chunksLoading ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : selectedId && chunks.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center text-sm text-muted-foreground">
+            No chunks found for this document.
+          </CardContent>
+        </Card>
+      ) : (
+        chunks.map((chunk) => (
+          <Card key={chunk.id}>
+            <CardContent className="p-5 space-y-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline">{chunk.chunk_type}</Badge>
+                {chunk.section && <Badge variant="outline">{chunk.section}</Badge>}
+                <Badge variant="outline">{chunk.department}</Badge>
+                <span
+                  className={
+                    chunk.is_approved ? "text-green-600" : "text-yellow-600"
+                  }
+                >
+                  {chunk.approval_status}
+                </span>
+              </div>
+              <p className="text-sm whitespace-pre-wrap">{chunk.content}</p>
+            </CardContent>
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SOP Management tab (Phase F3 — read-all + access request review)
+// ---------------------------------------------------------------------------
+
+function SopManagementTab({ token }: { token: string }) {
+  const [sops, setSops] = useState<Sop[]>([]);
+  const [requests, setRequests] = useState<SopAccessRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [sopRes, reqRes] = await Promise.all([
+        listAllSops(token),
+        listSopAccessRequests(token),
+      ]);
+      setSops(sopRes.sops);
+      setRequests(reqRes.requests);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load SOP data");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleReview = async (requestId: number, decision: "approved" | "rejected") => {
+    setBusyId(requestId);
+    setError(null);
+    try {
+      await reviewSopAccessRequest(token, requestId, decision);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Review failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Standard operating procedures across all departments, plus pending
+          authoring requests from staff.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Access requests</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {requests.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No SOP access requests.
+                </p>
+              ) : (
+                requests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between gap-4 border-b border-border last:border-0 pb-2 last:pb-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {req.action} · {req.department}
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          user #{req.user_id}
+                        </span>
+                      </p>
+                      {req.reason && (
+                        <p className="text-xs text-muted-foreground truncate">
+                          {req.reason}
+                        </p>
+                      )}
+                      <div className="mt-1 flex items-center gap-2">
+                        {statusBadge(req.status)}
+                        <span className="text-xs text-muted-foreground">
+                          {formatDate(req.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                    {req.status === "pending" && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busyId === req.id}
+                          onClick={() => handleReview(req.id, "approved")}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={busyId === req.id}
+                          onClick={() => handleReview(req.id, "rejected")}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="space-y-2">
+            {sops.map((sop) => (
+              <Card key={sop.id}>
+                <CardContent className="p-4 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium">{sop.title}</p>
+                    <Badge variant="outline">{sop.department}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      v{sop.version}
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                    {sop.body.length > 280
+                      ? `${sop.body.slice(0, 280)}…`
+                      : sop.body}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+            {sops.length === 0 && (
+              <p className="text-sm text-muted-foreground">No SOPs yet.</p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Governance tab (Phase F3 — config-driven roles + departments, read-only)
+// ---------------------------------------------------------------------------
+
+function GovernanceTab({ token }: { token: string }) {
+  const [data, setData] = useState<GovernanceData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      setData(await getGovernance(token));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load governance");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Roles and departments are configuration-driven and enforced in the
+        backend. This view is read-only.
+      </p>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Roles &amp; permissions</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {data?.roles.map((role) => (
+            <div
+              key={role.name}
+              className="border-b border-border last:border-0 pb-3 last:pb-0"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">{role.label}</p>
+                <Badge variant="outline">
+                  {typeof role.access === "string" && role.access === "all"
+                    ? "All departments"
+                    : (role.access as string[]).join(", ")}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {role.description}
+              </p>
+            </div>
+          ))}
+          {data && data.role_hierarchy.length > 0 && (
+            <p className="text-xs text-muted-foreground pt-1">
+              Hierarchy (lowest → highest): {data.role_hierarchy.join(" → ")}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Departments</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {data?.departments.map((dept) => (
+            <div
+              key={dept.name}
+              className="border-b border-border last:border-0 pb-3 last:pb-0"
+            >
+              <p className="text-sm font-medium">{dept.label}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {dept.description}
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard tab (Phase F2)
 // ---------------------------------------------------------------------------
 
@@ -1373,12 +1764,16 @@ export default function AdminPage() {
     >
       <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-11">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
+            <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
+            <TabsTrigger value="sops">SOPs</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
             <TabsTrigger value="clients">Clients</TabsTrigger>
+            <TabsTrigger value="roles">Roles</TabsTrigger>
+            <TabsTrigger value="departments">Departments</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
@@ -1391,11 +1786,23 @@ export default function AdminPage() {
           <TabsContent value="documents">
             <DocumentsTab token={token} />
           </TabsContent>
+          <TabsContent value="knowledge">
+            <KnowledgeBaseTab token={token} />
+          </TabsContent>
+          <TabsContent value="sops">
+            <SopManagementTab token={token} />
+          </TabsContent>
           <TabsContent value="users">
             <UsersTab token={token} />
           </TabsContent>
           <TabsContent value="clients">
             <ClientsTab token={token} />
+          </TabsContent>
+          <TabsContent value="roles">
+            <GovernanceTab token={token} />
+          </TabsContent>
+          <TabsContent value="departments">
+            <GovernanceTab token={token} />
           </TabsContent>
           <TabsContent value="analytics">
             <AnalyticsTab token={token} />

@@ -1042,3 +1042,89 @@ export async function getAdminSummary(
   }
   return response.json();
 }
+
+// ---------------------------------------------------------------------------
+// Admin: knowledge base browse, SOP management, governance (Phase F3)
+// ---------------------------------------------------------------------------
+
+export interface DocumentChunk {
+  id: number;
+  section: string | null;
+  chunk_type: string;
+  department: string;
+  content: string;
+  approval_status: string;
+  is_approved: boolean;
+  created_at: string | null;
+}
+
+export async function getDocumentChunks(
+  documentId: number,
+  token: string
+): Promise<{ document_id: number; chunks: DocumentChunk[] }> {
+  const response = await fetch(
+    `${API_BASE_URL}/admin/documents/${documentId}/chunks`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load document chunks');
+  }
+  return response.json();
+}
+
+export interface Sop {
+  id: number;
+  title: string;
+  department: string;
+  body: string;
+  version: number;
+  created_by: number | null;
+  updated_at: string | null;
+  is_active: boolean;
+}
+
+export async function listAllSops(
+  token: string
+): Promise<{ sops: Sop[] }> {
+  const response = await fetch(`${API_BASE_URL}/admin/sops`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load SOPs');
+  }
+  return response.json();
+}
+
+export interface GovernanceRole {
+  name: string;
+  label: string;
+  description: string;
+  access: string[] | string;
+}
+
+export interface GovernanceDepartment {
+  name: string;
+  label: string;
+  description: string;
+}
+
+export interface GovernanceData {
+  roles: GovernanceRole[];
+  departments: GovernanceDepartment[];
+  role_hierarchy: string[];
+}
+
+export async function getGovernance(
+  token: string
+): Promise<GovernanceData> {
+  const response = await fetch(`${API_BASE_URL}/admin/governance`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load governance data');
+  }
+  return response.json();
+}

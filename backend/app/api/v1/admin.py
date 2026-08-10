@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.auth.permissions import require_role
 from app.dependencies import require_auth
-from app.db.postgres.models import sop_request_row_to_dict
+from app.db.postgres.models import sop_request_row_to_dict, sop_row_to_dict
 from app.db.postgres import session
 
 router = APIRouter()
@@ -261,3 +261,66 @@ async def review_sop_access_request(
             )
         conn.commit()
     return {"message": f"Request {request.decision}", "request_id": request_id}
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Base browse (read-only) + governance views (Phase F3)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/documents/{document_id}/chunks")
+async def list_document_chunks(
+    document_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Read-only chunk list for a document (Knowledge Base browse)."""
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM documents WHERE id = %s", (document_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Document not found",
+                )
+            cur.execute(
+                "SELECT id, section, chunk_type, department, content, "
+                "approval_status, is_approved, created_at "
+                "FROM document_chunks WHERE document_id = %s "
+                "ORDER BY id",
+                (document_id,),
+            )
+            chunks = [dict(row) for row in cur.fetchall()]
+
+    return {"document_id": document_id, "chunks": chunks}
+
+
+@router.get("/sops")
+async def list_all_sops(user: dict = Depends(require_auth)) -> dict:
+    """List all SOPs across every department (admin read-all)."""
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sops WHERE is_active = true "
+                "ORDER BY department, updated_at DESC"
+            )
+            sops = [dict(row) for row in cur.fetchall()]
+
+    return {"sops": [sop_row_to_dict(dict(r)) for r in sops]}
+
+
+@router.get("/governance")
+async def get_governance(user: dict = Depends(require_auth)) -> dict:
+    """Config-driven roles + departments for the admin governance views."""
+    require_role(user, "admin")
+
+    from app.auth.roles_config import DEPARTMENTS, ROLE_HIERARCHY, ROLES
+
+    return {
+        "roles": ROLES,
+        "departments": DEPARTMENTS,
+        "role_hierarchy": ROLE_HIERARCHY,
+    }
