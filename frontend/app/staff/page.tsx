@@ -394,6 +394,124 @@ function WorkflowsTab({
 }
 
 // ---------------------------------------------------------------------------
+// Tasks tab (Phase F5 — derived from workflows)
+// ---------------------------------------------------------------------------
+
+function TasksTab({
+  workflows,
+  token,
+  onRefresh,
+}: {
+  workflows: StaffWorkflow[];
+  token: string;
+  onRefresh: () => void;
+}) {
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAdvance = async (id: number) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await advanceWorkflow(token, id);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to advance task");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const actionable = workflows.filter((w) => w.status !== "done");
+  const doneCount = workflows.length - actionable.length;
+
+  const statCards = [
+    { label: "Open tasks", value: actionable.length.toLocaleString(), hint: "in progress or review" },
+    { label: "Completed", value: doneCount.toLocaleString(), hint: "finished workflows" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Tasks are derived from your department&apos;s active workflows.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {statCards.map((s) => (
+          <Card key={s.label}>
+            <CardHeader className="pb-1">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {s.label}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold">{s.value}</p>
+              <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {actionable.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center text-sm text-muted-foreground">
+            <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-600" />
+            All caught up — no open tasks.
+          </CardContent>
+        </Card>
+      ) : (
+        actionable.map((wf) => (
+          <Card key={wf.id}>
+            <CardContent className="p-4 flex items-center justify-between gap-4">
+              <div className="min-w-0 flex items-start gap-3">
+                <WorkflowIcon className="h-4 w-4 text-muted-foreground mt-0.5" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium">{wf.title}</p>
+                    {workflowBadge(wf.status)}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {wf.department}
+                    {wf.case_number ? ` · ${wf.case_number}` : ""}
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busyId === wf.id}
+                onClick={() => handleAdvance(wf.id)}
+              >
+                {busyId === wf.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Advance"
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SOPs tab
 // ---------------------------------------------------------------------------
 
@@ -720,9 +838,10 @@ export default function StaffPage() {
         )}
 
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="cases">My Cases</TabsTrigger>
+            <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
             <TabsTrigger value="sops">SOPs</TabsTrigger>
           </TabsList>
@@ -731,6 +850,9 @@ export default function StaffPage() {
           </TabsContent>
           <TabsContent value="cases">
             <MyCasesTab cases={data?.cases ?? []} token={token} onRefresh={load} />
+          </TabsContent>
+          <TabsContent value="tasks">
+            <TasksTab workflows={data?.workflows ?? []} token={token} onRefresh={load} />
           </TabsContent>
           <TabsContent value="workflows">
             <WorkflowsTab workflows={data?.workflows ?? []} token={token} onRefresh={load} />

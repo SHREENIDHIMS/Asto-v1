@@ -129,7 +129,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "tasks",
           label: "Tasks",
           icon: <CheckSquare className="h-4 w-4" />,
-          disabled: true,
         },
         {
           id: "workflows",
@@ -181,7 +180,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "home",
           label: "Home",
           icon: <Home className="h-4 w-4" />,
-          disabled: true,
         },
         { id: "case", label: "My Case", icon: <Landmark className="h-4 w-4" /> },
         { id: "documents", label: "Documents", icon: <FolderOpen className="h-4 w-4" /> },
@@ -197,7 +195,6 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           id: "help",
           label: "Help",
           icon: <HelpCircle className="h-4 w-4" />,
-          disabled: true,
         },
       ],
     },

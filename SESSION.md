@@ -353,9 +353,25 @@ to these ports.
 - **Live verified:** `/staff` serves 200 with the new components in its chunk;
   `/staff/dashboard` returns live cases + workflows + SOPs for `staff@asto.local`.
 
+**Phase F5 — Staff Tasks + client Home/Help (same session):**
+- **Design decision (user):** Staff Tasks are **derived from workflows** — no
+  new `tasks` table. Each active (in_progress/review) workflow in the staff
+  member's departments is a task with an Advance action.
+- **Client Home:** new `HomeView` in `app/client/page.tsx` — overview cards
+  (active case, properties, documents) from the already-loaded
+  me/properties/cases/documents endpoints + a latest-update card from
+  `latest_event`. Client now lands on Home after login (was chat).
+- **Client Help:** new `HelpView` — static FAQ-style sections. Client Home +
+  Help nav items enabled.
+- **Staff Tasks:** new `TasksTab` in `app/staff/page.tsx` — open/completed
+  stat cards + actionable workflows with Advance (reuses `/staff/workflows/
+  {id}/advance`). Tasks nav item enabled.
+- **Live verified:** `/client` and `/staff` both 200; compiled chunks reference
+  the new Home/Help/Tasks components. Full backend suite still **329 passed**.
+
 **Not done / carry to next session:**
-- Remaining Phase F views (F5 tasks/client home, F6 messages, F7 audit log) —
-  next in build order.
+- Remaining Phase F views (F6 messages/collaboration, F7 audit log) — next in
+  build order.
 
 ### Session 3 — 2026-08-08
 
@@ -530,10 +546,11 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       Dashboard (`/staff/dashboard`), My Cases (`/staff/cases/{id}/notes`),
       Workflows (`/staff/workflows/{id}/advance`), SOPs (CRUD + access
       requests). *(Done Session 8 — new `/staff` page + login routing.)*
-- [ ] **F5 Staff Tasks + client Home/Help:** Tasks — ⚠️ no table, decide
-      workflow/case_notes mapping or new table; client Home (overview cards
-      from existing me/properties/cases/documents endpoints); client Help
-      (static content).
+- [x] **F5 Staff Tasks + client Home/Help:** Tasks — **derived from workflows**
+      (decision: no new table — each active in_progress/review workflow is a
+      task with an Advance action); client Home (overview cards from existing
+      me/properties/cases/documents endpoints); client Help (static content).
+      *(Done Session 8.)*
 - [ ] **F6 Messages + Collaboration (new schema):** ⚠️ neither exists; both
       need new tables + endpoints with RBAC scoping in the SQL WHERE clause
       (CLAUDE.md rule 1).

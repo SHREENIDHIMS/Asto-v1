@@ -6,9 +6,12 @@ import {
   AlertCircle,
   Building2,
   ChevronDown,
+  ChevronRight,
   Clock,
   FileText,
   FolderOpen,
+  HelpCircle,
+  Home,
   Landmark,
   Loader2,
   LogOut,
@@ -66,21 +69,25 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-type View = "chat" | "documents" | "properties" | "cases" | "settings";
+type View = "home" | "chat" | "documents" | "properties" | "cases" | "help" | "settings";
 
 const VIEW_TO_NAV: Record<View, string> = {
+  home: "home",
   chat: "assistant",
   documents: "documents",
   properties: "property",
   cases: "case",
+  help: "help",
   settings: "assistant",
 };
 
 const NAV_TO_VIEW: Record<string, View> = {
+  home: "home",
   assistant: "chat",
   documents: "documents",
   property: "properties",
   case: "cases",
+  help: "help",
 };
 
 function statusTone(status: string): "default" | "success" | "warning" | "destructive" | "secondary" {
@@ -762,6 +769,182 @@ function Timeline({ detail }: { detail: CaseDetail | undefined }) {
 }
 
 // ---------------------------------------------------------------------------
+// Home view (Phase F5 — overview cards)
+// ---------------------------------------------------------------------------
+
+function HomeView({
+  profile,
+  properties,
+  documents,
+  cases,
+  onNavigate,
+}: {
+  profile: ClientProfile | null;
+  properties: ClientProperty[];
+  documents: ClientDocument[];
+  cases: ClientCase[];
+  onNavigate: (view: View) => void;
+}) {
+  const activeCase = cases[0] ?? null;
+
+  const cards = [
+    {
+      label: "Active case",
+      value: activeCase ? activeCase.case_number : "No case",
+      hint: activeCase ? statusLabel(activeCase.status) : "No case on file yet",
+      icon: <Landmark className="h-5 w-5" />,
+      onClick: () => onNavigate("cases"),
+    },
+    {
+      label: "Properties",
+      value: properties.length.toLocaleString(),
+      hint: properties[0] ? `${properties[0].city}, ${properties[0].state}` : "No properties",
+      icon: <Building2 className="h-5 w-5" />,
+      onClick: () => onNavigate("properties"),
+    },
+    {
+      label: "Documents",
+      value: documents.length.toLocaleString(),
+      hint: "Your approved documents",
+      icon: <FolderOpen className="h-5 w-5" />,
+      onClick: () => onNavigate("documents"),
+    },
+  ];
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div>
+        <h2 className="text-2xl font-bold">
+          Welcome{profile?.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""}!
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Everything about your mortgage in one place.
+        </p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        {cards.map((card) => (
+          <button
+            key={card.label}
+            type="button"
+            onClick={card.onClick}
+            className="text-left rounded-xl border border-border bg-card p-4 hover:border-primary/50 transition-colors"
+          >
+            <div className="flex items-center gap-2 text-muted-foreground mb-2">
+              {card.icon}
+              <span className="text-sm font-medium">{card.label}</span>
+            </div>
+            <p className="text-lg font-bold truncate">{card.value}</p>
+            <p className="text-xs text-muted-foreground truncate mt-0.5">{card.hint}</p>
+          </button>
+        ))}
+      </div>
+
+      {activeCase?.latest_event && (
+        <Card>
+          <CardHeader className="pb-1">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              Latest update
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium">
+                {statusLabel(activeCase.latest_event.status)}
+              </span>
+              <Badge variant={statusTone(activeCase.latest_event.status)}>
+                {activeCase.latest_event.status}
+              </Badge>
+              {activeCase.latest_event.created_at && (
+                <span className="text-xs text-muted-foreground">
+                  {formatDate(activeCase.latest_event.created_at)}
+                </span>
+              )}
+            </div>
+            {activeCase.latest_event.note && (
+              <p className="text-sm text-muted-foreground mt-1">
+                {activeCase.latest_event.note}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="mt-2"
+              onClick={() => onNavigate("cases")}
+            >
+              View timeline
+              <ChevronRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Help view (Phase F5 — static content)
+// ---------------------------------------------------------------------------
+
+const HELP_SECTIONS = [
+  {
+    title: "Ask Asto for answers",
+    body: "Use the AI Assistant to ask questions about your loan, policy, or the documents we've shared. Answers come with sources you can verify.",
+  },
+  {
+    title: "Your documents",
+    body: "Approved documents live under Documents. Select one to view or download it. Uploads from you enter a review queue before they're shown here.",
+  },
+  {
+    title: "Your property",
+    body: "The Property tab shows the address and type on file. Contact us if any details are wrong.",
+  },
+  {
+    title: "Your case timeline",
+    body: "The Case tab shows your case number, loan amount, and a timeline of status events as your application moves through review.",
+  },
+  {
+    title: "Privacy & security",
+    body: "Every search and action is recorded in an audit trail. We never share your information outside your authorized team.",
+  },
+  {
+    title: "Need human help?",
+    body: "Reach your loan team directly from this portal — your assigned staff can see your case and notes.",
+  },
+];
+
+function HelpView() {
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div>
+        <h2 className="text-2xl font-bold flex items-center gap-2">
+          <HelpCircle className="w-6 h-6 text-primary" />
+          Help
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          How to get the most out of your Asto portal.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {HELP_SECTIONS.map((section) => (
+          <Card key={section.title}>
+            <CardHeader className="pb-1">
+              <CardTitle className="text-sm">{section.title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">{section.body}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Client shell
 // ---------------------------------------------------------------------------
 
@@ -774,7 +957,7 @@ export default function ClientPage() {
   const [cases, setCases] = useState<ClientCase[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("chat");
+  const [view, setView] = useState<View>("home");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatStage, setChatStage] = useState<SearchStage | null>(null);
@@ -973,13 +1156,17 @@ export default function ClientPage() {
   }
 
   const headerTitle =
-    view === "chat"
-      ? "AI Assistant"
-      : view === "documents"
-        ? "Documents"
-        : view === "cases"
-          ? "My Case"
-          : "Property";
+    view === "home"
+      ? "Home"
+      : view === "chat"
+        ? "AI Assistant"
+        : view === "documents"
+          ? "Documents"
+          : view === "cases"
+            ? "My Case"
+            : view === "help"
+              ? "Help"
+              : "Property";
 
   return (
     <>
@@ -1076,6 +1263,18 @@ export default function ClientPage() {
         </div>
       )}
 
+      {view === "home" && (
+        <div className="h-full overflow-y-auto p-6">
+          <HomeView
+            profile={profile}
+            properties={properties}
+            documents={documents}
+            cases={cases}
+            onNavigate={setView}
+          />
+        </div>
+      )}
+
       {view === "chat" && (
         <ChatView
           session={sessions.activeSession}
@@ -1117,6 +1316,12 @@ export default function ClientPage() {
       {view === "cases" && token && (
         <div className="h-full overflow-y-auto p-6">
           <CasesView token={token} cases={cases} onError={setError} />
+        </div>
+      )}
+
+      {view === "help" && (
+        <div className="h-full overflow-y-auto p-6">
+          <HelpView />
         </div>
       )}
     </AppShell>
