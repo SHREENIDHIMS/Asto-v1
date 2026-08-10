@@ -88,7 +88,7 @@ to these ports.
 5. ~~**Admin dashboard**~~ — **DONE (Session 4):** `/admin` with approvals queue,
    documents + upload, users, clients + assignments, knowledge-gap analytics.
    Document view/download verified live (Session 6). Analytics *endpoints*
-   verified live; a chart UI for the analytics tab is still a carry-over.
+   verified live and charted in the `/admin` Analytics tab.
 6. ~~**Runtime verification**~~ — **DONE (Session 2):** `.venv` (3.11) installed,
    unit (107) + integration (7) tests pass, compose up healthy, benchmark run.
 
@@ -149,6 +149,7 @@ to these ports.
   awaiting the response; not yet token streaming (backend is request/response).
 - Admin dashboard has no analytics charts (only the knowledge-gaps list) and no
   document view/download; client portal has no document open/download.
+  *(Both since resolved — Session 6: document view/download + analytics charts.)*
 - The deployed frontend uses the baked-in `localhost:8011` API base (no
   NEXT_PUBLIC_API_URL build arg) — fine for local dev, must be set explicitly
   for a remote host (see nginx + compose).
@@ -196,6 +197,7 @@ to these ports.
 - True SSE token streaming not started; admin dashboard has no charts and no
   document view/download; client portal has no document open/download; the
   deployed frontend still uses the baked-in `localhost:8011` API base.
+  *(Resolved Session 6: streaming, document view/download, analytics charts.)*
 
 ### Session 6 — 2026-08-10 (True SSE streaming + document view/download + analytics verification)
 
@@ -245,6 +247,7 @@ to these ports.
 **Not done / carry to next session:**
 - Admin dashboard still shows only the raw knowledge-gap list (no charts yet) —
   the analytics *endpoints* are verified; a chart UI is the remaining piece.
+  *(Fixed: `/admin` Analytics tab renders charts — see Session 8.)*
 - Seeded demo docs have no real source files on disk (they 404 on view) —
   either place PDFs in `storage/processed/` matching their basenames or upload
   fresh docs to see view/download end-to-end.
@@ -281,9 +284,32 @@ to these ports.
 **Not done / carry to next session:**
 - Admin analytics tab still shows the raw knowledge-gap list (no charts yet) —
   the analytics endpoints are verified; a chart UI is the remaining piece.
+  *(Fixed: `/admin` Analytics tab renders charts — see Session 8.)*
 - Seeded demo docs still reference `/docs/*.pdf` that were never placed on
   disk (they 404 on view) — place PDFs in `storage/processed/` matching their
   basenames or upload fresh docs to see view/download end-to-end.
+
+### Session 8 — 2026-08-10 (Phase F1 — seeded doc View 404 + stale SESSION notes)
+
+**Done:**
+- **Seeded doc View fixed:** `scripts/seed_db.py` now generates real PDFs
+  into `storage/processed/` matching each seeded `source_path` basename
+  (`draft_credit_policy.pdf`, `sample_policy.pdf`, `eligibility.pdf`) via a
+  new `ensure_seed_files()` step (idempotent — skips existing files). Ran it
+  against the live DB; all three seeded docs (448/449/450) now resolve via
+  `resolve_stored_file` and the admin `/documents/{id}/file` endpoint returns
+  **200** (was 404).
+- **Stale analytics notes fixed:** the carry-over notes claiming the admin
+  Analytics tab has "no charts yet" were outdated — the `/admin` Analytics tab
+  already renders charts. Marked each as resolved in the Session 4/5/6/7 log
+  entries.
+- **Orphaned demo rows noted:** docs 444–447 (client-uploaded demo docs from a
+  prior session) have empty `source_path` and no files on disk — View will
+  still 404 for them. Flagged; not in seed scope.
+
+**Not done / carry to next session:**
+- Remaining Phase F views (F2 admin dashboard/settings, F3 governance, F4 staff
+  ops, F5 tasks/client home, F6 messages, F7 audit log) — next in build order.
 
 ### Session 3 — 2026-08-08
 
@@ -432,6 +458,39 @@ to these ports.
       reduces the candidate set without touching ranking weights, confidence
       thresholds, or the reranker. Baseline `benchmark_20260808_005649.json`
       stands; no re-run required.
+
+### Phase F — Remaining views: not-implemented features (added 2026-08-10)
+Build order for the disabled sidebar views + carry-overs. **Audit Log is last
+by design.** Existing-backend items come before new-schema items. Each phase's
+DoD: endpoints tested under `backend/tests/`, docs updated, live-verified after
+rebuild. ⚠️ = needs a design decision before building (stop and ask).
+
+- [x] **F1 Foundation & carry-over fixes:** place real PDFs matching seeded
+      `source_path` basenames into `storage/processed/` so admin + client
+      document View works end-to-end; fix stale analytics carry-over note
+      (charts already exist in `/admin` Analytics tab). *(Done Session 8 —
+      seed generates PDFs into `storage/processed/`; View returns 200.)*
+- [ ] **F2 Admin Dashboard + Settings:** new `/admin/summary` endpoint
+      (pending approvals, documents, users, clients, gaps) + admin Dashboard
+      stat-card view; admin Settings view (frontend prefs).
+- [ ] **F3 Admin governance:** Knowledge Base browse (read-only
+      `/admin/documents/{id}/chunks` + view); SOP Management view (reuse
+      `/staff/sops` + `/admin/sop-access-requests` review, add admin read-all
+      SOPs endpoint); Roles & Permissions / Departments — ⚠️ free-string
+      columns today, needs config-vs-DB design decision.
+- [ ] **F4 Staff operational views (backend exists — frontend only):**
+      Dashboard (`/staff/dashboard`), My Cases (`/staff/cases/{id}/notes`),
+      Workflows (`/staff/workflows/{id}/advance`), SOPs (CRUD + access
+      requests). All backend present.
+- [ ] **F5 Staff Tasks + client Home/Help:** Tasks — ⚠️ no table, decide
+      workflow/case_notes mapping or new table; client Home (overview cards
+      from existing me/properties/cases/documents endpoints); client Help
+      (static content).
+- [ ] **F6 Messages + Collaboration (new schema):** ⚠️ neither exists; both
+      need new tables + endpoints with RBAC scoping in the SQL WHERE clause
+      (CLAUDE.md rule 1).
+- [ ] **F7 Audit Log viewer (LAST):** new `/admin/audit` endpoint (filterable:
+      user, date-range, outcome) + admin Audit Log view with pagination.
 
 ---
 

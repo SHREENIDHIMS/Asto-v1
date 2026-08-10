@@ -8,11 +8,65 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from passlib.hash import bcrypt
 from app.db.postgres.session import acquire
+from app.config import settings
 
 ADMIN_PASSWORD_HASH = "$2b$12$B5z08U8N66Hn2E/s6RIuZuti.MxB5wpWjWNySk2h6qXooQSAUOnHK"
 
 # client@asto.local / client123
 CLIENT_PASSWORD_HASH = bcrypt.hash("client123")
+
+# Seed documents -> on-disk PDFs written into storage/processed/ so the
+# document View/download endpoints resolve a real file (resolve_stored_file
+# searches processed/ then pending/ by basename). Keyed by source_path basename.
+SEED_FILES: dict[str, str] = {
+    "/docs/draft_credit_policy.pdf": "Draft Credit Policy (Pending Review)",
+    "/docs/sample_policy.pdf": "Sample Policy Document",
+    "/docs/eligibility.pdf": "Eligibility Guidelines",
+}
+
+
+def _minimal_pdf_bytes(title: str) -> bytes:
+    """Build a tiny, valid one-page PDF embedding the title as text."""
+    title = title.encode("latin-1", "replace").decode("latin-1")
+    content = f"BT /F1 24 Tf 72 720 Td ({title}) Tj ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+        ),
+        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    header = b"%PDF-1.4\n"
+    body = bytearray()
+    offsets = [0]
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(len(header) + len(body))
+        body += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref_offset = len(header) + len(body)
+    xref = f"xref\n0 {len(objects) + 1}\n".encode()
+    xref += b"0000000000 65535 f \n"
+    for off in offsets[1:]:
+        xref += f"{off:010d} 00000 n \n".encode()
+    trailer = (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    ).encode()
+    return bytes(header + body + xref + trailer)
+
+
+def ensure_seed_files() -> None:
+    """Write seed PDFs into storage/processed/ if missing (idempotent)."""
+    processed = Path(settings.storage_processed_dir)
+    processed.mkdir(parents=True, exist_ok=True)
+    for source_path, title in SEED_FILES.items():
+        target = processed / Path(source_path).name
+        if target.is_file():
+            print(f"Seed file exists, skipping: {target.name}")
+            continue
+        target.write_bytes(_minimal_pdf_bytes(title))
+        print(f"Wrote seed file: {target.name} ({target.stat().st_size} bytes)")
 
 
 def seed() -> None:
@@ -156,5 +210,6 @@ def seed() -> None:
 
 
 if __name__ == "__main__":
+    ensure_seed_files()
     seed()
 
