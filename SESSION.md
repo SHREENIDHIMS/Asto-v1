@@ -461,6 +461,63 @@ live. This session also re-verified the F6 messaging flow end-to-end
 (logins, thread, staff scoping) after the user asked for a completeness
 review.**
 
+### Session 10 — 2026-08-11 (One-page client onboarding + version bump re-upload)
+
+**Done:**
+- **Client onboarding (staff → new client account):**
+  `backend/app/api/v1/staff.py` endpoint `POST /staff/clients` guarded by the
+  new `onboard_clients` permission (`roles_config.py`, granted to
+  `super_admin`/`admin`/`loan_officer`) + `_require_staff`. In one DB
+  transaction it (a) rejects a duplicate email (409), (b) inserts the client
+  (`bcrypt`-hashed password), (c) inserts a property row when any address
+  field is provided, and (d) inserts an initial case (`CAS-YYYY-NNNN` via
+  `_next_case_number`) when a loan amount or property exists. Response carries
+  `client_id`, `property_id`, `case_id`, `case_number`. CRM import hook
+  (`app/clients/client_import.py`, `ClientSource` protocol + registry +
+  `scripts/import_clients.py` stub) documented beside it so manual onboarding
+  and future CRM-driven import stay identical.
+- **Frontend Onboard Client dialog** (`frontend/app/staff/page.tsx`): an
+  "Onboard client" button in the staff header opens a `Dialog` with
+  name/email/password + optional property + optional loan amount; calls
+  `onboardClient()` (new `frontend/lib/api-client.ts`); on success refreshes
+  the dashboard. No new nav entry — it lives in the header.
+- **"Stale pending approvals"** on the admin dashboard:
+  `backend/app/api/v1/admin.py` `/admin/summary` now also returns
+  `stale_pending_approvals` (documents pending for 7+ days);
+  `frontend/app/admin/page.tsx` shows it as an amber-alert stat card and
+  `AdminSummary` gains the field. Test updated in
+  `backend/tests/unit/test_admin_summary.py`.
+- **Re-upload = version bump** (`backend/app/documents/indexing.py`): before
+  inserting, `index_document` looks up the latest *active* document with the
+  same title/department/client/property; if found it deactivates the old row
+  and inserts the new one with `version = old + 1`. First upload stays
+  `version = 1` (DB default). Old versions remain queryable but are excluded
+  from search (`d.is_active = true`).
+
+**Tests added/updated (all green):**
+- `backend/tests/unit/test_onboard_client.py` (new, 9 tests): route wiring,
+  401/403 gating (client token, staff role without `onboard_clients`),
+  happy path (client+property+case), no-property path (no property/case),
+  duplicate-email 409, invalid email / short password 422.
+- `backend/tests/unit/test_approvals.py`: 2 new tests for the version bump
+  (re-upload carries `version = old+1` and deactivates the old row; first
+  upload is version 1) + fixed existing mocks for the new version-lookup
+  query.
+- `backend/tests/unit/test_admin_summary.py`: asserted
+  `stale_pending_approvals`.
+
+**Verified:** `npx tsc --noEmit` + `npm run lint` clean in `frontend/`;
+backend unit suite 320 passed (was 309) / 7 failed. The 7 failures are
+**not** regression: they are JWT-secret/env config issues
+(`test_client_auth.py`, `test_backend_skeleton.py` JWT cases,
+`test_streaming_files.py`) failing on unset `JWT_SECRET` before this session
+too. **Live-verified against rebuilt containers** (docker compose
+astv1-asto-backend + astv1-frontend): admin login 200 +
+`/admin/summary` returns `stale_pending_approvals`; `POST /staff/clients`
+onboards client+property+case (201, `CAS-2026-0003`) and rejects a
+duplicate email (409); re-ingesting the same title deactivates the old
+document (id 808, v1 → inactive) and indexes the new one as version 2.
+
 ### Session 3 — 2026-08-08
 
 **Done (Phase B3 + Phase C — approval workflow + client auth backend):**

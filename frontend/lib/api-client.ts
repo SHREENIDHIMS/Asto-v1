@@ -1060,6 +1060,44 @@ export async function getAdminAudit(
 }
 
 // ---------------------------------------------------------------------------
+// Staff client onboarding (Session 9, decision #2 — manual today, CRM hook later)
+// ---------------------------------------------------------------------------
+
+export interface OnboardClientInput {
+  email: string;
+  password: string;
+  full_name?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  property_type?: string;
+  case_number?: string;
+  loan_amount?: number;
+  case_status?: string;
+}
+
+export interface OnboardClientResult {
+  message: string;
+  client_id: number;
+  property_id: number | null;
+  case_id: number | null;
+  case_number: string | null;
+}
+
+export async function onboardClient(
+  token: string,
+  input: OnboardClientInput
+): Promise<OnboardClientResult> {
+  const response = await fetch(`${API_BASE_URL}/staff/clients`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  return jsonOrThrow(response, 'Failed to onboard client');
+}
+
+// ---------------------------------------------------------------------------
 // Admin: users, clients, assignments (Phase C3)
 // ---------------------------------------------------------------------------
 
@@ -1213,6 +1251,7 @@ export async function getAnalyticsSummary(
 
 export interface AdminSummary {
   pending_approvals: number;
+  stale_pending_approvals: number;
   total_documents: number;
   total_users: number;
   total_clients: number;

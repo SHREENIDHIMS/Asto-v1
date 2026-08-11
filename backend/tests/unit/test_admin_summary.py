@@ -80,6 +80,7 @@ class TestAdminSummaryPayload:
         cur = conn.cursor.return_value
         cur.fetchone.side_effect = [
             {"n": 3},  # pending approvals
+            {"n": 1},  # stale pending approvals
             {"n": 10},  # documents
             {"n": 4},  # users
             {"n": 2},  # clients
@@ -96,6 +97,7 @@ class TestAdminSummaryPayload:
         assert response.status_code == 200
         data = response.json()
         assert data["pending_approvals"] == 3
+        assert data["stale_pending_approvals"] == 1
         assert data["total_documents"] == 10
         assert data["total_users"] == 4
         assert data["total_clients"] == 2
@@ -117,6 +119,7 @@ class TestAdminSummaryPayload:
         data = response.json()
         for key in (
             "pending_approvals",
+            "stale_pending_approvals",
             "total_documents",
             "total_users",
             "total_clients",

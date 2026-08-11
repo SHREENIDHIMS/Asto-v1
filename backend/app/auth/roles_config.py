@@ -36,6 +36,31 @@ ROLE_HIERARCHY: list[str] = [
 
 DEFAULT_DEPARTMENT: str = "general"
 
+# Action-level capabilities per role (Phase Session 9, decision #2).
+# Additive on top of department access. An empty list means the role has no
+# special capabilities beyond its department scope.
+ROLE_CAPABILITIES: dict[str, list[str]] = {
+    "super_admin": ["onboard_clients"],
+    "admin": ["onboard_clients"],
+    "loan_officer": ["onboard_clients"],
+    "underwriter": [],
+    "compliance": [],
+}
+
+
+def can(role: str, capability: str) -> bool:
+    """Whether a role has an action-level capability.
+
+    Admins/super_admins always satisfy any capability check; otherwise the
+    capability must be listed for the role. This is the single lookup used
+    by the onboarding endpoint so a future CRM-driven workflow can stay
+    config-driven.
+    """
+    if role in ADMIN_ROLES:
+        return True
+    return capability in ROLE_CAPABILITIES.get(role, [])
+
+
 # Human-facing labels + descriptions for the admin governance views.
 ROLES: list[dict] = [
     {
@@ -53,7 +78,7 @@ ROLES: list[dict] = [
     {
         "name": "loan_officer",
         "label": "Loan Officer",
-        "description": "General department knowledge and case work.",
+        "description": "General department knowledge, case work, and client onboarding.",
         "access": ["general"],
     },
     {

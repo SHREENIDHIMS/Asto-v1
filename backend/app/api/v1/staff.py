@@ -20,9 +20,11 @@ All checks live here on read/write; search-time RBAC is unaffected.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from passlib.hash import bcrypt
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth.rbac import is_admin
+from app.auth.roles_config import can as role_can
 from app.db.postgres.models import (
     case_note_row_to_dict,
     conversation_row_to_dict,
@@ -112,6 +114,35 @@ class StaffConversationRequest(BaseModel):
         if not v.strip():
             raise ValueError("Subject cannot be empty")
         return v
+
+
+class OnboardClientRequest(BaseModel):
+    email: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    full_name: str | None = Field(default=None, max_length=200)
+    address: str | None = Field(default=None, max_length=200)
+    city: str | None = Field(default=None, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=20)
+    property_type: str | None = Field(default=None, max_length=50)
+    case_number: str | None = Field(default=None, max_length=50)
+    loan_amount: float | None = Field(default=None, gt=0)
+    case_status: str = Field(default="active", max_length=50)
+
+    @field_validator("email")
+    @classmethod
+    def _email_shape(cls, v: str) -> str:
+        email = v.strip().lower()
+        if "@" not in email or "." not in email:
+            raise ValueError("Invalid email address")
+        return email
+
+    @field_validator("full_name")
+    @classmethod
+    def _name_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("Full name cannot be empty")
+        return v.strip() if v else v
 
 
 def _require_staff(user: dict) -> None:
@@ -544,6 +575,87 @@ def _assert_client_visible(user: dict, client_id: int) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Client not found or not assigned to you",
         )
+
+
+def _next_case_number(cur) -> str:
+    """Generate a deterministic next case number (CAS-YYYY-NNNN)."""
+    year = __import__("datetime").datetime.utcnow().year
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM cases WHERE case_number LIKE %s",
+        (f"CAS-{year}-%",),
+    )
+    seq = (cur.fetchone()["n"] or 0) + 1
+    return f"CAS-{year}-{seq:04d}"
+
+
+@router.post("/clients", status_code=status.HTTP_201_CREATED)
+async def onboard_client(
+    request: OnboardClientRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Manually onboard a client: account + optional property + initial case.
+
+    Session 9 decision #2 — onboarding is manual today (admin or staff with
+    the ``onboard_clients`` capability), with a documented CRM import hook
+    (``app/clients/client_import.py``) for the future. The created rows
+    mirror what that hook would insert, so both paths stay identical.
+    """
+    _require_staff(user)
+    if not role_can(user.get("role", ""), "onboard_clients"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your role cannot onboard clients",
+        )
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM clients WHERE email = %s", (request.email,))
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Client with email '{request.email}' already exists",
+                )
+
+            cur.execute(
+                "INSERT INTO clients (email, password_hash, full_name) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (request.email, bcrypt.hash(request.password), request.full_name),
+            )
+            client_id = cur.fetchone()["id"]
+
+            property_id = None
+            if any([request.address, request.city, request.state,
+                    request.postal_code, request.property_type]):
+                cur.execute(
+                    "INSERT INTO properties (client_id, address, city, state, "
+                    "postal_code, property_type) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (client_id, request.address, request.city, request.state,
+                     request.postal_code, request.property_type),
+                )
+                property_id = cur.fetchone()["id"]
+
+            case_number = request.case_number or _next_case_number(cur)
+            case_id = None
+            if request.loan_amount is not None or property_id is not None:
+                cur.execute(
+                    "INSERT INTO cases (case_number, client_id, property_id, "
+                    "loan_amount, status) VALUES (%s, %s, %s, %s, %s) "
+                    "RETURNING id",
+                    (case_number, client_id, property_id,
+                     request.loan_amount, request.case_status),
+                )
+                case_id = cur.fetchone()["id"]
+
+        conn.commit()
+
+    return {
+        "message": "Client onboarded",
+        "client_id": client_id,
+        "property_id": property_id,
+        "case_id": case_id,
+        "case_number": case_number if case_id else None,
+    }
 
 
 @router.get("/conversations")

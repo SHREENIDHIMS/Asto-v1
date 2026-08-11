@@ -57,7 +57,10 @@ class TestIngestionApprovalDefault:
 
         conn = MagicMock()
         cur = MagicMock()
-        cur.fetchone.return_value = {"id": 42}
+        cur.fetchone.side_effect = [
+            None,  # version lookup: no prior active document
+            {"id": 42},  # document INSERT RETURNING id
+        ]
         cur.rowcount = 1
         cur.__enter__ = MagicMock(return_value=cur)
         cur.__exit__ = MagicMock(return_value=False)
@@ -89,7 +92,10 @@ class TestIngestionApprovalDefault:
 
         conn = MagicMock()
         cur = MagicMock()
-        cur.fetchone.return_value = {"id": 1}
+        cur.fetchone.side_effect = [
+            None,  # version lookup: no prior active document
+            {"id": 1},  # document INSERT RETURNING id
+        ]
         cur.rowcount = 1
         cur.__enter__ = MagicMock(return_value=cur)
         cur.__exit__ = MagicMock(return_value=False)
@@ -109,6 +115,83 @@ class TestIngestionApprovalDefault:
             for a in insert_args
             if "INSERT INTO documents" in a.args[0]
         )
+
+    def test_index_document_reupload_bumps_version(self):
+        """Re-uploading the same title/department deactivates the old active
+        document and indexes the new one with version = old + 1."""
+        from app.documents.chunking.structural_chunker import Chunk
+        from app.documents.indexing import index_document
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = [
+            {"id": 5, "version": 3},  # version lookup: prior active v3
+            {"id": 99},  # document INSERT RETURNING id
+        ]
+        cur.rowcount = 1
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        chunks = [Chunk(content="v4 chunk", chunk_type="paragraph", section=None, page_number=None)]
+
+        result = index_document(
+            conn=conn, doc_title="Loan Policy", doc_type="policy",
+            department="general", source_path="/docs/loan-v4.pdf", chunks=chunks,
+            approval_status="approved",
+        )
+
+        assert result.document_id == 99
+
+        # Old active document must be deactivated
+        deactivate = [
+            a.args[0] for a in cur.execute.call_args_list
+            if "UPDATE documents" in a.args[0]
+        ]
+        assert deactivate
+        update_args = [
+            a.args[1] for a in cur.execute.call_args_list
+            if "UPDATE documents" in a.args[0]
+        ]
+        assert 5 in update_args[0]
+
+        # New insert carries version=4
+        insert_args = [
+            a.args[1] for a in cur.execute.call_args_list
+            if "INSERT INTO documents" in a.args[0]
+        ]
+        assert insert_args
+        assert 4 in insert_args[0]
+
+    def test_index_document_first_upload_version_one(self):
+        """A first upload (no prior active document) is indexed as version 1."""
+        from app.documents.chunking.structural_chunker import Chunk
+        from app.documents.indexing import index_document
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = [
+            None,  # no prior active document
+            {"id": 7},  # document INSERT RETURNING id
+        ]
+        cur.rowcount = 1
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        chunks = [Chunk(content="first chunk", chunk_type="paragraph", section=None, page_number=None)]
+
+        index_document(
+            conn=conn, doc_title="Brand New Doc", doc_type="policy",
+            department="general", source_path=None, chunks=chunks,
+        )
+
+        insert_args = [
+            a.args[1] for a in cur.execute.call_args_list
+            if "INSERT INTO documents" in a.args[0]
+        ]
+        assert insert_args
+        assert 1 in insert_args[0]
 
 
 class TestApprovalEndpointAuth:

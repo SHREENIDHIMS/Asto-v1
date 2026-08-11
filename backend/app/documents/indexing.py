@@ -54,21 +54,50 @@ def index_document(
     is_approved = approval_status == "approved"
 
     with conn.cursor() as cur:
+        # Re-upload = version bump: if an active document with the same
+        # title/department/client already exists, deactivate it and carry
+        # its version forward (+1) so the newest upload becomes the active
+        # version. Otherwise the DB default (version=1) applies.
+        cur.execute(
+            """
+            SELECT id, version FROM documents
+            WHERE title = %s AND department = %s
+              AND client_id IS NOT DISTINCT FROM %s
+              AND property_id IS NOT DISTINCT FROM %s
+              AND is_active = true
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (doc_title, department, client_id, property_id),
+        )
+        previous = cur.fetchone()
+
+        if previous is not None:
+            cur.execute(
+                "UPDATE documents SET is_active = false WHERE id = %s",
+                (previous["id"],),
+            )
+            version = (previous.get("version") or 1) + 1
+        else:
+            version = 1
+
         cur.execute(
             """
             INSERT INTO documents
                 (title, doc_type, department, source_path,
-                 client_id, property_id, approval_status, is_approved)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 client_id, property_id, approval_status, is_approved,
+                 version)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (doc_title, doc_type, department, source_path,
-             client_id, property_id, approval_status, is_approved),
+             client_id, property_id, approval_status, is_approved,
+             version),
         )
         document_id = cur.fetchone()["id"]
         logger.info(
-            "Indexing document '%s' (id=%d, approval_status=%s)",
-            doc_title, document_id, approval_status,
+            "Indexing document '%s' (id=%d, version=%d, approval_status=%s)",
+            doc_title, document_id, version, approval_status,
         )
 
     indexed = 0

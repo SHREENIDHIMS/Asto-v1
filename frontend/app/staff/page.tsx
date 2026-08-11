@@ -10,6 +10,7 @@ import {
   MessageSquare,
   RefreshCw,
   Sparkles,
+  UserPlus,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import {
@@ -24,6 +25,7 @@ import {
   createStaffConversation,
   getStaffConversationMessages,
   sendStaffMessage,
+  onboardClient,
   StaffDashboardCase,
   StaffDashboardResponse,
   StaffWorkflow,
@@ -50,6 +52,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -761,6 +771,225 @@ function SopsTab({
 }
 
 // ---------------------------------------------------------------------------
+// Onboard client dialog (Session 9, decision #2 — manual onboarding)
+// ---------------------------------------------------------------------------
+
+function OnboardClientDialog({
+  open,
+  onOpenChange,
+  token,
+  onOnboarded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  token: string;
+  onOnboarded: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [propertyType, setPropertyType] = useState("");
+  const [caseNumber, setCaseNumber] = useState("");
+  const [loanAmount, setLoanAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const reset = () => {
+    setEmail("");
+    setPassword("");
+    setFullName("");
+    setAddress("");
+    setCity("");
+    setState("");
+    setPostalCode("");
+    setPropertyType("");
+    setCaseNumber("");
+    setLoanAmount("");
+    setError(null);
+    setMessage(null);
+  };
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await onboardClient(token, {
+        email,
+        password,
+        full_name: fullName || undefined,
+        address: address || undefined,
+        city: city || undefined,
+        state: state || undefined,
+        postal_code: postalCode || undefined,
+        property_type: propertyType || undefined,
+        case_number: caseNumber || undefined,
+        loan_amount: loanAmount ? Number(loanAmount) : undefined,
+      });
+      setMessage(
+        `${result.message} (client #${result.client_id})` +
+          (result.case_number ? ` — case ${result.case_number}` : "")
+      );
+      onOnboarded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to onboard client");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset();
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserPlus className="h-4 w-4" />
+            Onboard a client
+          </DialogTitle>
+          <DialogDescription>
+            Create the client account, optional property, and initial case.
+            Same shape as the future CRM import path, so nothing differs later.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {message && (
+            <Alert>
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle>Done</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-1">
+            <Label htmlFor="ob-email">Email *</Label>
+            <Input
+              id="ob-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="client@example.com"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="ob-password">Password *</Label>
+            <Input
+              id="ob-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="ob-name">Full name</Label>
+            <Input
+              id="ob-name"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+            />
+          </div>
+
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Property (optional)
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor="ob-address">Address</Label>
+              <Input
+                id="ob-address"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1">
+                <Label htmlFor="ob-city" className="text-xs">City</Label>
+                <Input id="ob-city" value={city} onChange={(e) => setCity(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ob-state" className="text-xs">State</Label>
+                <Input id="ob-state" value={state} onChange={(e) => setState(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ob-zip" className="text-xs">ZIP</Label>
+                <Input id="ob-zip" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ob-type" className="text-xs">Property type</Label>
+              <Input
+                id="ob-type"
+                value={propertyType}
+                onChange={(e) => setPropertyType(e.target.value)}
+                placeholder="e.g. Single family"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Initial case (created when a property or loan amount is set)
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor="ob-case" className="text-xs">Case number (auto if blank)</Label>
+              <Input
+                id="ob-case"
+                value={caseNumber}
+                onChange={(e) => setCaseNumber(e.target.value)}
+                placeholder="e.g. CAS-2026-9001"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ob-loan" className="text-xs">Loan amount</Label>
+              <Input
+                id="ob-loan"
+                type="number"
+                value={loanAmount}
+                onChange={(e) => setLoanAmount(e.target.value)}
+                placeholder="e.g. 275000"
+              />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!email || password.length < 8 || submitting}
+          >
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Onboard client"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Collaboration tab (Phase F6 — client conversations)
 // ---------------------------------------------------------------------------
 
@@ -927,6 +1156,7 @@ export default function StaffPage() {
   const [data, setData] = useState<StaffDashboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [onboardOpen, setOnboardOpen] = useState(false);
 
   useEffect(() => {
     const t = getToken();
@@ -970,8 +1200,9 @@ export default function StaffPage() {
   }
 
   return (
-    <AppShell
-      navGroups={NAV_GROUPS.staff}
+    <>
+      <AppShell
+        navGroups={NAV_GROUPS.staff}
       activeNavId={activeNavId}
       onNavigate={(id) => setActiveNavId(id)}
       brandTitle="Asto"
@@ -979,12 +1210,18 @@ export default function StaffPage() {
       headerTitle="Staff"
       headerSubtitle="Dashboard · Cases · Workflows · SOPs"
       headerActions={
-        <Button asChild variant="outline" size="sm">
-          <a href="/">
-            <MessageSquare className="h-4 w-4 mr-2" />
-            Ask Asto
-          </a>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button type="button" size="sm" onClick={() => setOnboardOpen(true)}>
+            <UserPlus className="h-4 w-4 mr-1.5" />
+            Onboard client
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <a href="/">
+              <MessageSquare className="h-4 w-4 mr-2" />
+              Ask Asto
+            </a>
+          </Button>
+        </div>
       }
       user={{ name: "Staff", role: "staff" }}
       onSignOut={handleLogout}
@@ -1040,5 +1277,13 @@ export default function StaffPage() {
         </footer>
       </div>
     </AppShell>
+
+    <OnboardClientDialog
+      open={onboardOpen}
+      onOpenChange={setOnboardOpen}
+      token={token}
+      onOnboarded={load}
+    />
+    </>
   );
 }

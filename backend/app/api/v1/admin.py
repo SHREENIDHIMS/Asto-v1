@@ -66,6 +66,12 @@ async def admin_summary(user: dict = Depends(require_auth)) -> dict:
             )
             pending_approvals = cur.fetchone()["n"] or 0
 
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM documents "
+                "WHERE approval_status = 'pending' AND created_at < now() - interval '7 days'"
+            )
+            stale_pending_approvals = cur.fetchone()["n"] or 0
+
             cur.execute("SELECT COUNT(*) AS n FROM documents")
             total_documents = cur.fetchone()["n"] or 0
 
@@ -88,6 +94,7 @@ async def admin_summary(user: dict = Depends(require_auth)) -> dict:
 
     return {
         "pending_approvals": pending_approvals,
+        "stale_pending_approvals": stale_pending_approvals,
         "total_documents": total_documents,
         "total_users": total_users,
         "total_clients": total_clients,

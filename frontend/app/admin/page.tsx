@@ -1517,11 +1517,22 @@ function DashboardTab({ token }: { token: string }) {
     load();
   }, [load]);
 
-  const statCards = [
+  const statCards: {
+    label: string;
+    value: string;
+    hint: string;
+    alert?: boolean;
+  }[] = [
     {
       label: "Pending approvals",
       value: summary ? summary.pending_approvals.toLocaleString() : "—",
       hint: "documents awaiting review",
+    },
+    {
+      label: "Stale pending approvals",
+      value: summary ? summary.stale_pending_approvals.toLocaleString() : "—",
+      hint: "awaiting review for 7+ days",
+      alert: summary ? summary.stale_pending_approvals > 0 : false,
     },
     {
       label: "Documents",
@@ -1582,14 +1593,19 @@ function DashboardTab({ token }: { token: string }) {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {statCards.map((s) => (
-            <Card key={s.label}>
+            <Card
+              key={s.label}
+              className={s.alert ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : undefined}
+            >
               <CardHeader className="pb-1">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
                   {s.label}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-bold">{s.value}</p>
+                <p className={"text-2xl font-bold" + (s.alert ? " text-amber-600 dark:text-amber-400" : "")}>
+                  {s.value}
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
               </CardContent>
             </Card>
