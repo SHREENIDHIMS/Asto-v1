@@ -69,11 +69,16 @@ export default function AppShell({
   onSignOut,
   children,
 }: AppShellProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem("asto_sidebar_collapsed") === "1";
-  });
+  const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("asto_sidebar_collapsed") === "1") setCollapsed(true);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     try {

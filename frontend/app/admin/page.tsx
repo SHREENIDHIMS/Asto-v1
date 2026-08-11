@@ -1639,8 +1639,15 @@ function loadSettings(): AdminSettings {
 }
 
 function SettingsTab({ onDefaultTabChange }: { onDefaultTabChange: (tab: string) => void }) {
-  const [settings, setSettings] = useState<AdminSettings>(loadSettings);
+  const [settings, setSettings] = useState<AdminSettings>({
+    showAuditBanner: true,
+    defaultTab: "dashboard",
+  });
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setSettings(loadSettings());
+  }, []);
 
   const persist = (next: AdminSettings) => {
     setSettings(next);

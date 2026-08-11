@@ -61,15 +61,18 @@ export default function ChatPage() {
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
-  const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return localStorage.getItem("asto_smart_suggestions") !== "0";
-  });
-  const [sessionTimeout, setSessionTimeout] = useState<number>(() => {
-    if (typeof window === "undefined") return 0;
-    const raw = localStorage.getItem("asto_session_timeout");
-    return raw ? Number(raw) : 0;
-  });
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(true);
+  const [sessionTimeout, setSessionTimeout] = useState<number>(0);
+
+  useEffect(() => {
+    try {
+      setShowSuggestions(localStorage.getItem("asto_smart_suggestions") !== "0");
+      const raw = localStorage.getItem("asto_session_timeout");
+      if (raw) setSessionTimeout(Number(raw));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [prefill, setPrefill] = useState<string | null>(null);
   const [cases, setCases] = useState<StaffDashboardCase[]>([]);

@@ -1104,15 +1104,18 @@ export default function ClientPage() {
   const [chatStreamSentences, setChatStreamSentences] = useState<StreamedSentence[]>([]);
   const [pendingUrgency, setPendingUrgency] = useState(false);
   const [regeneratingTurnId, setRegeneratingTurnId] = useState<string | null>(null);
-  const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return localStorage.getItem("asto_smart_suggestions") !== "0";
-  });
-  const [sessionTimeout, setSessionTimeout] = useState<number>(() => {
-    if (typeof window === "undefined") return 0;
-    const raw = localStorage.getItem("asto_session_timeout");
-    return raw ? Number(raw) : 0;
-  });
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(true);
+  const [sessionTimeout, setSessionTimeout] = useState<number>(0);
+
+  useEffect(() => {
+    try {
+      setShowSuggestions(localStorage.getItem("asto_smart_suggestions") !== "0");
+      const raw = localStorage.getItem("asto_session_timeout");
+      if (raw) setSessionTimeout(Number(raw));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const clientKey = token

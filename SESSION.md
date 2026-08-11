@@ -518,6 +518,37 @@ onboards client+property+case (201, `CAS-2026-0003`) and rejects a
 duplicate email (409); re-ingesting the same title deactivates the old
 document (id 808, v1 → inactive) and indexes the new one as version 2.
 
+### Session 11 — 2026-08-11 (Hydration-error fix — React #418/#423 on all pages)
+
+**Symptom:** minified `Uncaught Error: React error #418` (hydration mismatch)
++ #423 (error while hydrating a Suspense boundary) repeated across pages,
+with the follow-on "message channel closed before a response was received".
+
+**Root cause:** classic hydration mismatch. `useState` lazy initializers read
+`localStorage` with a `typeof window === "undefined"` guard, so at static
+build the server renders with the default, but on the client's **hydration**
+render the initializer returns the *stored* value → server HTML ≠ client HTML.
+After the mismatch React bails the root to client rendering (#423) and the
+React DevTools/`MessagePort` bridge then reports the channel-closed noise.
+
+**Affected sites fixed (localStorage reads moved out of `useState`
+initializers into `useEffect`, which runs after hydration):**
+- `frontend/components/layout/AppShell.tsx` — `collapsed` /
+  `asto_sidebar_collapsed`.
+- `frontend/app/admin/page.tsx` — `SettingsTab` seeds from
+  `loadSettings()` instead of a lazy initializer.
+- `frontend/app/page.tsx` + `frontend/app/client/page.tsx` —
+  `showSuggestions` / `sessionTimeout`. Chat/history hooks
+  (`use-chat-history.ts`, `use-chat-sessions.ts`) were already effect-based.
+
+**Verified:** `npx tsc --noEmit` + `npm run lint` clean; `docker compose
+build frontend` and `up -d` redeployed; served HTML now references rebuilt
+page chunks (`app/page-cbdceb64b838174c.js`, client `9197bd008cac54a2.js`)
+that carry the `asto_smart_suggestions` marker with **no** lazy
+`typeof window ===` guard. The `fd9d1056…` chunk still present in the image
+is shared React internals (where the error is *thrown*), not the mismatch
+source, and is unchanged because its code didn't change.
+
 ### Session 3 — 2026-08-08
 
 **Done (Phase B3 + Phase C — approval workflow + client auth backend):**
