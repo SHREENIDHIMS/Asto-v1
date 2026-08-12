@@ -681,7 +681,6 @@ I7, I1, J1, J4, J5, K4, L5, M1, M7, N1, N5, N7.
 | DEC-1 | Optional LLM "cite-with-LLM" mode (yes/no + endpoint/UI) | — |
 | DEC-3 | Email/SMTP provider + which events email | H2, (L7 email notifications) |
 | DEC-4 | Reintroduce Alembic migrations | M2 |
-| H7-OPT | Governance editor: config write-back vs DB table | H7 |
 
 ---
 
@@ -694,7 +693,7 @@ I7, I1, J1, J4, J5, K4, L5, M1, M7, N1, N5, N7.
 - [x] H4 Admin 2FA (TOTP)
 - [x] H5 Session revocation (logout-all / admin kill)
 - [x] H6 Password change UI (staff + client)
-- [ ] H7 Role & department editor UI
+- [x] H7 Role & department editor UI (Option A: write-back to roles_config.py)
 
 **Phase I — Documents & Review**
 - [ ] I1 Inline PDF preview

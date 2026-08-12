@@ -1594,6 +1594,7 @@ export interface GovernanceRole {
   label: string;
   description: string;
   access: string[] | string;
+  capabilities: string[];
 }
 
 export interface GovernanceDepartment {
@@ -1619,6 +1620,25 @@ export async function getGovernance(
     throw new Error(error.detail || 'Failed to load governance data');
   }
   return response.json();
+}
+
+export interface GovernanceUpdateInput {
+  roles: GovernanceRole[];
+  departments: GovernanceDepartment[];
+  role_hierarchy: string[];
+}
+
+/** H7: write back the roles/departments config (admin + super_admin only). */
+export async function updateGovernance(
+  token: string,
+  input: GovernanceUpdateInput
+): Promise<GovernanceData> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/governance`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  return jsonOrThrow(response, 'Failed to update governance');
 }
 
 // ---------------------------------------------------------------------------

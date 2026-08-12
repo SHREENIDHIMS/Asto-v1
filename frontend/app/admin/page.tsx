@@ -9,15 +9,19 @@ import {
   Clock,
   FileText,
   History,
+  KeyRound,
   Loader2,
   MessageSquare,
   Pencil,
+  Plus,
   RefreshCw,
+  Save,
   ShieldAlert,
   Sparkles,
   Upload,
   UserPlus,
   Users,
+  X,
   XCircle,
 } from "lucide-react";
 import {
@@ -46,6 +50,7 @@ import {
   getDocumentChunks,
   listAllSops,
   getGovernance,
+  updateGovernance,
   listSopAccessRequests,
   reviewSopAccessRequest,
   getAdminAudit,
@@ -54,6 +59,7 @@ import {
   DocumentChunk,
   Sop,
   GovernanceData,
+  GovernanceUpdateInput,
   SopAccessRequest,
   AuditEntry,
   getDocumentFile,
@@ -73,6 +79,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -1784,13 +1791,26 @@ function SopManagementTab({ token }: { token: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Governance tab (Phase F3 — config-driven roles + departments, read-only)
+// Governance tab (Phase F3 config views + Phase H7 edit mode)
 // ---------------------------------------------------------------------------
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  onboard_clients: "Onboard clients",
+};
+
+function capabilityLabel(name: string): string {
+  return CAPABILITY_LABELS[name] ?? name.replace(/_/g, " ");
+}
+
+const DEPT_NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 function GovernanceTab({ token }: { token: string }) {
   const [data, setData] = useState<GovernanceData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState<GovernanceUpdateInput | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -1808,6 +1828,99 @@ function GovernanceTab({ token }: { token: string }) {
     load();
   }, [load]);
 
+  const startEditing = () => {
+    if (!data) return;
+    setError(null);
+    setDraft({
+      roles: data.roles.map((r) => ({
+        name: r.name,
+        label: r.label,
+        description: r.description ?? "",
+        access: r.access,
+        capabilities: [...(r.capabilities ?? [])],
+      })),
+      departments: data.departments.map((d) => ({
+        name: d.name,
+        label: d.label,
+        description: d.description ?? "",
+      })),
+      role_hierarchy: [...data.role_hierarchy],
+    });
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+    setDraft(null);
+    setError(null);
+  };
+
+  const handleSave = async () => {
+    if (!draft) return;
+    setError(null);
+
+    const names = draft.departments.map((d) => d.name);
+    if (new Set(names).size !== names.length) {
+      setError("Department names must be unique");
+      return;
+    }
+    for (const dept of draft.departments) {
+      if (!DEPT_NAME_RE.test(dept.name)) {
+        setError(`Invalid department name "${dept.name}" (use lowercase letters, digits, underscores)`);
+        return;
+      }
+      if (!dept.label.trim()) {
+        setError("Department labels cannot be empty");
+        return;
+      }
+    }
+    for (const role of draft.roles) {
+      if (!role.label.trim()) {
+        setError(`Role "${role.name}" needs a non-empty label`);
+        return;
+      }
+      if (typeof role.access !== "string") {
+        for (const dept of role.access) {
+          if (!names.includes(dept)) {
+            setError(`Role "${role.name}" references unknown department "${dept}"`);
+            return;
+          }
+        }
+      }
+    }
+
+    setSaving(true);
+    try {
+      const result = await updateGovernance(token, draft);
+      setData(result);
+      setIsEditing(false);
+      setDraft(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save governance");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renameDepartment = (from: string, to: string) => {
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      roles: draft.roles.map((role) =>
+        typeof role.access === "string"
+          ? role
+          : {
+              ...role,
+              access: role.access.map((d) => (d === from ? to : d)),
+            }
+      ),
+    });
+  };
+
+  const allCapabilities = data
+    ? Array.from(new Set(data.roles.flatMap((r) => r.capabilities ?? [])))
+    : [];
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -1818,10 +1931,40 @@ function GovernanceTab({ token }: { token: string }) {
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">
-        Roles and departments are configuration-driven and enforced in the
-        backend. This view is read-only.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {isEditing
+            ? "Roles, capabilities, and departments are stored in roles_config.py. Renaming a department migrates existing records."
+            : "Roles, capabilities, and departments are configuration-driven and enforced in the backend."}
+        </p>
+        {!isEditing ? (
+          <Button type="button" variant="outline" size="sm" onClick={startEditing}>
+            <Pencil className="h-3.5 w-3.5 mr-1.5" />
+            Edit
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={cancelEditing}
+              disabled={saving}
+            >
+              <X className="h-3.5 w-3.5 mr-1.5" />
+              Cancel
+            </Button>
+            <Button type="button" size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Save changes
+            </Button>
+          </div>
+        )}
+      </div>
 
       {error && (
         <Alert variant="destructive">
@@ -1836,25 +1979,112 @@ function GovernanceTab({ token }: { token: string }) {
           <CardTitle className="text-sm">Roles &amp; permissions</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {data?.roles.map((role) => (
+          {(isEditing && draft ? draft.roles : data?.roles ?? []).map((role, idx) => (
             <div
               key={role.name}
               className="border-b border-border last:border-0 pb-3 last:pb-0"
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium">{role.label}</p>
-                <Badge variant="outline">
-                  {typeof role.access === "string" && role.access === "all"
-                    ? "All departments"
-                    : (role.access as string[]).join(", ")}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {role.description}
-              </p>
+              {isEditing ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {role.name}
+                    </span>
+                    <Badge variant="outline">
+                      {typeof role.access === "string" && role.access === "all"
+                        ? "All departments"
+                        : (role.access as string[]).join(", ")}
+                    </Badge>
+                  </div>
+                  <Input
+                    aria-label={`${role.name} label`}
+                    value={role.label}
+                    onChange={(e) => {
+                      setDraft({
+                        ...draft!,
+                        roles: draft!.roles.map((r, i) =>
+                          i === idx ? { ...r, label: e.target.value } : r
+                        ),
+                      });
+                    }}
+                  />
+                  <Input
+                    aria-label={`${role.name} description`}
+                    value={role.description}
+                    onChange={(e) => {
+                      setDraft({
+                        ...draft!,
+                        roles: draft!.roles.map((r, i) =>
+                          i === idx ? { ...r, description: e.target.value } : r
+                        ),
+                      });
+                    }}
+                  />
+                  {allCapabilities.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {allCapabilities.map((cap) => {
+                        const roleCaps = draft!.roles[idx].capabilities;
+                        const checked = roleCaps.includes(cap);
+                        return (
+                          <label
+                            key={cap}
+                            className="flex items-center gap-1.5 text-xs cursor-pointer"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(c) => {
+                                const next = c === true;
+                                setDraft({
+                                  ...draft!,
+                                  roles: draft!.roles.map((r, i) =>
+                                    i === idx
+                                      ? {
+                                          ...r,
+                                          capabilities: next
+                                            ? Array.from(new Set([...r.capabilities, cap]))
+                                            : r.capabilities.filter((x) => x !== cap),
+                                        }
+                                      : r
+                                  ),
+                                });
+                              }}
+                            />
+                            <KeyRound className="h-3 w-3 text-muted-foreground" />
+                            {capabilityLabel(cap)}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">{role.label}</p>
+                    <Badge variant="outline">
+                      {typeof role.access === "string" && role.access === "all"
+                        ? "All departments"
+                        : (role.access as string[]).join(", ")}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {role.description}
+                  </p>
+                  {(role.capabilities ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {(role.capabilities ?? []).map((cap) => (
+                        <Badge key={cap} variant="secondary" className="text-[11px]">
+                          <KeyRound className="h-3 w-3 mr-1" />
+                          {capabilityLabel(cap)}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           ))}
-          {data && data.role_hierarchy.length > 0 && (
+          {data && !isEditing && data.role_hierarchy.length > 0 && (
             <p className="text-xs text-muted-foreground pt-1">
               Hierarchy (lowest → highest): {data.role_hierarchy.join(" → ")}
             </p>
@@ -1865,19 +2095,90 @@ function GovernanceTab({ token }: { token: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Departments</CardTitle>
+          {isEditing && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="self-start"
+              onClick={() =>
+                setDraft({
+                  ...draft!,
+                  departments: [
+                    ...draft!.departments,
+                    { name: "", label: "", description: "" },
+                  ],
+                })
+              }
+            >
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              Add department
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-3">
-          {data?.departments.map((dept) => (
-            <div
-              key={dept.name}
-              className="border-b border-border last:border-0 pb-3 last:pb-0"
-            >
-              <p className="text-sm font-medium">{dept.label}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {dept.description}
-              </p>
-            </div>
-          ))}
+          {(isEditing && draft ? draft.departments : data?.departments ?? []).map(
+            (dept, idx) => (
+              <div
+                key={`${dept.name}-${idx}`}
+                className="border-b border-border last:border-0 pb-3 last:pb-0"
+              >
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        aria-label="Department name"
+                        value={dept.name}
+                        onChange={(e) => {
+                          const old = draft!.departments[idx].name;
+                          const next = e.target.value;
+                          setDraft({
+                            ...draft!,
+                            departments: draft!.departments.map((d, i) =>
+                              i === idx ? { ...d, name: next } : d
+                            ),
+                          });
+                          renameDepartment(old, next);
+                        }}
+                        className="font-mono text-xs"
+                      />
+                      <Input
+                        aria-label="Department label"
+                        value={dept.label}
+                        onChange={(e) => {
+                          setDraft({
+                            ...draft!,
+                            departments: draft!.departments.map((d, i) =>
+                              i === idx ? { ...d, label: e.target.value } : d
+                            ),
+                          });
+                        }}
+                      />
+                    </div>
+                    <Input
+                      aria-label="Department description"
+                      value={dept.description}
+                      onChange={(e) => {
+                        setDraft({
+                          ...draft!,
+                          departments: draft!.departments.map((d, i) =>
+                            i === idx ? { ...d, description: e.target.value } : d
+                          ),
+                        });
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium">{dept.label}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {dept.description}
+                    </p>
+                  </>
+                )}
+              </div>
+            )
+          )}
         </CardContent>
       </Card>
     </div>

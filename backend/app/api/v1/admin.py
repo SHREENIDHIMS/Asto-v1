@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from passlib.hash import bcrypt
 from pydantic import BaseModel
 
-from app.auth.permissions import require_role
+from app.auth.permissions import require_manage_governance, require_role
 from app.dependencies import require_auth
 from app.db.postgres.models import (
     audit_row_to_dict,
@@ -614,12 +614,219 @@ async def get_governance(user: dict = Depends(require_auth)) -> dict:
     """Config-driven roles + departments for the admin governance views."""
     require_role(user, "admin")
 
-    from app.auth.roles_config import DEPARTMENTS, ROLE_HIERARCHY, ROLES
+    from app.auth.roles_config import (
+        DEPARTMENTS,
+        ROLE_CAPABILITIES,
+        ROLE_HIERARCHY,
+        ROLES,
+    )
+
+    roles = []
+    for role in ROLES:
+        item = dict(role)
+        item.setdefault("capabilities", list(ROLE_CAPABILITIES.get(role["name"], [])))
+        roles.append(item)
 
     return {
-        "roles": ROLES,
+        "roles": roles,
         "departments": DEPARTMENTS,
         "role_hierarchy": ROLE_HIERARCHY,
+    }
+
+
+class GovernanceRoleInput(BaseModel):
+    name: str
+    label: str
+    description: str = ""
+    access: list[str] | str = []
+    capabilities: list[str] = []
+
+
+class GovernanceDepartmentInput(BaseModel):
+    name: str
+    label: str
+    description: str = ""
+
+
+class GovernanceUpdateRequest(BaseModel):
+    roles: list[GovernanceRoleInput]
+    departments: list[GovernanceDepartmentInput]
+    role_hierarchy: list[str] | None = None
+
+
+def _apply_department_renames(renames: dict[str, str]) -> None:
+    """Migrate every table that stores a department name (H7 rename)."""
+    if not renames:
+        return
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            for old, new in renames.items():
+                cur.execute(
+                    "UPDATE users SET department = %s WHERE department = %s",
+                    (new, old),
+                )
+                cur.execute(
+                    "UPDATE users SET allowed_departments = "
+                    "array_replace(allowed_departments, %s, %s) "
+                    "WHERE %s = ANY(allowed_departments)",
+                    (old, new, old),
+                )
+                cur.execute(
+                    "UPDATE documents SET department = %s WHERE department = %s",
+                    (new, old),
+                )
+                cur.execute(
+                    "UPDATE document_chunks SET department = %s WHERE department = %s",
+                    (new, old),
+                )
+                cur.execute(
+                    "UPDATE sops SET department = %s WHERE department = %s",
+                    (new, old),
+                )
+                cur.execute(
+                    "UPDATE sop_access_requests SET department = %s WHERE department = %s",
+                    (new, old),
+                )
+                cur.execute(
+                    "UPDATE workflows SET department = %s WHERE department = %s",
+                    (new, old),
+                )
+        conn.commit()
+
+
+@router.put("/governance")
+async def update_governance(
+    request: GovernanceUpdateRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Write back the roles/departments config (H7, ROADMAP Option A).
+
+    The Python config file stays the source of truth; this endpoint
+    validates the payload, atomically rewrites ``roles_config.py``, reloads
+    it (so running handlers pick it up), migrates any renamed departments in
+    the DB, and audit-logs the change.
+    """
+    require_manage_governance(user)
+
+    from app.auth import governance as governance_writer
+    from app.auth.roles_config import (
+        DEPARTMENTS as CURRENT_DEPARTMENTS,
+        ROLE_HIERARCHY as CURRENT_HIERARCHY,
+        ROLES as CURRENT_ROLES,
+    )
+
+    current_role_names = {r["name"] for r in CURRENT_ROLES}
+    submitted_role_names = {r.name for r in request.roles}
+    if submitted_role_names != current_role_names:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Roles cannot be added or removed; edit the existing role set",
+        )
+
+    dept_names = [d.name for d in request.departments]
+    if len(dept_names) != len(set(dept_names)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Department names must be unique",
+        )
+    for dept in request.departments:
+        if not governance_writer.DEPT_NAME_RE.match(dept.name):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid department name '{dept.name}'",
+            )
+        if not dept.label.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Department labels cannot be empty",
+            )
+
+    known_capabilities = governance_writer.KNOWN_CAPABILITIES
+    dept_name_set = set(dept_names)
+    for role in request.roles:
+        if not role.label.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Role '{role.name}' needs a non-empty label",
+            )
+        unknown = set(role.capabilities) - known_capabilities
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown capability(s): {', '.join(sorted(unknown))}",
+            )
+        access = role.access
+        access_list = [] if access == "all" else list(access)
+        for dept in access_list:
+            if dept not in dept_name_set:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Role '{role.name}' references unknown department '{dept}'",
+                )
+
+    hierarchy = request.role_hierarchy or CURRENT_HIERARCHY
+    if set(hierarchy) != current_role_names:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Role hierarchy must contain exactly the known roles",
+        )
+
+    roles_out = []
+    for role in request.roles:
+        roles_out.append(
+            {
+                "name": role.name,
+                "label": role.label,
+                "description": role.description or "",
+                "access": "all" if role.access == "all" else list(role.access),
+                "capabilities": list(role.capabilities),
+            }
+        )
+    departments_out = [
+        {"name": d.name, "label": d.label, "description": d.description or ""}
+        for d in request.departments
+    ]
+
+    # Departments are matched positionally: the UI keeps the list order stable
+    # and appends new departments at the end, so an index change is a rename.
+    old_dept_names = [d["name"] for d in CURRENT_DEPARTMENTS]
+    renames = {}
+    for i, new_dept in enumerate(request.departments):
+        if i < len(old_dept_names) and old_dept_names[i] != new_dept.name:
+            renames[old_dept_names[i]] = new_dept.name
+
+    default_department = renames.get("general", "general")
+
+    _apply_department_renames(renames)
+    try:
+        governance_writer.write_config(
+            roles=roles_out,
+            departments=departments_out,
+            role_hierarchy=list(hierarchy),
+            default_department=default_department,
+        )
+    except Exception:
+        # Keep config and DB consistent: roll the renamed rows back.
+        _apply_department_renames({new: old for old, new in renames.items()})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist governance configuration",
+        )
+
+    from app.audit.audit_logger import AuditLogEntry, log_query
+
+    log_query(
+        AuditLogEntry(
+            user_id=int(user["id"]),
+            query="governance update",
+            outcome="roles/departments config written back",
+        )
+    )
+
+    return {
+        "roles": roles_out,
+        "departments": departments_out,
+        "role_hierarchy": list(hierarchy),
     }
 
 

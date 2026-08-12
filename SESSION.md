@@ -395,6 +395,60 @@ purged only by email while the throttle counts the shared `testclient` IP —
 **Next:** H7 — role & department editor UI (config write-back vs DB table is
 open as H7-OPT).
 
+### Session 19 — 2026-08-12 (Phase H7 — governance editor, write-back to roles_config.py)
+
+**Context:** Roles & Permissions / Departments were read-only, requiring
+hand-editing `app/auth/roles_config.py`. Took ROADMAP H7 **Option A** (the
+recommended one): keep the Python config as source of truth and add a
+write-back endpoint + admin edit UI. No schema change. H7-OPT is resolved —
+removed from the pending decisions table.
+
+**Backend:**
+- `app/auth/governance.py`: pure `render_config` (regenerates the full
+  `roles_config.py` source: `ROLE_DEPARTMENTS`, `ADMIN_ROLES`,
+  `ROLE_HIERARCHY`, `DEFAULT_DEPARTMENT`, `ROLE_CAPABILITIES`, `ROLES`,
+  `DEPARTMENTS`, `can()`, `role_access()`) and `write_config` — same-dir temp
+  file + `os.replace` (atomic), then `importlib.reload` so running handlers
+  pick up the change; `config_path` / `module` injectable for tests. Exposes
+  `KNOWN_CAPABILITIES` whitelist and `DEPT_NAME_RE`.
+- `app/auth/permissions.py`: `require_manage_governance` — the new
+  `manage_governance` permission, satisfied only by admin/super_admin via
+  `roles_config.can()` (stays config-consistent).
+- `app/api/v1/admin.py`: `PUT /admin/governance` — permission gate, then
+  validation (role names must match the existing set, capabilities must be
+  known, department names must match `[a-z][a-z0-9_]*` and be unique, role
+  access can only reference submitted departments, hierarchy must cover the
+  roles) → 422s; positional department rename detection; DB migration of
+  every department column (`users.department`, `users.allowed_departments`,
+  `documents`, `document_chunks`, `sops`, `sop_access_requests`,
+  `workflows`) with best-effort rollback if the config write fails;
+  `DEFAULT_DEPARTMENT` follows a renamed `general`; audit-logged. `GET
+  /admin/governance` now returns `capabilities` per role.
+
+**Tests:** new `tests/unit/test_h7_governance.py` (16 cases): renderer
+round-trip (valid Python, edited values, "all"→[] access), write+reload
+from a temp file (reload re-executes the new content), admin PUT persists to
+disk, permission gating (staff 403 / client 403 / unauthenticated 401),
+invalid role name 422, unknown capability 422, invalid department name 422,
+role→unknown-department 422, department rename migrates every column + tracks
+`default_department`, and no-write-no-audit on validation failure. Suite:
+**482 passed**.
+
+**Frontend:**
+- `lib/api-client.ts`: `GovernanceRole.capabilities`, new
+  `GovernanceUpdateInput` + `updateGovernance` (`PUT /admin/governance`).
+- `app/admin/page.tsx`: GovernanceTab gained an Edit mode — edit role
+  label/description, toggle capabilities per role (checkboxes derived from
+  the union of current capabilities), add/rename departments (renames
+  propagate into role access lists client-side), client-side validation
+  mirroring the backend, Save/Cancel. `tsc --noEmit` + `next lint` clean.
+
+**Docs:** `docs/ROADMAP.md` H7 ticked, H7-OPT removed from pending
+decisions; this SESSION.md entry.
+
+**Next:** Phase I — Documents & Review (I7 drag-and-drop multi-file upload
+and I1 inline PDF preview are the quick wins).
+
 ### Session 4 — 2026-08-08 (Phase D — frontend: chat UX, client portal, admin dashboard)
 
 **Done (Phase D):**

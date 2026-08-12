@@ -43,3 +43,19 @@ def require_role(user: dict | None, role: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Role '{user_role}' cannot perform this action (requires '{role}')",
         )
+
+
+def require_manage_governance(user: dict | None) -> None:
+    """H7: only admin / super_admin may edit governance configuration.
+
+    Implemented as a capability check so it stays config-consistent:
+    ``roles_config.can`` short-circuits ``True`` for the admin roles, so a
+    client or lower staff token is always denied.
+    """
+    from app.auth.roles_config import can as roles_can
+
+    if user is None or not roles_can(user.get("role", ""), "manage_governance"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Role cannot manage governance configuration",
+        )
