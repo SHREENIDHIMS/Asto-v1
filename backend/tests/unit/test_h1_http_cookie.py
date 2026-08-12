@@ -73,6 +73,7 @@ class TestRefreshCookie:
                 "password_hash": bcrypt.hash("whatever123"),
                 "role": "loan_officer", "department": "general",
                 "full_name": "Dana Officer", "allowed_departments": ["general"],
+                "totp_enabled": False,
             },
         ]
         with patch("app.db.postgres.session.acquire", return_value=conn):

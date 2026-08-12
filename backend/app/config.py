@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     login_attempt_prune_hours: int = 24
 
+    # --- Admin 2FA (H4, TOTP) ---
+    # Short-lived, single-use token issued by /auth/login when the account
+    # has 2FA enabled; POST /auth/2fa swaps it for the real JWT.
+    two_fa_token_ttl_minutes: int = 5
+
     # --- CORS ---
     # Comma-separated list of allowed origins. Credentialed requests (H1
     # cookies) require an explicit origin, so the dev default is the local

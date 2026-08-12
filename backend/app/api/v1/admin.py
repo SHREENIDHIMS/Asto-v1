@@ -38,6 +38,164 @@ class AssignClientRequest(BaseModel):
     user_id: int
 
 
+# --- H4: admin 2FA (TOTP) ---
+
+
+class TwoFaSetupResponse(BaseModel):
+    otpauth_uri: str
+    secret: str
+
+
+class TwoFaVerifyRequest(BaseModel):
+    code: str
+
+
+class TwoFaDisableRequest(BaseModel):
+    current_password: str
+
+
+class TwoFaStatusResponse(BaseModel):
+    enabled: bool
+
+
+@router.get("/2fa/status", response_model=TwoFaStatusResponse)
+async def two_fa_status(user: dict = Depends(require_auth)) -> TwoFaStatusResponse:
+    """Whether the authenticated admin has 2FA enabled."""
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT totp_enabled FROM users WHERE id = %s",
+                (int(user["id"]),),
+            )
+            row = cur.fetchone()
+    return TwoFaStatusResponse(enabled=bool(row and row["totp_enabled"]))
+
+
+@router.post("/2fa/setup", response_model=TwoFaSetupResponse)
+async def two_fa_setup(user: dict = Depends(require_auth)) -> TwoFaSetupResponse:
+    """Start 2FA enrollment: return a fresh TOTP secret + otpauth URI.
+
+    The secret is stored encrypted on the user row but 2FA stays disabled
+    until /admin/2fa/verify confirms the user scanned it with a valid code.
+    Re-running setup overwrites the pending secret; a fully-enabled account
+    must be disabled first.
+    """
+    require_role(user, "admin")
+    user_id = int(user["id"])
+
+    from app.auth.totp import encrypt_secret, new_secret, provisioning_uri
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT totp_enabled FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if row and row["totp_enabled"]:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="2FA is already enabled; disable it first to re-enroll",
+                )
+
+            secret = new_secret()
+            cur.execute(
+                "UPDATE users SET totp_secret = %s, totp_enabled = false WHERE id = %s",
+                (encrypt_secret(secret), user_id),
+            )
+        conn.commit()
+
+    return TwoFaSetupResponse(
+        otpauth_uri=provisioning_uri(secret, user["email"]),
+        secret=secret,
+    )
+
+
+@router.post("/2fa/verify", response_model=TwoFaStatusResponse)
+async def two_fa_verify(
+    request: TwoFaVerifyRequest,
+    user: dict = Depends(require_auth),
+) -> TwoFaStatusResponse:
+    """Confirm enrollment by checking the code against the pending secret.
+
+    On a valid code the account's 2FA is enabled (the stored secret becomes
+    live for /auth/login). Wrong code -> 401.
+    """
+    require_role(user, "admin")
+    user_id = int(user["id"])
+
+    from app.auth.totp import decrypt_secret, verify_code
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT totp_secret, totp_enabled FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+
+            if row is None or not row["totp_secret"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No pending 2FA setup; call /admin/2fa/setup first",
+                )
+            if row["totp_enabled"]:
+                return TwoFaStatusResponse(enabled=True)
+
+            secret = decrypt_secret(row["totp_secret"])
+            if secret is None or not verify_code(secret, request.code):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid 2FA code",
+                )
+
+            cur.execute(
+                "UPDATE users SET totp_enabled = true WHERE id = %s",
+                (user_id,),
+            )
+        conn.commit()
+
+    return TwoFaStatusResponse(enabled=True)
+
+
+@router.post("/2fa/disable", response_model=TwoFaStatusResponse)
+async def two_fa_disable(
+    request: TwoFaDisableRequest,
+    user: dict = Depends(require_auth),
+) -> TwoFaStatusResponse:
+    """Disable 2FA. Requires the account's current password (H4)."""
+    require_role(user, "admin")
+    user_id = int(user["id"])
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT password_hash FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Account not found",
+                )
+            if not bcrypt.verify(request.current_password, row["password_hash"]):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Current password is incorrect",
+                )
+
+            cur.execute(
+                "UPDATE users SET totp_secret = NULL, totp_enabled = false WHERE id = %s",
+                (user_id,),
+            )
+        conn.commit()
+
+    return TwoFaStatusResponse(enabled=False)
+
+
 @router.get("/users")
 async def list_users(user: dict = Depends(require_auth)) -> dict:
     """List users. Requires admin role."""

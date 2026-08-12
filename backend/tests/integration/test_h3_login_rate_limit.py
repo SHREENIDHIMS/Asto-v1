@@ -75,7 +75,10 @@ def h3_db():
         with conn.cursor() as cur:
             cur.execute("DELETE FROM users WHERE id = %s", (staff_id,))
             cur.execute("DELETE FROM clients WHERE id = %s", (client_id,))
-            cur.execute("DELETE FROM login_attempts WHERE email IN (%s, %s)", (STAFF_EMAIL, CLIENT_EMAIL))
+            cur.execute(
+                "DELETE FROM login_attempts WHERE email IN (%s, %s) OR ip = %s",
+                (STAFF_EMAIL, CLIENT_EMAIL, TEST_IP),
+            )
         conn.commit()
 
 
@@ -86,11 +89,23 @@ def _login(email: str, password: str, path: str = "/api/v1/auth/login"):
     return TestClient(app).post(path, json={"email": email, "password": password})
 
 
+TEST_IP = "testclient"  # Host name TestClient presents as request.client.host.
+
+
 def _purge_attempts(email: str) -> None:
-    """Remove any leftover failure rows so each test starts clean."""
+    """Remove any leftover failure rows so each test starts clean.
+
+    The throttle counts by email AND by IP, and every TestClient request
+    shares the same ``testserver`` host. Purging only the email leaves IP
+    failures from earlier runs in place, which can lock the account out
+    mid-test — so clear both dimensions for the shared test IP.
+    """
     with acquire() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM login_attempts WHERE email = %s", (email,))
+            cur.execute(
+                "DELETE FROM login_attempts WHERE email = %s OR ip = %s",
+                (email, TEST_IP),
+            )
         conn.commit()
 
 

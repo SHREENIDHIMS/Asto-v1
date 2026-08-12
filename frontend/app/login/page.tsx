@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -11,11 +11,12 @@ import {
   forgotPassword,
   login,
   resetPassword,
+  twoFactorLogin,
 } from "@/lib/api-client";
 import { decodeToken, isAdminRole, storeToken } from "@/lib/auth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
-type Mode = "login" | "forgot" | "reset";
+type Mode = "login" | "forgot" | "reset" | "2fa";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,6 +30,8 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [twoFaToken, setTwoFaToken] = useState<string | null>(null);
+  const [twoFaCode, setTwoFaCode] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -42,6 +45,18 @@ export default function LoginPage() {
     }
   }, []);
 
+  /** Route a freshly-issued access token to the right interface. */
+  const routeByToken = (accessToken: string) => {
+    const claims = decodeToken(accessToken);
+    if (claims?.audience === "client") {
+      router.push("/client");
+    } else if (isAdminRole(claims?.role)) {
+      router.push("/admin");
+    } else {
+      router.push("/staff");
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -50,18 +65,44 @@ export default function LoginPage() {
     try {
       // Single unified sign-in: the backend resolves staff vs client.
       const result = await login(email, password);
-      storeToken(result.access_token, rememberMe);
-      // Auto-identify the user and route them to their own interface.
-      const claims = decodeToken(result.access_token);
-      if (claims?.audience === "client") {
-        router.push("/client");
-      } else if (isAdminRole(claims?.role)) {
-        router.push("/admin");
-      } else {
-        router.push("/staff");
+      if (result.requires_2fa) {
+        // H4: password was correct but TOTP is on. No credentials issued
+        // yet — hold the short-lived token and ask for the app code.
+        setTwoFaToken(result.two_fa_token ?? null);
+        setMode("2fa");
+        setNotice(
+          "Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app."
+        );
+        return;
       }
+      if (!result.access_token) {
+        throw new Error("Sign-in did not return a token");
+      }
+      storeToken(result.access_token, rememberMe);
+      routeByToken(result.access_token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleTwoFactor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!twoFaToken) return;
+    setIsLoading(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const result = await twoFactorLogin(twoFaToken, twoFaCode.trim());
+      if (!result.access_token) {
+        throw new Error("Sign-in did not return a token");
+      }
+      storeToken(result.access_token, rememberMe);
+      routeByToken(result.access_token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
       setIsLoading(false);
     }
@@ -121,6 +162,8 @@ export default function LoginPage() {
     setNotice(null);
     setPassword("");
     setConfirmPassword("");
+    setTwoFaToken(null);
+    setTwoFaCode("");
   };
 
   return (
@@ -151,7 +194,54 @@ export default function LoginPage() {
                 </p>
               </>
             )}
-            {mode === "forgot" && (
+        {mode === "2fa" && (
+          <form className="mt-6 space-y-5" onSubmit={handleTwoFactor}>
+            <div className="space-y-2">
+              <Label htmlFor="twofa-code">6-digit code</Label>
+              <Input
+                id="twofa-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                maxLength={6}
+                className="text-center text-lg tracking-widest"
+                value={twoFaCode}
+                onChange={(e) => setTwoFaCode(e.target.value.replace(/\D/g, ""))}
+                required
+                autoFocus
+              />
+            </div>
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Verification failed</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <Button type="submit" className="w-full" disabled={isLoading || twoFaCode.length !== 6}>
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="h-4 w-4" />
+              )}
+              {isLoading ? "Verifying…" : "Verify & sign in"}
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full text-muted-foreground"
+              onClick={backToLogin}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to login
+            </Button>
+          </form>
+        )}
+
+        {mode === "forgot" && (
               <>
                 <h1 className="text-lg font-semibold tracking-tight">Reset your password</h1>
                 <p className="text-sm text-muted-foreground">
@@ -164,6 +254,14 @@ export default function LoginPage() {
                 <h1 className="text-lg font-semibold tracking-tight">Choose a new password</h1>
                 <p className="text-sm text-muted-foreground">
                   Use at least 8 characters. All other sessions will be signed out.
+                </p>
+              </>
+            )}
+            {mode === "2fa" && (
+              <>
+                <h1 className="text-lg font-semibold tracking-tight">Two-factor verification</h1>
+                <p className="text-sm text-muted-foreground">
+                  Enter the 6-digit code from your authenticator app.
                 </p>
               </>
             )}

@@ -26,6 +26,7 @@ STAFF_USER = {
     "department": "general",
     "full_name": "Dana Officer",
     "allowed_departments": ["general"],
+    "totp_enabled": False,
 }
 
 

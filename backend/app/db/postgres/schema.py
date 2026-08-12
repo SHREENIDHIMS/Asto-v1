@@ -29,6 +29,8 @@ DDL_STATEMENTS: list[str] = [
         department          TEXT NOT NULL DEFAULT 'general',
         allowed_departments TEXT[] NOT NULL DEFAULT '{}',
         is_active           BOOLEAN NOT NULL DEFAULT true,
+        totp_secret         TEXT,
+        totp_enabled        BOOLEAN NOT NULL DEFAULT false,
         created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
@@ -339,6 +341,8 @@ ALTER_STATEMENTS: list[str] = [
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'",
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES users(id)",
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false",
 ]
 
 # CHECK constraints added via ALTER (no IF NOT EXISTS for constraints in PG,

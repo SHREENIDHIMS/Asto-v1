@@ -62,9 +62,13 @@ export interface AuthLoginRequest {
 }
 
 export interface AuthLoginResponse {
-  access_token: string;
+  access_token: string | null;
   token_type: string;
   expires_in: number;
+  /** H4: true when the account has TOTP enabled and /auth/2fa must be completed. */
+  requires_2fa?: boolean;
+  /** H4: short-lived, single-use token for the /auth/2fa step. */
+  two_fa_token?: string | null;
 }
 
 export async function searchKnowledgeBase(
@@ -248,6 +252,96 @@ export async function refreshSession(): Promise<AuthLoginResponse> {
     throw new Error(error?.detail || 'Session refresh failed');
   }
 
+  return response.json();
+}
+
+/**
+ * Complete an H4 2FA login: swap the short-lived token + TOTP code for the
+ * real access JWT. The refresh cookie is set by the backend on success.
+ */
+export async function twoFactorLogin(
+  twoFaToken: string,
+  code: string
+): Promise<AuthLoginResponse> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/2fa`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ two_fa_token: twoFaToken, code }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Two-factor verification failed');
+  }
+
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// H4: admin 2FA enrollment (TOTP)
+// ---------------------------------------------------------------------------
+
+export interface TwoFaSetupResult {
+  otpauth_uri: string;
+  secret: string;
+}
+
+/** Whether the authenticated admin has 2FA enabled. */
+export async function twoFaStatus(token: string): Promise<{ enabled: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/2fa/status`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load 2FA status');
+  }
+  return response.json();
+}
+
+/** Start enrollment: returns a fresh secret + otpauth URI (2FA still off). */
+export async function twoFaSetup(token: string): Promise<TwoFaSetupResult> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/2fa/setup`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to start 2FA setup');
+  }
+  return response.json();
+}
+
+/** Confirm enrollment with the code shown by the authenticator app. */
+export async function twoFaVerify(
+  token: string,
+  code: string
+): Promise<{ enabled: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/2fa/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ code }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || '2FA verification failed');
+  }
+  return response.json();
+}
+
+/** Disable 2FA. Requires the account's current password. */
+export async function twoFaDisable(
+  token: string,
+  currentPassword: string
+): Promise<{ enabled: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/2fa/disable`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ current_password: currentPassword }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to disable 2FA');
+  }
   return response.json();
 }
 

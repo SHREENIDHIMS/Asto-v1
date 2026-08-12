@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   User,
   Shield,
@@ -12,6 +12,9 @@ import {
   Save,
   Loader2,
   Clock,
+  ShieldCheck,
+  CheckCircle2,
+  Copy,
 } from "lucide-react";
 import {
   Dialog,
@@ -34,8 +37,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { changePassword } from "@/lib/api-client";
-import { getToken, decodeToken, type TokenClaims } from "@/lib/auth";
+import {
+  changePassword,
+  twoFaDisable,
+  twoFaSetup,
+  twoFaStatus,
+  twoFaVerify,
+} from "@/lib/api-client";
+import { getToken, decodeToken, isAdminRole, type TokenClaims } from "@/lib/auth";
 
 export interface SettingsModalProps {
   trigger?: React.ReactNode;
@@ -64,6 +73,226 @@ const SESSION_TIMEOUTS = [
   { label: "60 minutes", value: 60 * 60 },
   { label: "Off (stay signed in)", value: 0 },
 ];
+
+// ---------------------------------------------------------------------------
+// H4: admin two-factor authentication (TOTP) — setup / disable
+// ---------------------------------------------------------------------------
+
+function TwoFactorCard({ token }: { token: string }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [setup, setSetup] = useState<{ otpauth_uri: string; secret: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [disablePw, setDisablePw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Load the admin's current 2FA state on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await twoFaStatus(token);
+        if (cancelled) return;
+        setEnabled(res.enabled);
+        if (!res.enabled) setSetup(null);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load 2FA status");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const handleStartSetup = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await twoFaSetup(token);
+      setSetup(res);
+      setCode("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start setup");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await twoFaVerify(token, code.trim());
+      setEnabled(true);
+      setSetup(null);
+      setCode("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDisable = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await twoFaDisable(token, disablePw);
+      setEnabled(false);
+      setDisablePw("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disable 2FA");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copySecret = async () => {
+    if (!setup) return;
+    try {
+      await navigator.clipboard.writeText(setup.secret);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard may be unavailable; the secret is visible to copy by hand.
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4" />
+          Two-factor authentication
+        </CardTitle>
+        <CardDescription>
+          Protects the account that approves documents and reads the audit log.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Checking status…
+          </div>
+        ) : enabled ? (
+          <>
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <span className="font-medium text-green-700">Enabled</span>
+              <span className="text-xs text-muted-foreground">
+                A 6-digit code is required at sign-in.
+              </span>
+            </div>
+            <div className="grid gap-2">
+              <Label className="text-xs text-muted-foreground">
+                Current password to disable
+              </Label>
+              <Input
+                type="password"
+                value={disablePw}
+                onChange={(e) => setDisablePw(e.target.value)}
+                placeholder="••••••••"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={handleDisable}
+              disabled={busy || !disablePw}
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />}
+              Disable 2FA
+            </Button>
+          </>
+        ) : setup ? (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Scan the URI or enter the secret in your authenticator app, then
+              confirm with the 6-digit code it shows.
+            </p>
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Secret</Label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded-md border bg-muted px-2 py-1.5 font-mono text-xs break-all">
+                  {setup.secret}
+                </code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={copySecret}
+                  aria-label="Copy secret"
+                >
+                  {copied ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">otpauth URI</Label>
+              <code className="rounded-md border bg-muted px-2 py-1.5 font-mono text-[11px] break-all text-muted-foreground">
+                {setup.otpauth_uri}
+              </code>
+            </div>
+            <div className="grid gap-2">
+              <Label className="text-xs text-muted-foreground">6-digit code</Label>
+              <Input
+                inputMode="numeric"
+                placeholder="000000"
+                maxLength={6}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              />
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="w-full"
+              onClick={handleVerify}
+              disabled={busy || code.length !== 6}
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />}
+              Confirm & enable
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              onClick={() => setSetup(null)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full justify-start gap-2"
+            onClick={handleStartSetup}
+            disabled={busy}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+            Set up two-factor authentication
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function SettingsModal({
   trigger,
@@ -95,6 +324,9 @@ const identity = user ?? (() => {
     role: claims?.audience === "client" ? "Client" : claims?.role ?? "Staff",
   };
 })();
+
+  const isAdmin = isAdminRole(identity.role);
+  const sessionToken = getToken() ?? null;
 
   const handleSavePassword = async () => {
     setPwError(null);
@@ -207,6 +439,9 @@ const identity = user ?? (() => {
           </Button>
         </CardContent>
       </Card>
+
+      {/* H4: admin two-factor authentication */}
+      {isAdmin && sessionToken && <TwoFactorCard token={sessionToken} />}
 
       {/* Conversations */}
       <Card>

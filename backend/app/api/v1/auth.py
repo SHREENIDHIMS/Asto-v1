@@ -16,6 +16,7 @@ from pydantic import BaseModel, field_validator
 
 
 from app.auth.jwt_handler import (
+    create_2fa_token,
     create_token,
     hash_refresh_token,
     hash_token,
@@ -109,9 +110,19 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
+    access_token: str | None = None
     token_type: str = "bearer"
-    expires_in: int
+    expires_in: int = 0
+    # H4: present when the account has 2FA enabled. The caller must exchange
+    # ``two_fa_token`` + a TOTP code at /auth/2fa before any real credential
+    # is issued (access JWT or the HttpOnly refresh cookie).
+    requires_2fa: bool = False
+    two_fa_token: str | None = None
+
+
+class TwoFactorLoginRequest(BaseModel):
+    two_fa_token: str
+    code: str
 
 
 class RefreshResponse(BaseModel):
@@ -275,16 +286,24 @@ async def login(
     Brute-force throttling (H3): every attempt is recorded to
     ``login_attempts``; 5 recent failures for the email (or 10 for the IP)
     reject with 429 and a Retry-After header. Success clears the counter.
+
+    Admin 2FA (H4): when the resolved staff account has TOTP enabled, no
+    credential is issued yet. The response carries ``requires_2fa`` + a
+    short-lived, single-use ``two_fa_token``; the caller must complete
+    POST /auth/2fa with a valid TOTP code to receive the access JWT and
+    the refresh cookie.
     """
     ip = _client_ip(http_request)
     refresh: str | None = None
+    requires_2fa: bool = False
+    two_fa_token: str | None = None
     with session.acquire() as conn:
         with conn.cursor() as cur:
             _check_login_throttle(cur, request.email, ip)
 
             cur.execute(
                 "SELECT id, email, password_hash, role, department, "
-                "full_name, allowed_departments FROM users "
+                "full_name, allowed_departments, totp_enabled FROM users "
                 "WHERE email = %s AND is_active = true",
                 (request.email,),
             )
@@ -292,18 +311,26 @@ async def login(
 
             token = None
             if row is not None and bcrypt.verify(request.password, row["password_hash"]):
-                token = create_token(
-                    subject=str(row["id"]),
-                    role=row["role"],
-                    department=row["department"],
-                    allowed_departments=list(row["allowed_departments"] or []),
-                    audience="staff",
-                    name=row["full_name"] or row["email"],
-                )
-                refresh = _issue_refresh(cur, "staff", user_id=int(row["id"]))
-                _reset_attempts(cur, request.email)
+                if row["totp_enabled"]:
+                    # Correct password but 2FA is on: no credentials yet.
+                    requires_2fa = True
+                    two_fa_token = create_2fa_token(
+                        str(row["id"]),
+                        settings.two_fa_token_ttl_minutes,
+                    )
+                else:
+                    token = create_token(
+                        subject=str(row["id"]),
+                        role=row["role"],
+                        department=row["department"],
+                        allowed_departments=list(row["allowed_departments"] or []),
+                        audience="staff",
+                        name=row["full_name"] or row["email"],
+                    )
+                    refresh = _issue_refresh(cur, "staff", user_id=int(row["id"]))
+                    _reset_attempts(cur, request.email)
 
-            if token is None:
+            if token is None and not requires_2fa:
                 cur.execute(
                     "SELECT id, email, password_hash, full_name FROM clients "
                     "WHERE email = %s AND is_active = true",
@@ -321,15 +348,111 @@ async def login(
                     refresh = _issue_refresh(cur, "client", client_id=int(row["id"]))
                     _reset_attempts(cur, request.email)
 
-            if token is None:
+            if token is None and not requires_2fa:
                 _record_failed_attempt(cur, request.email, ip)
         conn.commit()
+
+    if requires_2fa:
+        return LoginResponse(
+            requires_2fa=True,
+            two_fa_token=two_fa_token,
+        )
 
     if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+
+    _set_refresh_cookie(response, refresh)
+    return LoginResponse(
+        access_token=token,
+        expires_in=settings.jwt_expiry_minutes * 60,
+    )
+
+
+@router.post("/2fa", response_model=LoginResponse)
+async def two_factor_login(
+    request: TwoFactorLoginRequest,
+    response: Response,
+    http_request: Request,
+) -> LoginResponse:
+    """Complete an H4 2FA login: swap the short-lived token + TOTP code for real credentials.
+
+    The ``two_fa_token`` from /auth/login is verified (purpose=2fa, unexpired,
+    not already consumed). The account's stored TOTP secret is decrypted and
+    the presented code checked with a ±1-window tolerance. On success the
+    token's jti is recorded in ``revoked_jtis`` (single-use), the refresh
+    cookie is issued, and a real access JWT returned. Wrong code -> 401.
+    """
+    payload = verify_token(request.two_fa_token)
+    if payload is None or payload.get("purpose") != "2fa":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired 2FA token",
+        )
+
+    subject = payload.get("sub")
+    if subject is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid 2FA token: missing subject",
+        )
+
+    ip = _client_ip(http_request)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # Single-use: a consumed jti must be rejected even inside its TTL.
+            if payload.get("jti"):
+                cur.execute("SELECT 1 FROM revoked_jtis WHERE jti = %s", (payload["jti"],))
+                if cur.fetchone() is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="2FA token already used",
+                    )
+
+            cur.execute(
+                "SELECT id, email, full_name, role, department, "
+                "allowed_departments, totp_secret, totp_enabled FROM users "
+                "WHERE id = %s AND is_active = true",
+                (subject,),
+            )
+            row = cur.fetchone()
+
+            if row is None or not row["totp_enabled"]:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="2FA not enabled for this account",
+                )
+
+            from app.auth.totp import decrypt_secret, verify_code
+
+            secret = decrypt_secret(row["totp_secret"])
+            if secret is None or not verify_code(secret, request.code):
+                _record_failed_attempt(cur, row["email"], ip)
+                conn.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid 2FA code",
+                )
+
+            # Consume the token (single-use) and issue real credentials.
+            if payload.get("jti"):
+                cur.execute(
+                    "INSERT INTO revoked_jtis (jti) VALUES (%s) ON CONFLICT (jti) DO NOTHING",
+                    (payload["jti"],),
+                )
+            token = create_token(
+                subject=str(row["id"]),
+                role=row["role"],
+                department=row["department"],
+                allowed_departments=list(row["allowed_departments"] or []),
+                audience="staff",
+                name=row["full_name"] or row["email"],
+            )
+            refresh = _issue_refresh(cur, "staff", user_id=int(row["id"]))
+            _reset_attempts(cur, row["email"])
+        conn.commit()
 
     _set_refresh_cookie(response, refresh)
     return LoginResponse(

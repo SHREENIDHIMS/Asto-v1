@@ -343,6 +343,58 @@ serves 200.
 
 **Next:** H4 — admin 2FA (TOTP), the last open Phase H item.
 
+### Session 18 — 2026-08-12 (Phase H4 — admin 2FA, TOTP)
+
+**Context:** protects the account that approves documents and reads the audit
+log. Delivered end to end: enrollment endpoints, a split login flow, and the
+two frontend touchpoints. H4 was the last open Phase H item.
+
+**Backend:**
+- `app/auth/totp.py`: `new_secret` / `provisioning_uri` (otpauth://, issuer
+  `Asto`), `encrypt_secret` / `decrypt_secret` (Fernet, key from
+  `settings.secret_key`), `verify_code` with ±1-window tolerance.
+- `app/api/v1/admin.py`: `POST /admin/2fa/setup` (returns secret + otpauth
+  URI, stores the secret encrypted, 409 when already enabled),
+  `POST /admin/2fa/verify` (checks the pending secret, enables on a valid
+  code, 401 on wrong code), `POST /admin/2fa/disable` (requires the current
+  password, 401 otherwise), `GET /admin/2fa/status`. All gated to the
+  `admin` role via `require_role`.
+- `app/api/v1/auth.py`: `/auth/login` now reads `totp_enabled`;
+  `requires_2fa=true` + a short-lived, single-use `two_fa_token` is returned
+  (no access JWT, no refresh cookie) when the account has TOTP on.
+  `POST /auth/2fa` verifies purpose=2fa + the code, records the jti in
+  `revoked_jtis` (single-use), then issues the refresh cookie and access JWT.
+- `app/db/postgres/schema.py`: `users.totp_secret` (TEXT) +
+  `users.totp_enabled` (BOOL NOT NULL DEFAULT false) in the CREATE TABLE and
+  as idempotent `ALTER TABLE` statements for pre-existing schemas.
+- `app/config.py`: `two_fa_token_ttl_minutes` (5) + `secret_key` used for
+  secret encryption sets `app/auth/totp.py` up.
+
+**Tests:** new `tests/unit/test_h4_2fa.py` (25 cases: setup/verify/disable
+permissions + codes, login with and without 2FA, wrong code, `two_fa_token`
+single-use, access JWT rejected as a 2FA token, status). Existing
+H1/H3 mocks updated for the new `totp_enabled` column. Also fixed a
+pre-existing flaky integration test: `tests/integration/test_h3_login_rate_limit.py`
+purged only by email while the throttle counts the shared `testclient` IP —
+`_purge_attempts` and teardown now clear both. Suite: **466 passed**.
+
+**Frontend:**
+- `lib/api-client.ts`: `AuthLoginResponse` extended with `requires_2fa` /
+  `two_fa_token`; new `twoFactorLogin`, `twoFaStatus`, `twoFaSetup`,
+  `twoFaVerify`, `twoFaDisable`.
+- `app/login/page.tsx`: a new `2fa` mode — after the password is accepted
+  the login screen shows a 6-digit code field and swaps the token via
+  `/auth/2fa`, then routes normally.
+- `components/settings/SettingsModal.tsx`: admin-only **TwoFactorCard**
+  (status check on open; Set-up flow showing the secret + otpauth URI with
+  copy, then Confirm & enable; Disable flow requiring the current password).
+  `tsc --noEmit` + `next lint` clean.
+
+**Docs:** `docs/ROADMAP.md` H4 ticked; this SESSION.md entry.
+
+**Next:** H7 — role & department editor UI (config write-back vs DB table is
+open as H7-OPT).
+
 ### Session 4 — 2026-08-08 (Phase D — frontend: chat UX, client portal, admin dashboard)
 
 **Done (Phase D):**

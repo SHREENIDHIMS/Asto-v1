@@ -69,6 +69,25 @@ def verify_token(token: str) -> dict | None:
         return None
 
 
+def create_2fa_token(subject: str, ttl_minutes: int) -> str:
+    """Short-lived, single-use JWT for the 2FA login step (H4).
+
+    Carries ``purpose: "2fa"`` so /auth/2fa cannot be fed a regular access
+    JWT, and a fresh ``jti`` that is recorded in ``revoked_jtis`` on use so
+    the token can be consumed exactly once.
+    """
+    now = int(time.time())
+    payload = {
+        "jti": secrets.token_urlsafe(16),
+        "purpose": "2fa",
+        "sub": subject,
+        "audience": "staff",
+        "iat": now,
+        "exp": now + (ttl_minutes * 60),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
 def decode_for_audit(token: str) -> dict | None:
     """Decode a JWT without verification (for audit logging of failed tokens)."""
     try:
