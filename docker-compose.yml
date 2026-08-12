@@ -49,10 +49,12 @@ services:
       ASTO_AUTH_COOKIE_SAMESITE: "${ASTO_AUTH_COOKIE_SAMESITE:-lax}"
     volumes:
       - ./storage:/app/storage
-      # Phase H7: the governance editor rewrites roles_config.py in place. Bind
-      # the file so admin edits survive container rebuild/recreate (the host
-      # copy is the source of truth).
-      - ./backend/app/auth/roles_config.py:/app/app/auth/roles_config.py
+      # Phase H7: the governance editor rewrites roles_config.py via an atomic
+      # os.replace, which fails over a single-file bind mount (EBUSY). Mount
+      # the whole app/auth dir instead (same pattern as dev --watch) so the
+      # write-back persists across rebuild/recreate; the host copy is the
+      # source of truth.
+      - ./backend/app/auth:/app/app/auth
     ports:
       - "8011:8011"
     deploy:

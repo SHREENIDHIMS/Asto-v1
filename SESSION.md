@@ -449,6 +449,86 @@ decisions; this SESSION.md entry.
 **Next:** Phase I — Documents & Review (I7 drag-and-drop multi-file upload
 and I1 inline PDF preview are the quick wins).
 
+### Session 20 — 2026-08-12 (Full Phase H live verification in rebuilt containers)
+
+**Context:** containers were rebuilt for the H4/H7 deps (`pyotp`,
+`cryptography`) and the H7 bind mount. This session ran a full live
+verification of **every Phase H feature (H1–H7)** against the rebuilt
+`asto-backend` + `asto-frontend`, found and fixed one container-level bug,
+and re-verified.
+
+**Container rebuild (first attempt was stale):** the running backend image
+predated the H4/H7 commits (no `totp.py`, no `governance.py`, zero `2fa`
+routes in OpenAPI) — the earlier rebuild predated those commits. Rebuilt
+`asto-backend` + `frontend` from the current tree; fresh image now exposes
+`/auth/2fa` + `/admin/2fa/*` and ships `app/auth/{totp,governance}.py`, with
+`pyotp 2.9.0` + `cryptography 50.0.0` verified inside the container.
+
+**Bug found in the H7 bind mount (EBUSY):** the single-file mount
+`./backend/app/auth/roles_config.py:/app/app/auth/roles_config.py` broke
+H7's atomic write — `os.replace` over a single-file bind mount fails with
+`OSError(16, 'Device or resource busy')`, so `PUT /admin/governance`
+returned 500 "Failed to persist". Reproduced in-container with a probe.
+**Fix:** mount the whole directory
+`./backend/app/auth:/app/app/auth` instead (same pattern dev `--watch`
+already uses); atomic replace now works and edits persist. Re-verified the
+full H7 write path through the fixed mount.
+
+**H1 — HttpOnly cookie + refresh rotation + CSRF (live):**
+`POST /auth/login` → access JWT in body + `asto_refresh` HttpOnly cookie
+(SameSite=lax, 30d, no Secure in dev). `/auth/refresh` (with `X-Asto-CSRF:
+1`) → fresh JWT + **rotated** cookie; replaying the rotated-out token →
+`401 Invalid refresh token`; refresh without the CSRF header → `403 CSRF
+check failed`.
+
+**H2 — Forgot/reset (live):** `/auth/forgot-password` returns the **same
+generic 200** for a known and an unknown email (no enumeration).
+
+**H3 — Login throttle (live):** 6 consecutive failed logins on
+`bogus@example.test` → 6th is `429 Too many failed attempts` with
+`Retry-After: 900` + `X-RateLimit-Limit: 5` / `X-RateLimit-Remaining: 0`;
+`admin@asto.local` still logs in **200** from the same IP (lockout is
+email-scoped; IP count 6/10 stays under the cap).
+
+**H4 — Admin 2FA TOTP (live, full round-trip):** status `enabled:false` →
+setup returns otpauth URI + secret → verified with a live TOTP code
+(computed in-container) → `enabled:true`; `/auth/login` then returns
+`access_token:null, requires_2fa:true, two_fa_token:<...>` and **no**
+refresh cookie; `/auth/2fa` swaps the code+token for a real access JWT +
+refresh cookie; **replaying the same two_fa_token → `401 2FA token already
+used`**; `/admin/2fa/disable` (current password) → `enabled:false`, normal
+login restored. (2FA left disabled on admin after the test.)
+
+**H5 — Session revocation (live):** client@asto.local login → admin
+`GET /admin/clients/1/sessions` shows `active_sessions:1` →
+`POST …/sessions/revoke` → `{revoked_sessions:1}` → client's refresh cookie
+now `401 Invalid refresh token`, list shows `active_sessions:0`.
+
+**H6 — Change password (live, round-trip + state restored):** wrong current
+→ `401`; weak new → `422`; valid change → `{"updated":true}`; login with old
+password → `401`, new → `200`. Password restored to the seeded value after.
+
+**H7 — Governance write-back (live, incl. persistence across recreate):**
+no-op `PUT /admin/governance` → `200`. A real edit (admin role label) → `200`,
+landed in the **host** `roles_config.py` via the directory bind mount
+(`'Administrator (Edited)'`, valid Python), and **survived
+`docker compose up -d --force-recreate asto-backend`** — proving edits
+persist across container recreation. Restored the original label. Gates:
+non-admin staff `PUT` and `GET /admin/governance` → `403`; unknown
+capability → `422` with no file write.
+
+**Frontend (live):** `/login/` and `/admin/` serve 200; the served JS
+chunks contain the H4 markers (`requires_2fa`, `two_fa_token`,
+`twoFactorLogin`, 6-digit code step, TwoFactorCard) and H7 markers
+(`updateGovernance`, `capabilities`, GovernanceTab edit mode).
+
+**Suite:** backend **482 passed** (unit + integration, live Postgres).
+Working tree clean after this session's docs commit.
+
+**Docs:** this SESSION.md entry. ROADMAP H-tracker already fully ticked.
+
+**Next:** Phase I — Documents & Review (I7, I1).
+
 ### Session 4 — 2026-08-08 (Phase D — frontend: chat UX, client portal, admin dashboard)
 
 **Done (Phase D):**
