@@ -19,7 +19,10 @@ bcrypt==4.0.1
 sumy==0.11.0
 
 # --- Admin 2FA (H4: TOTP) ---
+# cryptography is a direct import in app/auth/totp.py (Fernet) — pin it
+# explicitly rather than relying on the pdfminer.six transitive dep.
 pyotp==2.9.0
+cryptography==50.0.0
 
 # --- Batch ingestion optional dependencies ---
 pdfplumber==0.11.6
