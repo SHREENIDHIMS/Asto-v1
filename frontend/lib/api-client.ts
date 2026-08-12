@@ -1282,6 +1282,75 @@ export async function createClient(
   return response.json();
 }
 
+export interface ActiveSession {
+  id: number;
+  audience: string;
+  expires_at: string;
+  created_at: string;
+}
+
+/** H5: list a staff user's active refresh sessions (admin). */
+export async function listUserSessions(
+  userId: number,
+  token: string
+): Promise<{ user_id: number; active_sessions: number; sessions: ActiveSession[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/users/${userId}/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load sessions');
+  }
+  return response.json();
+}
+
+/** H5: kill every refresh session for a staff user (admin). */
+export async function revokeUserSessions(
+  userId: number,
+  token: string
+): Promise<{ user_id: number; revoked_sessions: number }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/users/${userId}/sessions/revoke`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to revoke sessions');
+  }
+  return response.json();
+}
+
+/** H5: list an external client's active refresh sessions (admin). */
+export async function listClientSessions(
+  clientId: number,
+  token: string
+): Promise<{ client_id: number; active_sessions: number; sessions: ActiveSession[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/clients/${clientId}/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load sessions');
+  }
+  return response.json();
+}
+
+/** H5: kill every refresh session for a client account (admin). */
+export async function revokeClientSessions(
+  clientId: number,
+  token: string
+): Promise<{ client_id: number; revoked_sessions: number }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/clients/${clientId}/sessions/revoke`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to revoke sessions');
+  }
+  return response.json();
+}
+
 export async function assignStaffToClient(
   clientId: number,
   userId: number,

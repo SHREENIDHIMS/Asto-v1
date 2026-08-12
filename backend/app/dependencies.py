@@ -90,6 +90,7 @@ async def get_current_user(
             "role": "client",
             "department": None,
             "allowed_departments": [],
+            "jti": payload.get("jti"),
         }
 
     with session.acquire() as conn:
@@ -108,7 +109,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return {**dict(row), "audience": "staff"}
+    return {**dict(row), "audience": "staff", "jti": payload.get("jti")}
 
 
 async def require_auth(

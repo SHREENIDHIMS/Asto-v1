@@ -312,6 +312,19 @@ DDL_STATEMENTS: list[str] = [
         success      BOOLEAN     NOT NULL DEFAULT false
     )
     """,
+    # --- Revoked access-token jtis (H5: emergency access-token kill) ---
+    # Access JWTs carry a unique jti so a single leaked token can be killed
+    # immediately without waiting for expiry (POST /auth/logout-all records
+    # the caller's jti; /auth/verify refuses revoked jtis). The documented
+    # trade-off: admin session-kill revokes the refresh rows (no new access
+    # tokens) but already-issued access JWTs stay valid until expiry unless
+    # their jti is individually revoked here.
+    """
+    CREATE TABLE IF NOT EXISTS revoked_jtis (
+        jti        TEXT        PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 ]
 
 # Idempotent column additions for schemas created before the dual-audience

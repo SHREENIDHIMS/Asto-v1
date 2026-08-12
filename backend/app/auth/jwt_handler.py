@@ -38,6 +38,7 @@ def create_token(
     """
     now = int(time.time())
     payload = {
+        "jti": secrets.token_urlsafe(16),
         "sub": subject,
         "role": role,
         "department": department,

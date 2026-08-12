@@ -34,6 +34,11 @@ import {
   listClients,
   createClient,
   assignStaffToClient,
+  listUserSessions,
+  revokeUserSessions,
+  listClientSessions,
+  revokeClientSessions,
+  ActiveSession,
   getKnowledgeGaps,
   getAnalyticsSummary,
   getAdminSummary,
@@ -656,6 +661,157 @@ function DocumentsTab({ token }: { token: string }) {
 // Users tab
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// H5: session management (active sessions + kill)
+// ---------------------------------------------------------------------------
+
+function SessionsDialog({
+  open,
+  onOpenChange,
+  title,
+  subjectLabel,
+  loadSessions,
+  revokeSessions,
+  token,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  subjectLabel: string;
+  loadSessions: () => Promise<{ active_sessions: number; sessions: ActiveSession[] }>;
+  revokeSessions: () => Promise<{ revoked_sessions: number }>;
+  token: string;
+}) {
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [activeCount, setActiveCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await loadSessions();
+      setSessions(res.sessions);
+      setActiveCount(res.active_sessions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load sessions");
+    } finally {
+      setLoading(false);
+    }
+  }, [loadSessions]);
+
+  useEffect(() => {
+    if (open) {
+      refresh();
+    } else {
+      setSessions([]);
+      setActiveCount(0);
+      setMessage(null);
+    }
+  }, [open, refresh]);
+
+  const handleRevoke = async () => {
+    setRevoking(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await revokeSessions();
+      setMessage(`${res.revoked_sessions} session(s) revoked — the user will be signed out on next refresh.`);
+      setSessions([]);
+      setActiveCount(0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to revoke sessions");
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            {subjectLabel} — active sessions:{" "}
+            <span className="font-medium">{activeCount}</span>
+          </DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {message && (
+              <Alert>
+                <CheckCircle2 className="h-4 w-4" />
+                <AlertTitle>Done</AlertTitle>
+                <AlertDescription>{message}</AlertDescription>
+              </Alert>
+            )}
+            {sessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No active refresh sessions right now.
+              </p>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {sessions.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                  >
+                    <span className="text-muted-foreground">
+                      Session #{s.id}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      created {new Date(s.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter className="flex justify-between">
+          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading || revoking}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Refresh
+          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleRevoke}
+              disabled={revoking || loading}
+            >
+              {revoking ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              ) : (
+                <ShieldAlert className="h-4 w-4 mr-1.5" />
+              )}
+              Revoke all sessions
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function UsersTab({ token }: { token: string }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -669,6 +825,7 @@ function UsersTab({ token }: { token: string }) {
     department: "general",
   });
   const [saving, setSaving] = useState(false);
+  const [sessionsForUserId, setSessionsForUserId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -747,6 +904,15 @@ function UsersTab({ token }: { token: string }) {
                   <p className="text-xs text-muted-foreground">{user.email}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSessionsForUserId(user.id)}
+                  >
+                    <History className="h-3.5 w-3.5 mr-1.5" />
+                    Sessions
+                  </Button>
                   <Badge variant="outline">{user.role}</Badge>
                   <Badge variant="outline">{user.department}</Badge>
                   {!user.is_active && <Badge variant="destructive">inactive</Badge>}
@@ -850,6 +1016,24 @@ function UsersTab({ token }: { token: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SessionsDialog
+        open={sessionsForUserId !== null}
+        onOpenChange={(open) => !open && setSessionsForUserId(null)}
+        title="User sessions"
+        subjectLabel={
+          users.find((u) => u.id === sessionsForUserId)?.email ?? "User"
+        }
+        loadSessions={async () => {
+          if (sessionsForUserId == null) return { active_sessions: 0, sessions: [] };
+          return listUserSessions(sessionsForUserId, token);
+        }}
+        revokeSessions={async () => {
+          if (sessionsForUserId == null) return { revoked_sessions: 0 };
+          return revokeUserSessions(sessionsForUserId, token);
+        }}
+        token={token}
+      />
     </div>
   );
 }
@@ -869,6 +1053,7 @@ function ClientsTab({ token }: { token: string }) {
   const [assignClientId, setAssignClientId] = useState<number | null>(null);
   const [assignUserId, setAssignUserId] = useState<string>("");
   const [assigning, setAssigning] = useState(false);
+  const [sessionsForClientId, setSessionsForClientId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -959,6 +1144,15 @@ function ClientsTab({ token }: { token: string }) {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {!client.is_active && <Badge variant="destructive">inactive</Badge>}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSessionsForClientId(client.id)}
+                  >
+                    <History className="h-3.5 w-3.5 mr-1.5" />
+                    Sessions
+                  </Button>
                   <Dialog
                     open={assignClientId === client.id}
                     onOpenChange={(open) => !open && setAssignClientId(null)}
@@ -1087,6 +1281,24 @@ function ClientsTab({ token }: { token: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SessionsDialog
+        open={sessionsForClientId !== null}
+        onOpenChange={(open) => !open && setSessionsForClientId(null)}
+        title="Client sessions"
+        subjectLabel={
+          clients.find((c) => c.id === sessionsForClientId)?.email ?? "Client"
+        }
+        loadSessions={async () => {
+          if (sessionsForClientId == null) return { active_sessions: 0, sessions: [] };
+          return listClientSessions(sessionsForClientId, token);
+        }}
+        revokeSessions={async () => {
+          if (sessionsForClientId == null) return { revoked_sessions: 0 };
+          return revokeClientSessions(sessionsForClientId, token);
+        }}
+        token={token}
+      />
     </div>
   );
 }

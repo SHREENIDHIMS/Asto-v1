@@ -692,7 +692,7 @@ I7, I1, J1, J4, J5, K4, L5, M1, M7, N1, N5, N7.
 - [x] H2 Forgot-password / reset
 - [x] H3 Login rate limiting + lockout
 - [ ] H4 Admin 2FA (TOTP)
-- [ ] H5 Session revocation (logout-all / admin kill)
+- [x] H5 Session revocation (logout-all / admin kill)
 - [ ] H6 Password change UI (staff + client)
 - [ ] H7 Role & department editor UI
 

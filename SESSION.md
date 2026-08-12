@@ -240,6 +240,64 @@ remaining piece is the admin `DELETE /admin/users/{id}/sessions` kill) or
 H6 — password change UI (backend endpoint exists; needs the frontend
 Settings wiring).
 
+### Session 16 — 2026-08-12 (Phase H5 — session revocation, admin session-kill)
+
+**Design (per `docs/ROADMAP.md` H5):** H1 already made refresh tokens
+opaque, stored hashed in `refresh_tokens`, with `logout-all` (revoke every
+row for the identity) and rotation. H5 closed the remaining gaps: an **admin
+session-kill** (see who is logged in, kill a user's/client's refresh
+sessions) and an **emergency access-token kill** via a token `jti`.
+
+**Backend:**
+- `auth/jwt_handler.py`: every access JWT now carries a unique **`jti`**
+  claim (`secrets.token_urlsafe(16)`).
+- `db/postgres/schema.py`: new `revoked_jtis (jti PRIMARY KEY, created_at)`
+  table — the emergency kill-list for single access tokens.
+- `dependencies.py`: `get_current_user` threads the token's `jti` into the
+  resolved user dict so endpoints can reference it.
+- `api/v1/admin.py` (4 new endpoints, all `require_role(user, "admin")`):
+  - `GET /admin/users/{id}/sessions` + `GET /admin/clients/{id}/sessions` —
+    active (non-revoked, unexpired) refresh sessions with count; 404 for
+    unknown user/client.
+  - `POST /admin/users/{id}/sessions/revoke` + `POST /admin/clients/{id}/
+    sessions/revoke` — revoke every active refresh row for the identity
+    (`UPDATE ... SET revoked_at = now() WHERE revoked_at IS NULL`), return
+    the count. Kills re-auth; already-issued access JWTs stay valid until
+    expiry (documented H5 trade-off).
+- `api/v1/auth.py`:
+  - `POST /auth/logout-all` now also `INSERT ... ON CONFLICT DO NOTHING`
+    the caller's `jti` into `revoked_jtis` — the very token used to call it
+    dies immediately (audience-agnostic, works for staff and clients).
+  - `POST /auth/verify` refuses tokens whose `jti` is in `revoked_jtis`.
+
+**Tests:** `tests/unit/test_h5_session_revocation.py` (16 tests) — route
+wiring, 401, client 403 on all four admin routes, session-list SQL scoping
+(active-only + per-identity), revoke SQL + count, 404s, logout-all records
+the jti + still revokes refresh rows, verify refuses/accepts revoked jti.
+Full suite: **448 passed** (was 389; the 43 previously-skipped integration
+tests ran live because Docker is up).
+
+**Frontend:**
+- `lib/api-client.ts`: `ActiveSession` type + `listUserSessions` /
+  `revokeUserSessions` / `listClientSessions` / `revokeClientSessions`.
+- `app/admin/page.tsx`: new reusable **`SessionsDialog`** (active-session
+  list + Refresh + "Revoke all sessions" with confirmation-style flow) wired
+  into both the **Users** tab (Sessions button per row) and **Clients** tab.
+  `tsc --noEmit` + `next lint` clean.
+
+**Live verified:** rebuilt + recreated `asto-backend` + `frontend`. Admin
+login → `GET /admin/users/{id}/sessions` for a staff user with an active
+login shows `active_sessions=1`; after `POST …/sessions/revoke` the same
+refresh cookie fails `/auth/refresh` (401) while a fresh login still works;
+`POST /auth/logout-all` inserts the token's jti into `revoked_jtis` and
+`/auth/verify` on that token returns `valid:false`. All routes 200.
+
+**Docs:** `docs/ROADMAP.md` H5 ticked; this SESSION.md entry.
+
+**Next:** H6 — password change UI (backend `POST /me/password`-style
+`/auth/change-password` endpoint already exists for both audiences; needs
+the frontend Settings wiring).
+
 ### Session 4 — 2026-08-08 (Phase D — frontend: chat UX, client portal, admin dashboard)
 
 **Done (Phase D):**

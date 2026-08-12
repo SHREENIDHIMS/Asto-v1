@@ -210,6 +210,134 @@ async def assign_staff_to_client(
     return {"message": "Staff assigned to client"}
 
 
+@router.get("/users/{user_id}/sessions")
+async def list_user_sessions(
+    user_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List a staff user's active (non-revoked, unexpired) refresh sessions.
+
+    H5 session revocation: lets an admin see how many devices/sessions a
+    user has before killing them. Only active rows count; identities are
+    resolved from the ``users`` table.
+    """
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found",
+                )
+            cur.execute(
+                "SELECT id, audience, expires_at, created_at "
+                "FROM refresh_tokens "
+                "WHERE user_id = %s AND revoked_at IS NULL AND expires_at > now() "
+                "ORDER BY created_at DESC",
+                (user_id,),
+            )
+            sessions = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "user_id": user_id,
+        "active_sessions": len(sessions),
+        "sessions": sessions,
+    }
+
+
+@router.post("/users/{user_id}/sessions/revoke")
+async def revoke_user_sessions(
+    user_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Kill every refresh session for a staff user (H5 admin session-kill).
+
+    Revokes all of the user's un-expired refresh-token rows, so their
+    cookies can no longer be exchanged for new access JWTs. Already-issued
+    access JWTs remain valid until expiry (documented trade-off).
+    """
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found",
+                )
+            cur.execute(
+                "UPDATE refresh_tokens SET revoked_at = now() "
+                "WHERE user_id = %s AND revoked_at IS NULL",
+                (user_id,),
+            )
+            revoked = cur.rowcount
+        conn.commit()
+
+    return {"user_id": user_id, "revoked_sessions": revoked}
+
+
+@router.get("/clients/{client_id}/sessions")
+async def list_client_sessions(
+    client_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List an external client's active refresh sessions (H5)."""
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM clients WHERE id = %s", (client_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Client not found",
+                )
+            cur.execute(
+                "SELECT id, audience, expires_at, created_at "
+                "FROM refresh_tokens "
+                "WHERE client_id = %s AND revoked_at IS NULL AND expires_at > now() "
+                "ORDER BY created_at DESC",
+                (client_id,),
+            )
+            sessions = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "client_id": client_id,
+        "active_sessions": len(sessions),
+        "sessions": sessions,
+    }
+
+
+@router.post("/clients/{client_id}/sessions/revoke")
+async def revoke_client_sessions(
+    client_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Kill every refresh session for a client account (H5 admin session-kill)."""
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM clients WHERE id = %s", (client_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Client not found",
+                )
+            cur.execute(
+                "UPDATE refresh_tokens SET revoked_at = now() "
+                "WHERE client_id = %s AND revoked_at IS NULL",
+                (client_id,),
+            )
+            revoked = cur.rowcount
+        conn.commit()
+
+    return {"client_id": client_id, "revoked_sessions": revoked}
+
+
 class ReviewSopAccessRequest(BaseModel):
     decision: str
     reason: str | None = None

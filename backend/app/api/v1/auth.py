@@ -479,28 +479,34 @@ async def logout_all(user: dict = Depends(require_auth), response: Response = No
     The caller is authenticated with a bearer access JWT (not the cookie),
     so no CSRF header is required here. Used by the frontend "log out on all
     devices" action and available to admins to kill a user's sessions (H5).
+
+    Also records the caller's access-token ``jti`` in ``revoked_jtis`` so
+    the very token used to issue this call dies immediately (H5 emergency
+    access-token kill — ``/auth/verify`` refuses revoked jtis).
     """
     _clear_refresh_cookie(response)
-    if user.get("audience") == "client":
-        with session.acquire() as conn:
-            with conn.cursor() as cur:
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if user.get("jti"):
+                cur.execute(
+                    "INSERT INTO revoked_jtis (jti) VALUES (%s) ON CONFLICT (jti) DO NOTHING",
+                    (user["jti"],),
+                )
+            if user.get("audience") == "client":
                 cur.execute(
                     "UPDATE refresh_tokens SET revoked_at = now() "
                     "WHERE client_id = %s AND revoked_at IS NULL",
                     (user["id"],),
                 )
-            conn.commit()
-        return {"revoked": True, "audience": "client"}
-
-    with session.acquire() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE refresh_tokens SET revoked_at = now() "
-                "WHERE user_id = %s AND revoked_at IS NULL",
-                (user["id"],),
-            )
+            else:
+                cur.execute(
+                    "UPDATE refresh_tokens SET revoked_at = now() "
+                    "WHERE user_id = %s AND revoked_at IS NULL",
+                    (user["id"],),
+                )
         conn.commit()
-    return {"revoked": True, "audience": "staff"}
+    return {"revoked": True, "audience": user.get("audience", "staff")}
 
 
 @router.post("/forgot-password")
@@ -629,6 +635,17 @@ async def verify(
     payload = verify_token(credentials.credentials)
     if payload is None:
         return TokenVerifyResponse(valid=False)
+
+    # H5: a revoked access-token jti is dead even before natural expiry.
+    if payload.get("jti"):
+        with session.acquire() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM revoked_jtis WHERE jti = %s",
+                    (payload["jti"],),
+                )
+                if cur.fetchone() is not None:
+                    return TokenVerifyResponse(valid=False)
 
     return TokenVerifyResponse(
         valid=True,
