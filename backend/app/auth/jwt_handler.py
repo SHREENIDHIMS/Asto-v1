@@ -8,6 +8,8 @@ to RS256 (asymmetric) and add JWKS endpoint support.
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 import time
 
 import jwt
@@ -22,6 +24,7 @@ def create_token(
     allowed_departments: list[str] | None = None,
     audience: str = "staff",
     client_id: int | None = None,
+    name: str | None = None,
 ) -> str:
     """Create a signed JWT for the given user or client.
 
@@ -43,6 +46,8 @@ def create_token(
         "iat": now,
         "exp": now + (settings.jwt_expiry_minutes * 60),
     }
+    if name:
+        payload["name"] = name
     if audience == "client" and client_id is not None:
         payload["client_id"] = client_id
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
@@ -71,3 +76,24 @@ def decode_for_audit(token: str) -> dict | None:
         return jwt.decode(token, options={"verify_signature": False})
     except Exception:
         return None
+
+
+def new_refresh_token() -> str:
+    """Generate an opaque, unguessable refresh token (never a JWT)."""
+    return secrets.token_urlsafe(48)
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 hash of an opaque token, stored in place of the raw value.
+
+    Shared by refresh tokens (H1) and password-reset tokens (H2): only the
+    hash is persisted so a database compromise cannot be replayed to
+    refresh a session or reset a password. The raw token travels only in
+    the HttpOnly cookie or the emailed reset link.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def hash_refresh_token(token: str) -> str:
+    """Backwards-compatible alias of :func:`hash_token`."""
+    return hash_token(token)

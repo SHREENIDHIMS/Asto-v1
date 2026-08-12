@@ -4,14 +4,20 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
+  Bell,
+  Building2,
   Briefcase,
   CheckCircle2,
+  FileText,
+  Landmark,
   Loader2,
   MessageSquare,
   RefreshCw,
   Sparkles,
+  Upload,
   UserPlus,
   Workflow as WorkflowIcon,
+  XCircle,
 } from "lucide-react";
 import {
   getStaffDashboard,
@@ -26,6 +32,14 @@ import {
   getStaffConversationMessages,
   sendStaffMessage,
   onboardClient,
+  getStaffClients,
+  staffUploadDocument,
+  logout,
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  StaffClient,
+  StaffNotification,
   StaffDashboardCase,
   StaffDashboardResponse,
   StaffWorkflow,
@@ -34,7 +48,7 @@ import {
   SopAccessRequest,
   Conversation,
 } from "@/lib/api-client";
-import { clearToken, decodeToken, getToken } from "@/lib/auth";
+import { clearToken, decodeToken, isAdminRole, restoreSession } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ConversationThread from "@/components/messages/ConversationThread";
@@ -1145,6 +1159,409 @@ function CollaborationTab({
 }
 
 // ---------------------------------------------------------------------------
+// Clients tab (Phase G4) + staff upload dialog (Phase G5)
+// ---------------------------------------------------------------------------
+
+function docStatusBadge(status: string) {
+  switch (status) {
+    case "approved":
+      return <Badge className="bg-green-100 text-green-800 border-green-200">approved</Badge>;
+    case "pending":
+      return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">pending</Badge>;
+    case "rejected":
+      return <Badge className="bg-red-100 text-red-800 border-red-200">rejected</Badge>;
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function StaffUploadDialog({
+  open,
+  onOpenChange,
+  token,
+  client,
+  onUploaded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  token: string;
+  client: StaffClient | null;
+  onUploaded: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [propertyId, setPropertyId] = useState<string>("");
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const reset = () => {
+    setFile(null);
+    setPropertyId("");
+    setError(null);
+    setMessage(null);
+  };
+
+  const handleUpload = async () => {
+    if (!file || !client || uploading) return;
+    setUploading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await staffUploadDocument(
+        file,
+        token,
+        client.id,
+        propertyId ? Number(propertyId) : null
+      );
+      setMessage(`${result.filename} queued for indexing.`);
+      onUploaded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset();
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="h-4 w-4" />
+            Upload document for {client?.full_name || client?.email || "client"}
+          </DialogTitle>
+          <DialogDescription>
+            The document enters the admin review queue as pending. It becomes
+            searchable only after an admin approves it.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {message && (
+            <Alert>
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertTitle>Uploaded</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-1">
+            <Label htmlFor="su-file">File *</Label>
+            <Input
+              id="su-file"
+              type="file"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+          {client && client.properties.length > 0 && (
+            <div className="space-y-1">
+              <Label htmlFor="su-property">Property (optional)</Label>
+              <Select value={propertyId} onValueChange={setPropertyId}>
+                <SelectTrigger id="su-property">
+                  <SelectValue placeholder="No property" />
+                </SelectTrigger>
+                <SelectContent>
+                  {client.properties.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {[p.address, p.city, p.state].filter(Boolean).join(", ") || `Property #${p.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <Button
+            type="button"
+            onClick={handleUpload}
+            disabled={!file || uploading}
+          >
+            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Upload for review"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ClientsTab({
+  token,
+  onError,
+}: {
+  token: string;
+  onError: (message: string) => void;
+}) {
+  const [clients, setClients] = useState<StaffClient[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [uploadClient, setUploadClient] = useState<StaffClient | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await getStaffClients(token);
+      setClients(res.clients);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load clients");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Your assigned clients — properties, cases, and documents with review status.
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : clients.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <Building2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+            <p className="font-medium">No assigned clients</p>
+            <p className="text-sm text-muted-foreground">
+              Clients assigned to you will appear here.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        clients.map((client) => (
+          <Card key={client.id}>
+            <CardContent className="p-5 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Building2 className="w-4 h-4 text-muted-foreground" />
+                    <p className="font-medium truncate">
+                      {client.full_name || client.email}
+                    </p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{client.email}</p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setUploadClient(client)}
+                >
+                  <Upload className="h-3.5 w-3.5 mr-1.5" />
+                  Upload document
+                </Button>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                    Properties
+                  </p>
+                  {client.properties.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">None</p>
+                  ) : (
+                    client.properties.map((p) => (
+                      <div key={p.id} className="text-sm mb-1">
+                        {[p.address, p.city, p.state].filter(Boolean).join(", ") ||
+                          `Property #${p.id}`}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                    Cases
+                  </p>
+                  {client.cases.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">None</p>
+                  ) : (
+                    client.cases.map((c) => (
+                      <div key={c.id} className="flex items-center gap-2 text-sm mb-1">
+                        <Landmark className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="truncate">{c.case_number}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {c.status}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                    Documents
+                  </p>
+                  {client.documents.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">None</p>
+                  ) : (
+                    client.documents.map((d) => (
+                      <div
+                        key={d.id}
+                        className="flex items-center gap-2 text-sm mb-1 min-w-0"
+                      >
+                        <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                        <span className="truncate">{d.title}</span>
+                        <span className="text-xs text-muted-foreground flex-shrink-0">
+                          v{d.version}
+                        </span>
+                        {docStatusBadge(d.approval_status)}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))
+      )}
+
+      <StaffUploadDialog
+        open={uploadClient != null}
+        onOpenChange={(open) => !open && setUploadClient(null)}
+        token={token}
+        client={uploadClient}
+        onUploaded={load}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Notifications dialog (Phase G5)
+// ---------------------------------------------------------------------------
+
+function NotificationsDialog({
+  open,
+  onOpenChange,
+  token,
+  onCountChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  token: string;
+  onCountChange: (count: number) => void;
+}) {
+  const [notifications, setNotifications] = useState<StaffNotification[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await getNotifications(token);
+      setNotifications(res.notifications);
+      onCountChange(res.unread_count);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load notifications");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, onCountChange]);
+
+  useEffect(() => {
+    if (open) load();
+  }, [open, load]);
+
+  const handleMarkRead = async (id: number) => {
+    try {
+      await markNotificationRead(id, token);
+      await load();
+    } catch {
+      // non-fatal
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await markAllNotificationsRead(token);
+      await load();
+    } catch {
+      // non-fatal
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Bell className="h-4 w-4" />
+            Notifications
+          </DialogTitle>
+          <DialogDescription>
+            Review outcomes and updates.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={handleMarkAllRead}>
+              Mark all as read
+            </Button>
+          </div>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : notifications.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No notifications yet.
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {notifications.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => !n.is_read && handleMarkRead(n.id)}
+                  className={`w-full text-left border border-border rounded-lg p-3 ${
+                    n.is_read ? "opacity-60" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-sm">{n.title}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatDate(n.created_at)}
+                    </span>
+                  </div>
+                  {n.body && <p className="text-xs text-muted-foreground mt-1">{n.body}</p>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Staff page shell
 // ---------------------------------------------------------------------------
 
@@ -1157,16 +1574,50 @@ export default function StaffPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [onboardOpen, setOnboardOpen] = useState(false);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await getNotifications(token);
+      setUnreadCount(res.unread_count);
+    } catch {
+      // non-fatal
+    }
+  }, [token]);
 
   useEffect(() => {
-    const t = getToken();
-    const claims = t ? decodeToken(t) : null;
-    if (!t || !claims || claims.audience !== "staff" || claims.role === "admin") {
-      router.replace("/login");
-      return;
+    if (token) {
+      refreshNotifications();
+      const interval = setInterval(refreshNotifications, 60000);
+      return () => clearInterval(interval);
     }
-    setToken(t);
-    setIsStaff(true);
+  }, [token, refreshNotifications]);
+
+  useEffect(() => {
+    let mounted = true;
+    restoreSession().then((t) => {
+      if (!mounted) return;
+      const claims = t ? decodeToken(t) : null;
+      if (!t || !claims || claims.audience !== "staff") {
+        router.replace("/login");
+        return;
+      }
+      if (isAdminRole(claims.role)) {
+        router.replace("/admin");
+        return;
+      }
+      setToken(t);
+      setUserName(claims.name ?? claims.sub ?? null);
+      setUserRole(claims.role ?? null);
+      setIsStaff(true);
+    });
+    return () => {
+      mounted = false;
+    };
   }, [router]);
 
   const load = useCallback(async () => {
@@ -1187,6 +1638,7 @@ export default function StaffPage() {
   }, [token, load]);
 
   const handleLogout = useCallback(() => {
+    logout();
     clearToken();
     router.push("/login");
   }, [router]);
@@ -1223,8 +1675,10 @@ export default function StaffPage() {
           </Button>
         </div>
       }
-      user={{ name: "Staff", role: "staff" }}
+      user={{ name: userName ?? "Staff", role: userRole ?? "Staff" }}
       onSignOut={handleLogout}
+      onNotifications={() => setNotificationsOpen(true)}
+      notificationCount={unreadCount}
     >
       <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">
         {error && (
@@ -1236,8 +1690,9 @@ export default function StaffPage() {
         )}
 
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+            <TabsTrigger value="clients">Clients</TabsTrigger>
             <TabsTrigger value="cases">My Cases</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
@@ -1246,6 +1701,9 @@ export default function StaffPage() {
           </TabsList>
           <TabsContent value="dashboard">
             <StaffDashboardTab data={data} isLoading={isLoading} onRefresh={load} />
+          </TabsContent>
+          <TabsContent value="clients">
+            <ClientsTab token={token} onError={setError} />
           </TabsContent>
           <TabsContent value="cases">
             <MyCasesTab cases={data?.cases ?? []} token={token} onRefresh={load} />
@@ -1283,6 +1741,13 @@ export default function StaffPage() {
       onOpenChange={setOnboardOpen}
       token={token}
       onOnboarded={load}
+    />
+
+    <NotificationsDialog
+      open={notificationsOpen}
+      onOpenChange={setNotificationsOpen}
+      token={token}
+      onCountChange={setUnreadCount}
     />
     </>
   );

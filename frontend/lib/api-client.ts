@@ -1,7 +1,14 @@
 // API client — calls FastAPI directly, no BFF proxy.
-// JWT is stored client-side and sent per-request.
+// Access JWT is held in memory (lib/auth) and sent per-request as Bearer.
+// Every request also sends `credentials: 'include'` so the HttpOnly
+// asto_refresh cookie flows (Phase H1) and Set-Cookie is accepted.
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8011/api/v1';
+
+/** fetch wrapper that always sends cookies for the refresh session. */
+function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, credentials: 'include' });
+}
 
 export interface SearchRequest {
   query: string;
@@ -72,7 +79,7 @@ export async function searchKnowledgeBase(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}/search/`, {
+  const response = await apiFetch(`${API_BASE_URL}/search/`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ query, case_id: caseId ?? null }),
@@ -127,7 +134,7 @@ export async function searchKnowledgeBaseStream(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}/search/stream`, {
+  const response = await apiFetch(`${API_BASE_URL}/search/stream`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ query, case_id: caseId ?? null }),
@@ -211,7 +218,7 @@ export async function login(
   email: string,
   password: string
 ): Promise<AuthLoginResponse> {
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -225,10 +232,54 @@ export async function login(
   return response.json();
 }
 
+/**
+ * Exchange the HttpOnly asto_refresh cookie for a fresh access JWT.
+ * Called on page load to restore a session (the access token is kept in
+ * memory only, so a reload loses it). Requires the CSRF header.
+ */
+export async function refreshSession(): Promise<AuthLoginResponse> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'X-Asto-CSRF': '1' },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || 'Session refresh failed');
+  }
+
+  return response.json();
+}
+
+/** Revoke the HttpOnly refresh cookie server-side (best-effort). */
+export async function logout(): Promise<void> {
+  try {
+    await apiFetch(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      headers: { 'X-Asto-CSRF': '1' },
+    });
+  } catch {
+    // The local session is cleared regardless; cookie revocation is best-effort.
+  }
+}
+
+/** Revoke every refresh token for the current identity (uses Bearer auth). */
+export async function logoutAll(token: string): Promise<{ revoked: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/logout-all`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to revoke sessions');
+  }
+return response.json();
+}
+
 export async function verifyToken(
   token: string
 ): Promise<{ valid: boolean; user_id?: number; email?: string }> {
-  const response = await fetch(`${API_BASE_URL}/auth/verify`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/verify`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -257,7 +308,7 @@ export async function submitFeedback(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}/feedback/`, {
+  const response = await apiFetch(`${API_BASE_URL}/feedback/`, {
     method: 'POST',
     headers,
     body: JSON.stringify(request),
@@ -287,7 +338,7 @@ export async function changePassword(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/change-password`, {
     method: 'POST',
     headers,
     body: JSON.stringify(request),
@@ -296,6 +347,47 @@ export async function changePassword(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Password change failed');
+  }
+
+  return response.json();
+}
+
+/**
+ * Request a password-reset link for a staff or client email. The API
+ * always returns the same generic success response (no account
+ * enumeration), so no UI-side existence checks should be made either.
+ */
+export async function forgotPassword(email: string): Promise<{ ok: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || 'Request failed');
+  }
+
+  return response.json();
+}
+
+/**
+ * Set a new password with the one-time token from the emailed reset link.
+ */
+export async function resetPassword(
+  token: string,
+  newPassword: string
+): Promise<{ ok: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || 'Reset failed');
   }
 
   return response.json();
@@ -368,7 +460,7 @@ export interface ClientDocument {
 }
 
 export async function getClientMe(token: string): Promise<{ client: ClientProfile }> {
-  const response = await fetch(`${API_BASE_URL}/client/me`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/me`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -381,7 +473,7 @@ export async function getClientMe(token: string): Promise<{ client: ClientProfil
 export async function getClientProperties(
   token: string
 ): Promise<{ properties: ClientProperty[] }> {
-  const response = await fetch(`${API_BASE_URL}/client/properties`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/properties`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -394,7 +486,7 @@ export async function getClientProperties(
 export async function getClientCases(
   token: string
 ): Promise<{ cases: ClientCase[] }> {
-  const response = await fetch(`${API_BASE_URL}/client/cases`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/cases`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -408,7 +500,7 @@ export async function getClientCaseDetail(
   token: string,
   caseId: number
 ): Promise<CaseDetail> {
-  const response = await fetch(`${API_BASE_URL}/client/cases/${caseId}`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/cases/${caseId}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -421,7 +513,7 @@ export async function getClientCaseDetail(
 export async function getClientDocuments(
   token: string
 ): Promise<{ documents: ClientDocument[] }> {
-  const response = await fetch(`${API_BASE_URL}/client/documents`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/documents`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -435,7 +527,7 @@ export async function getClientPropertyDocuments(
   propertyId: number,
   token: string
 ): Promise<{ documents: ClientDocument[] }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/client/properties/${propertyId}/documents`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -454,7 +546,7 @@ export async function clientUploadDocument(
   const form = new FormData();
   form.append('file', file);
   const query = propertyId != null ? `?property_id=${propertyId}` : '';
-  const response = await fetch(`${API_BASE_URL}/client/documents/upload${query}`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/documents/upload${query}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -480,6 +572,8 @@ export interface ApprovalDocument {
   source_path: string;
   version: number;
   created_at: string | null;
+  uploaded_by?: number | null;
+  uploaded_by_email?: string | null;
 }
 
 export interface ApprovalHistoryEntry {
@@ -495,7 +589,7 @@ export interface ApprovalHistoryEntry {
 export async function listPendingDocuments(
   token: string
 ): Promise<{ documents: ApprovalDocument[] }> {
-  const response = await fetch(`${API_BASE_URL}/admin/documents/pending`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/documents/pending`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -509,7 +603,7 @@ export async function approveDocument(
   documentId: number,
   token: string
 ): Promise<{ message: string }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/admin/documents/${documentId}/approve`,
     { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
   );
@@ -522,11 +616,16 @@ export async function approveDocument(
 
 export async function rejectDocument(
   documentId: number,
-  token: string
-): Promise<{ message: string }> {
-  const response = await fetch(
+  token: string,
+  reason?: string
+): Promise<{ message: string; reason?: string }> {
+  const response = await apiFetch(
     `${API_BASE_URL}/admin/documents/${documentId}/reject`,
-    { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ reason: reason ?? '' }),
+    }
   );
   if (!response.ok) {
     const error = await response.json();
@@ -539,7 +638,7 @@ export async function getDocumentHistory(
   documentId: number,
   token: string
 ): Promise<{ document_id: number; history: ApprovalHistoryEntry[] }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/admin/documents/${documentId}/history`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -573,7 +672,7 @@ export interface AdminDocument {
 export async function listAllDocuments(
   token: string
 ): Promise<{ documents: AdminDocument[] }> {
-  const response = await fetch(`${API_BASE_URL}/documents/`, {
+  const response = await apiFetch(`${API_BASE_URL}/documents/`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -589,7 +688,7 @@ export async function uploadDocument(
 ): Promise<{ message: string; filename: string; stored_as: string; size_bytes: number }> {
   const form = new FormData();
   form.append('file', file);
-  const response = await fetch(`${API_BASE_URL}/documents/upload`, {
+  const response = await apiFetch(`${API_BASE_URL}/documents/upload`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -606,7 +705,7 @@ export async function getDocumentFile(
   documentId: number,
   token: string
 ): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}/documents/${documentId}/file`, {
+  const response = await apiFetch(`${API_BASE_URL}/documents/${documentId}/file`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -621,7 +720,7 @@ export async function getClientDocumentFile(
   documentId: number,
   token: string
 ): Promise<Blob> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/client/documents/${documentId}/file`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -717,7 +816,7 @@ export interface SopAccessRequest {
 }
 
 export async function getStaffDashboard(token: string): Promise<StaffDashboardResponse> {
-  const response = await fetch(`${API_BASE_URL}/staff/dashboard`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/dashboard`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -728,7 +827,7 @@ export async function getStaffDashboard(token: string): Promise<StaffDashboardRe
 }
 
 export async function getCaseNotes(token: string, caseId: number): Promise<{ notes: CaseNote[] }> {
-  const response = await fetch(`${API_BASE_URL}/staff/cases/${caseId}/notes`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/cases/${caseId}/notes`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -743,7 +842,7 @@ export async function addCaseNote(
   caseId: number,
   body: string
 ): Promise<{ note: CaseNote }> {
-  const response = await fetch(`${API_BASE_URL}/staff/cases/${caseId}/notes`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/cases/${caseId}/notes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ body }),
@@ -759,7 +858,7 @@ export async function advanceWorkflow(
   token: string,
   workflowId: number
 ): Promise<{ workflow_id: number; status: string }> {
-  const response = await fetch(`${API_BASE_URL}/staff/workflows/${workflowId}/advance`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/workflows/${workflowId}/advance`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -780,7 +879,7 @@ export async function createSop(
   token: string,
   input: SopInput
 ): Promise<{ message: string; sop_id: number }> {
-  const response = await fetch(`${API_BASE_URL}/staff/sops`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/sops`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -797,7 +896,7 @@ export async function updateSop(
   sopId: number,
   input: SopInput
 ): Promise<{ message: string; sop_id: number }> {
-  const response = await fetch(`${API_BASE_URL}/staff/sops/${sopId}`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/sops/${sopId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -810,7 +909,7 @@ export async function updateSop(
 }
 
 export async function getMySopRequests(token: string): Promise<{ requests: SopAccessRequest[] }> {
-  const response = await fetch(`${API_BASE_URL}/staff/sop-access-requests`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/sop-access-requests`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -824,7 +923,7 @@ export async function createSopAccessRequest(
   token: string,
   input: { action: 'create' | 'edit'; department: string; reason?: string }
 ): Promise<{ id: number; status: string }> {
-  const response = await fetch(`${API_BASE_URL}/staff/sop-access-requests`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/sop-access-requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -841,7 +940,7 @@ export async function listSopAccessRequests(
   statusFilter?: string
 ): Promise<{ requests: SopAccessRequest[] }> {
   const query = statusFilter ? `?status_filter=${statusFilter}` : '';
-  const response = await fetch(`${API_BASE_URL}/admin/sop-access-requests${query}`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/sop-access-requests${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -856,7 +955,7 @@ export async function reviewSopAccessRequest(
   requestId: number,
   decision: 'approved' | 'rejected'
 ): Promise<{ message: string; request_id: number }> {
-  const response = await fetch(`${API_BASE_URL}/admin/sop-access-requests/${requestId}/review`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/sop-access-requests/${requestId}/review`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ decision }),
@@ -911,7 +1010,7 @@ async function jsonOrThrow(response: Response, fallback: string) {
 export async function getClientConversations(
   token: string
 ): Promise<{ conversations: Conversation[] }> {
-  const response = await fetch(`${API_BASE_URL}/client/conversations`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/conversations`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return jsonOrThrow(response, 'Failed to load conversations');
@@ -921,7 +1020,7 @@ export async function createClientConversation(
   token: string,
   input: { subject: string; case_id?: number | null }
 ): Promise<{ conversation: Conversation }> {
-  const response = await fetch(`${API_BASE_URL}/client/conversations`, {
+  const response = await apiFetch(`${API_BASE_URL}/client/conversations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -933,7 +1032,7 @@ export async function getClientConversationMessages(
   token: string,
   conversationId: number
 ): Promise<{ messages: Message[] }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/client/conversations/${conversationId}/messages`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -945,7 +1044,7 @@ export async function sendClientMessage(
   conversationId: number,
   body: string
 ): Promise<{ message: Message }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/client/conversations/${conversationId}/messages`,
     {
       method: 'POST',
@@ -959,7 +1058,7 @@ export async function sendClientMessage(
 export async function getStaffConversations(
   token: string
 ): Promise<{ conversations: Conversation[] }> {
-  const response = await fetch(`${API_BASE_URL}/staff/conversations`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/conversations`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return jsonOrThrow(response, 'Failed to load conversations');
@@ -969,7 +1068,7 @@ export async function createStaffConversation(
   token: string,
   input: { subject: string; client_id: number; case_id?: number | null }
 ): Promise<{ conversation: Conversation }> {
-  const response = await fetch(`${API_BASE_URL}/staff/conversations`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/conversations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -981,7 +1080,7 @@ export async function getStaffConversationMessages(
   token: string,
   conversationId: number
 ): Promise<{ messages: Message[] }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/staff/conversations/${conversationId}/messages`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -993,7 +1092,7 @@ export async function sendStaffMessage(
   conversationId: number,
   body: string
 ): Promise<{ message: Message }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/staff/conversations/${conversationId}/messages`,
     {
       method: 'POST',
@@ -1053,7 +1152,7 @@ export async function getAdminAudit(
   if (filters.limit != null) params.set('limit', String(filters.limit));
   if (filters.offset != null) params.set('offset', String(filters.offset));
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const response = await fetch(`${API_BASE_URL}/admin/audit${qs}`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/audit${qs}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return jsonOrThrow(response, 'Failed to load audit log');
@@ -1089,7 +1188,7 @@ export async function onboardClient(
   token: string,
   input: OnboardClientInput
 ): Promise<OnboardClientResult> {
-  const response = await fetch(`${API_BASE_URL}/staff/clients`, {
+  const response = await apiFetch(`${API_BASE_URL}/staff/clients`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
@@ -1121,7 +1220,7 @@ export interface AdminClient {
 }
 
 export async function listUsers(token: string): Promise<{ users: AdminUser[] }> {
-  const response = await fetch(`${API_BASE_URL}/admin/users`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/users`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -1142,7 +1241,7 @@ export async function createUser(
   },
   token: string
 ): Promise<{ message: string; user_id: number }> {
-  const response = await fetch(`${API_BASE_URL}/admin/users`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
@@ -1157,7 +1256,7 @@ export async function createUser(
 export async function listClients(
   token: string
 ): Promise<{ clients: AdminClient[] }> {
-  const response = await fetch(`${API_BASE_URL}/admin/clients`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/clients`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -1171,7 +1270,7 @@ export async function createClient(
   data: { email: string; password: string; full_name?: string | null },
   token: string
 ): Promise<{ message: string; client_id: number }> {
-  const response = await fetch(`${API_BASE_URL}/admin/clients`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/clients`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
@@ -1188,7 +1287,7 @@ export async function assignStaffToClient(
   userId: number,
   token: string
 ): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE_URL}/admin/assignments`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/assignments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ client_id: clientId, user_id: userId }),
@@ -1215,7 +1314,7 @@ export interface KnowledgeGap {
 export async function getKnowledgeGaps(
   token: string
 ): Promise<{ knowledge_gaps: KnowledgeGap[] }> {
-  const response = await fetch(`${API_BASE_URL}/analytics/knowledge-gaps`, {
+  const response = await apiFetch(`${API_BASE_URL}/analytics/knowledge-gaps`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -1235,7 +1334,7 @@ export interface AnalyticsSummary {
 export async function getAnalyticsSummary(
   token: string
 ): Promise<{ summary: AnalyticsSummary }> {
-  const response = await fetch(`${API_BASE_URL}/analytics/summary`, {
+  const response = await apiFetch(`${API_BASE_URL}/analytics/summary`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -1263,7 +1362,7 @@ export interface AdminSummary {
 export async function getAdminSummary(
   token: string
 ): Promise<AdminSummary> {
-  const response = await fetch(`${API_BASE_URL}/admin/summary`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/summary`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -1292,7 +1391,7 @@ export async function getDocumentChunks(
   documentId: number,
   token: string
 ): Promise<{ document_id: number; chunks: DocumentChunk[] }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE_URL}/admin/documents/${documentId}/chunks`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -1317,7 +1416,7 @@ export interface Sop {
 export async function listAllSops(
   token: string
 ): Promise<{ sops: Sop[] }> {
-  const response = await fetch(`${API_BASE_URL}/admin/sops`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/sops`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -1349,12 +1448,174 @@ export interface GovernanceData {
 export async function getGovernance(
   token: string
 ): Promise<GovernanceData> {
-  const response = await fetch(`${API_BASE_URL}/admin/governance`, {
+  const response = await apiFetch(`${API_BASE_URL}/admin/governance`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to load governance data');
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Phase G: staff clients view, staff upload, notifications, admin review edits
+// ---------------------------------------------------------------------------
+
+export interface StaffClientDocument {
+  id: number;
+  title: string;
+  doc_type: string;
+  department: string;
+  source_path: string | null;
+  client_id: number | null;
+  property_id: number | null;
+  uploaded_by: number | null;
+  approval_status: 'pending' | 'approved' | 'rejected';
+  is_approved: boolean;
+  version: number;
+  created_at: string | null;
+}
+
+export interface StaffClientCase {
+  id: number;
+  case_number: string;
+  client_id: number;
+  property_id: number | null;
+  loan_amount: number | null;
+  status: string;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export interface StaffClientProperty {
+  id: number;
+  client_id: number;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  property_type: string | null;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export interface StaffClient {
+  id: number;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  properties: StaffClientProperty[];
+  cases: StaffClientCase[];
+  documents: StaffClientDocument[];
+}
+
+export async function getStaffClients(
+  token: string
+): Promise<{ clients: StaffClient[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/clients`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load clients');
+  }
+  return response.json();
+}
+
+export async function staffUploadDocument(
+  file: File,
+  token: string,
+  clientId: number,
+  propertyId?: number | null
+): Promise<{ message: string; filename: string; size_bytes: number; client_id: number; property_id: number | null }> {
+  const form = new FormData();
+  form.append('file', file);
+  const query = `?client_id=${clientId}${propertyId != null ? `&property_id=${propertyId}` : ''}`;
+  const response = await apiFetch(`${API_BASE_URL}/staff/documents/upload${query}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Upload failed');
+  }
+  return response.json();
+}
+
+export interface StaffNotification {
+  id: number;
+  user_id: number;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  is_read: boolean;
+  created_at: string | null;
+}
+
+export interface NotificationsResponse {
+  notifications: StaffNotification[];
+  unread_count: number;
+}
+
+export async function getNotifications(
+  token: string
+): Promise<NotificationsResponse> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/notifications`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load notifications');
+  }
+  return response.json();
+}
+
+export async function markNotificationRead(
+  notificationId: number,
+  token: string
+): Promise<{ message: string }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/notifications/${notificationId}/read`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update notification');
+  }
+  return response.json();
+}
+
+export async function markAllNotificationsRead(
+  token: string
+): Promise<{ message: string }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/notifications/read-all`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update notifications');
+  }
+  return response.json();
+}
+
+export async function updateDocumentMetadata(
+  documentId: number,
+  updates: { title?: string; doc_type?: string; department?: string },
+  token: string
+): Promise<{ message: string; updated: string[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/documents/${documentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update document');
   }
   return response.json();
 }

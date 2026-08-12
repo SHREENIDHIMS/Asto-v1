@@ -94,6 +94,28 @@ def seed() -> None:
                 )
                 print("Admin user created.")
 
+            # --- Staff user (non-admin, for staff portal + upload demo) ---
+            cur.execute(
+                "SELECT id FROM users WHERE email = %s",
+                ("staff@asto.local",),
+            )
+            if cur.fetchone():
+                print("Staff user already exists, skipping.")
+            else:
+                cur.execute(
+                    "INSERT INTO users (email, password_hash, full_name, role, department, allowed_departments) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        "staff@asto.local",
+                        bcrypt.hash("staff123"),
+                        "Staff User",
+                        "loan_officer",
+                        "general",
+                        ["general"],
+                    ),
+                )
+                print("Staff user created.")
+
             # --- Client audience seed (Phase B/C) ---
             cur.execute(
                 "SELECT id FROM clients WHERE email = %s",
@@ -135,6 +157,18 @@ def seed() -> None:
                     )
                     print("Assigned admin to seed client.")
 
+                cur.execute(
+                    "SELECT id FROM users WHERE email = 'staff@asto.local'",
+                )
+                staff_user = cur.fetchone()
+                if staff_user:
+                    cur.execute(
+                        "INSERT INTO staff_client_assignments (user_id, client_id) "
+                        "VALUES (%s, %s) ON CONFLICT (user_id, client_id) DO NOTHING",
+                        (staff_user["id"], client_id),
+                    )
+                    print("Assigned staff user to seed client.")
+
             # --- A document pending review (Phase B3 demo) ---
             cur.execute(
                 "SELECT id FROM documents WHERE title = %s",
@@ -144,11 +178,16 @@ def seed() -> None:
                 print("Pending review document already exists, skipping.")
             else:
                 cur.execute(
+                    "SELECT id FROM users WHERE email = 'staff@asto.local'",
+                )
+                uploader = cur.fetchone()
+                uploader_id = uploader["id"] if uploader else None
+                cur.execute(
                     "INSERT INTO documents (title, source_path, doc_type, department, "
-                    "approval_status, is_approved) "
-                    "VALUES (%s, %s, %s, %s, 'pending', false) RETURNING id",
+                    "uploaded_by, approval_status, is_approved) "
+                    "VALUES (%s, %s, %s, %s, %s, 'pending', false) RETURNING id",
                     ("Draft Credit Policy (Pending Review)", "/docs/draft_credit_policy.pdf",
-                     "policy", "general"),
+                     "policy", "general", uploader_id),
                 )
                 pending_doc_id = cur.fetchone()["id"]
                 cur.execute(

@@ -29,10 +29,13 @@ async def list_documents(
     with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, title, source_path, doc_type, department, client_id, "
-                "approval_status, approved_by, approved_at, "
-                "is_active, is_approved, version, created_at "
-                "FROM documents ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                "SELECT d.id, d.title, d.source_path, d.doc_type, d.department, "
+                "d.client_id, d.approval_status, d.approved_by, d.approved_at, "
+                "d.is_active, d.is_approved, d.version, d.created_at, "
+                "d.uploaded_by, u.email AS uploaded_by_email "
+                "FROM documents d "
+                "LEFT JOIN users u ON u.id = d.uploaded_by "
+                "ORDER BY d.created_at DESC LIMIT %s OFFSET %s",
                 (limit, offset),
             )
             documents = [dict(row) for row in cur.fetchall()]

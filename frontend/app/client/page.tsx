@@ -36,6 +36,7 @@ import {
   getClientProperties,
   getClientPropertyDocuments,
   openBlobInNewTab,
+  logout,
   searchKnowledgeBaseStream,
   sendClientMessage,
   SearchResponse,
@@ -49,7 +50,7 @@ import {
   ClientProperty,
   Conversation,
 } from "@/lib/api-client";
-import { clearToken, decodeToken, getToken } from "@/lib/auth";
+import { clearToken, decodeToken, getToken, restoreSession } from "@/lib/auth";
 import { useChatSessions, ChatSession } from "@/hooks/use-chat-sessions";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
@@ -1124,13 +1125,19 @@ export default function ClientPage() {
   const sessions = useChatSessions(`client:${clientKey}`);
 
   useEffect(() => {
-    const t = getToken();
-    const claims = t ? decodeToken(t) : null;
-    if (!t || claims?.audience !== "client") {
-      router.replace("/login");
-      return;
-    }
-    setToken(t);
+    let mounted = true;
+    restoreSession().then((t) => {
+      if (!mounted) return;
+      const claims = t ? decodeToken(t) : null;
+      if (!t || claims?.audience !== "client") {
+        router.replace("/login");
+        return;
+      }
+      setToken(t);
+    });
+    return () => {
+      mounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
@@ -1160,6 +1167,7 @@ export default function ClientPage() {
   }, [token, loadData]);
 
   const handleLogout = useCallback(() => {
+    logout();
     clearToken();
     router.push("/login");
   }, [router]);

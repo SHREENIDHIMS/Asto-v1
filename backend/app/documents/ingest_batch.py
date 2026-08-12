@@ -40,8 +40,9 @@ def _load_sidecar(file_path: Path) -> dict:
     """Load client upload metadata from the matching ``<uuid>.meta.json`` sidecar.
 
     Client uploads write a sidecar next to the pending file carrying
-    ``client_id`` (and optionally ``property_id``) so the batch ingestion
-    can scope the indexed document. Returns an empty dict when absent.
+    ``client_id`` (and optionally ``property_id`` / ``uploaded_by``) so
+    the batch ingestion can scope the indexed document. Returns an empty
+    dict when absent.
     """
     prefix = file_path.stem.split("_", 1)[0]
     sidecar = file_path.parent / f"{prefix}.meta.json"
@@ -162,6 +163,7 @@ def process_file(file_path: Path) -> bool:
             embeddings=embeddings,
             client_id=sidecar.get("client_id"),
             property_id=sidecar.get("property_id"),
+            uploaded_by=sidecar.get("uploaded_by"),
         )
         logger.info(
             "Indexed %d, skipped %d for document %d",

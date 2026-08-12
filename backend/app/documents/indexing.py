@@ -37,6 +37,7 @@ def index_document(
     approval_status: str = "pending",
     client_id: int | None = None,
     property_id: int | None = None,
+    uploaded_by: int | None = None,
 ) -> IndexResult:
     """Insert a document and its chunks into Postgres.
 
@@ -49,6 +50,8 @@ def index_document(
 
     ``client_id`` / ``property_id`` scope the document to a client and
     (optionally) a property — used for client-uploaded documents.
+    ``uploaded_by`` records which staff member submitted the document so
+    the review pipeline can notify them of the outcome.
     """
     assert len(chunks) == (len(embeddings) if embeddings else 0) or not embeddings
     is_approved = approval_status == "approved"
@@ -85,14 +88,14 @@ def index_document(
             """
             INSERT INTO documents
                 (title, doc_type, department, source_path,
-                 client_id, property_id, approval_status, is_approved,
-                 version)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 client_id, property_id, uploaded_by,
+                 approval_status, is_approved, version)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (doc_title, doc_type, department, source_path,
-             client_id, property_id, approval_status, is_approved,
-             version),
+             client_id, property_id, uploaded_by,
+             approval_status, is_approved, version),
         )
         document_id = cur.fetchone()["id"]
         logger.info(

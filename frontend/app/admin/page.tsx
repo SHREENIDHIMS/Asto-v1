@@ -11,6 +11,7 @@ import {
   History,
   Loader2,
   MessageSquare,
+  Pencil,
   RefreshCw,
   ShieldAlert,
   Sparkles,
@@ -22,8 +23,10 @@ import {
 import {
   listPendingDocuments,
   approveDocument,
+  logout,
   rejectDocument,
   getDocumentHistory,
+  updateDocumentMetadata,
   listAllDocuments,
   uploadDocument,
   listUsers,
@@ -56,7 +59,7 @@ import {
   AdminClient,
   KnowledgeGap,
 } from "@/lib/api-client";
-import { clearToken, decodeToken, getToken } from "@/lib/auth";
+import { clearToken, decodeToken, isAdminRole, restoreSession } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -124,6 +127,8 @@ function ApprovalsTab({ token }: { token: string }) {
   const [historyDoc, setHistoryDoc] = useState<ApprovalDocument | null>(null);
   const [history, setHistory] = useState<ApprovalHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [editDoc, setEditDoc] = useState<ApprovalDocument | null>(null);
+  const [rejectDoc, setRejectDoc] = useState<ApprovalDocument | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -142,12 +147,11 @@ function ApprovalsTab({ token }: { token: string }) {
     load();
   }, [load]);
 
-  const handleDecision = async (doc: ApprovalDocument, approve: boolean) => {
+  const handleApprove = async (doc: ApprovalDocument) => {
     setBusyId(doc.id);
     setError(null);
     try {
-      if (approve) await approveDocument(doc.id, token);
-      else await rejectDocument(doc.id, token);
+      await approveDocument(doc.id, token);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Decision failed");
@@ -175,7 +179,7 @@ function ApprovalsTab({ token }: { token: string }) {
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           Documents uploaded via ingestion wait here until approved. Pending docs
-          are not searchable.
+          are not searchable. You can edit metadata before approving.
         </p>
         <Button type="button" variant="outline" size="sm" onClick={load}>
           <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
@@ -218,6 +222,7 @@ function ApprovalsTab({ token }: { token: string }) {
                   <p className="text-xs text-muted-foreground mb-2">
                     {doc.doc_type} · {doc.department}
                     {doc.client_id != null && ` · client #${doc.client_id}`} · v{doc.version}
+                    {doc.uploaded_by_email && ` · by ${doc.uploaded_by_email}`}
                     {" · "}uploaded {formatDate(doc.created_at)}
                   </p>
                   <p className="text-xs text-muted-foreground truncate font-mono">
@@ -236,6 +241,15 @@ function ApprovalsTab({ token }: { token: string }) {
                   </Button>
                   <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditDoc(doc)}
+                  >
+                    <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
                     variant="outline"
                     size="sm"
                     onClick={() => openHistory(doc)}
@@ -248,20 +262,16 @@ function ApprovalsTab({ token }: { token: string }) {
                     variant="destructive"
                     size="sm"
                     disabled={busyId === doc.id}
-                    onClick={() => handleDecision(doc, false)}
+                    onClick={() => setRejectDoc(doc)}
                   >
-                    {busyId === doc.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <XCircle className="h-3.5 w-3.5 mr-1.5" />
-                    )}
+                    <XCircle className="h-3.5 w-3.5 mr-1.5" />
                     Reject
                   </Button>
                   <Button
                     type="button"
                     size="sm"
                     disabled={busyId === doc.id}
-                    onClick={() => handleDecision(doc, true)}
+                    onClick={() => handleApprove(doc)}
                   >
                     {busyId === doc.id ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -315,6 +325,174 @@ function ApprovalsTab({ token }: { token: string }) {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={editDoc != null} onOpenChange={(open) => !open && setEditDoc(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit document metadata</DialogTitle>
+            <DialogDescription>
+              {editDoc?.title} — metadata only, the file is not replaced.
+            </DialogDescription>
+          </DialogHeader>
+          {editDoc && <EditMetadataForm
+            doc={editDoc}
+            token={token}
+            onDone={() => {
+              setEditDoc(null);
+              load();
+            }}
+            onError={setError}
+          />}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rejectDoc != null} onOpenChange={(open) => !open && setRejectDoc(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject document</DialogTitle>
+            <DialogDescription>
+              {rejectDoc?.title} — a reason is required and is shared with the uploader.
+            </DialogDescription>
+          </DialogHeader>
+          {rejectDoc && <RejectForm
+            doc={rejectDoc}
+            token={token}
+            onDone={() => {
+              setRejectDoc(null);
+              load();
+            }}
+            onError={setError}
+          />}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EditMetadataForm({
+  doc,
+  token,
+  onDone,
+  onError,
+}: {
+  doc: ApprovalDocument;
+  token: string;
+  onDone: () => void;
+  onError: (message: string) => void;
+}) {
+  const [title, setTitle] = useState(doc.title);
+  const [docType, setDocType] = useState(doc.doc_type);
+  const [department, setDepartment] = useState(doc.department);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateDocumentMetadata(
+        doc.id,
+        {
+          title: title !== doc.title ? title : undefined,
+          doc_type: docType !== doc.doc_type ? docType : undefined,
+          department: department !== doc.department ? department : undefined,
+        },
+        token
+      );
+      onDone();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to update document");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label htmlFor="em-title">Title</Label>
+        <Input id="em-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="em-type">Type</Label>
+        <Input id="em-type" value={docType} onChange={(e) => setDocType(e.target.value)} />
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="em-dept">Department</Label>
+        <Input id="em-dept" value={department} onChange={(e) => setDepartment(e.target.value)} />
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleSave}
+          disabled={
+            saving ||
+            (title === doc.title && docType === doc.doc_type && department === doc.department) ||
+            !title.trim() ||
+            !docType.trim() ||
+            !department.trim()
+          }
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RejectForm({
+  doc,
+  token,
+  onDone,
+  onError,
+}: {
+  doc: ApprovalDocument;
+  token: string;
+  onDone: () => void;
+  onError: (message: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+
+  const handleReject = async () => {
+    setRejecting(true);
+    try {
+      await rejectDocument(doc.id, token, reason.trim());
+      onDone();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to reject document");
+    } finally {
+      setRejecting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label htmlFor="rj-reason">Reason *</Label>
+        <Input
+          id="rj-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Missing client signature"
+        />
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          onClick={handleReject}
+          disabled={rejecting || !reason.trim()}
+        >
+          {rejecting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reject document"}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1972,28 +2150,39 @@ export default function AdminPage() {
   const [token, setToken] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeNavId, setActiveNavId] = useState("dashboard");
+  const [userName, setUserName] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = getToken();
-    const claims = t ? decodeToken(t) : null;
-    if (!t || claims?.role !== "admin") {
-      router.replace("/login");
-      return;
-    }
-    setToken(t);
-    setIsAdmin(true);
-    try {
-      const raw = localStorage.getItem("asto_admin_settings");
-      if (raw) {
-        const prefs = JSON.parse(raw);
-        if (prefs.defaultTab) setActiveNavId(prefs.defaultTab);
+    let mounted = true;
+    restoreSession().then((t) => {
+      if (!mounted) return;
+      const claims = t ? decodeToken(t) : null;
+      if (!t || !isAdminRole(claims?.role)) {
+        router.replace("/login");
+        return;
       }
-    } catch {
-      // ignore corrupt prefs
-    }
+      setToken(t);
+      setUserName(claims?.name ?? claims?.sub ?? null);
+      setUserRole(claims?.role ?? null);
+      setIsAdmin(true);
+      try {
+        const raw = localStorage.getItem("asto_admin_settings");
+        if (raw) {
+          const prefs = JSON.parse(raw);
+          if (prefs.defaultTab) setActiveNavId(prefs.defaultTab);
+        }
+      } catch {
+        // ignore corrupt prefs
+      }
+    });
+    return () => {
+      mounted = false;
+    };
   }, [router]);
 
   const handleLogout = useCallback(() => {
+    logout();
     clearToken();
     router.push("/login");
   }, [router]);
@@ -2023,7 +2212,7 @@ export default function AdminPage() {
           </Link>
         </Button>
       }
-      user={{ name: "Administrator", role: "admin" }}
+      user={{ name: userName ?? "Administrator", role: userRole ?? "admin" }}
       onSignOut={handleLogout}
     >
       <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">

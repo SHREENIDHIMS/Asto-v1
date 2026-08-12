@@ -41,7 +41,12 @@ services:
         condition: service_healthy
     environment:
       <<: *backend-env
-      ASTO_CORS_ORIGINS: "*"
+      # Credentialed requests (HttpOnly session cookie, Phase H1) require an
+      # explicit CORS origin — browsers reject "*" with credentials. Local
+      # dev serves the frontend on 3011; override in production.
+      ASTO_CORS_ORIGINS: "${ASTO_CORS_ORIGINS:-http://localhost:3011,http://127.0.0.1:3011}"
+      ASTO_AUTH_COOKIE_SECURE: "${ASTO_AUTH_COOKIE_SECURE:-false}"
+      ASTO_AUTH_COOKIE_SAMESITE: "${ASTO_AUTH_COOKIE_SAMESITE:-lax}"
     volumes:
       - ./storage:/app/storage
     ports:

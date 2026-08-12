@@ -120,6 +120,11 @@ export const NAV_GROUPS: Record<RoleKey, NavGroup[]> = {
           icon: <LayoutDashboard className="h-4 w-4" />,
         },
         {
+          id: "clients",
+          label: "Clients",
+          icon: <Building2 className="h-4 w-4" />,
+        },
+        {
           id: "cases",
           label: "My Cases",
           icon: <Briefcase className="h-4 w-4" />,

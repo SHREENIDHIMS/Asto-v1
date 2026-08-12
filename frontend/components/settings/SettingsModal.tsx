@@ -90,8 +90,8 @@ const identity = user ?? (() => {
   const token = getToken();
   const claims: TokenClaims | null = token ? decodeToken(token) : null;
   return {
-    name: claims?.audience === "client" ? "Client" : "Staff",
-    email: "",
+    name: claims?.name ?? (claims?.audience === "client" ? "Client" : "Staff"),
+    email: claims?.audience === "client" ? "" : claims?.sub ?? "",
     role: claims?.audience === "client" ? "Client" : claims?.role ?? "Staff",
   };
 })();

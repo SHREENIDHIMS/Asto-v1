@@ -9,6 +9,7 @@ Idle-stops after 10 minutes of no activity (asto-backend-idle.timer).
 
 from __future__ import annotations
 
+import logging
 import time
 
 from contextlib import asynccontextmanager
@@ -19,6 +20,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.config import settings
 from app.db.postgres.schema import ensure_schema
+
+# uvicorn's default config attaches handlers to its own loggers but not the
+# root, so application-level logs (search, audit, and the password-reset
+# console fallback) are silently dropped. basicConfig gives every app logger
+# a stderr handler that the container captures.
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager

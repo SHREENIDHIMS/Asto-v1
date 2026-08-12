@@ -45,10 +45,32 @@ class Settings(BaseSettings):
     jwt_secret: str = ""  # required via ASTO_JWT_SECRET env var; no default for safety
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 480
+    # HttpOnly refresh-token cookie (H1). The access JWT lives in memory on
+    # the client only; this cookie is the long-lived session credential,
+    # rotated on every use and validated against hashes in refresh_tokens.
+    refresh_token_ttl_days: int = 30
+    auth_cookie_name: str = "asto_refresh"
+    auth_cookie_secure: bool = False  # set ASTO_AUTH_COOKIE_SECURE=true behind TLS
+    auth_cookie_samesite: str = "lax"
+    # Reset-password links point at this UI (H2). When DEC-3's SMTP decides,
+    # delivery moves from the log fallback to a real email transport.
+    password_reset_ttl_hours: int = 1
+    # Origin used to build emailed links (reset links today, more mail later).
+    frontend_url: str = "http://localhost:3011"
+    # --- Login throttle (H3, brute-force protection) ---
+    # A login attempt that fails when >=max_failures failures are recorded for
+    # the email (or >=max_ip_failures for the client IP) inside the lockout
+    # window is rejected with 429. Evidence is pruned past prune_hours.
+    login_max_failures: int = 5
+    login_max_ip_failures: int = 10
+    login_lockout_minutes: int = 15
+    login_attempt_prune_hours: int = 24
 
     # --- CORS ---
-    # Comma-separated list of allowed origins; "*" in non-production only.
-    cors_origins: str = "*"
+    # Comma-separated list of allowed origins. Credentialed requests (H1
+    # cookies) require an explicit origin, so the dev default is the local
+    # frontend origin rather than "*" (browsers reject "*" + credentials).
+    cors_origins: str = "http://localhost:3011,http://127.0.0.1:3011"
 
     # --- Embeddings (query-time, always-on process) ---
     embedding_enabled: bool = True

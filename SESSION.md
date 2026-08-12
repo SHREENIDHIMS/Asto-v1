@@ -96,6 +96,150 @@ to these ports.
 
 ## Session Log
 
+### Session 14 — 2026-08-12 (Phase H1 — HttpOnly session cookie + refresh rotation)
+
+**Design decision (user-approved plan, `docs/ROADMAP.md`):** the access JWT
+is kept **in JS memory only** (auto-restored on load) and removed from
+localStorage; the long-lived session credential moves to an **HttpOnly
+`asto_refresh` cookie** (SameSite=Lax, rotated on use, stored hashed). This
+closes the XSS token-theft hole (nothing persistent readable by JS) and lays
+the refresh-token groundwork for H5's logout-all/revocation.
+
+**Backend:**
+- `db/postgres/schema.py`: new `refresh_tokens` table — only the **SHA-256
+  hash** of each token is stored (`token_hash` UNIQUE), plus `user_id` XOR
+  `client_id` per audience, `expires_at`, soft `revoked_at`; index by
+  (user_id, client_id, revoked_at).
+- `auth/jwt_handler.py`: `new_refresh_token()` (opaque `token_urlsafe(48)`,
+  never a JWT) + `hash_refresh_token()`.
+- `api/v1/auth.py`:
+  - `POST /auth/login` (+ legacy `/auth/client-login`) now also issues a
+    refresh token and sets the HttpOnly cookie; the JSON body still returns
+    the access JWT (bearer auth path unchanged for all 58 api-client calls).
+  - `POST /auth/refresh` — exchanges the cookie for a fresh access JWT
+    **and rotates** the refresh token (old row revoked, new issued); active
+    identity re-resolved from DB for current role/claims. Rejects
+    unknown/revoked/expired tokens (expired rows are revoked too).
+  - `POST /auth/logout` — revokes the presented token + clears the cookie.
+  - `POST /auth/logout-all` (bearer-authenticated) — revokes every refresh
+    row for the current identity (H5 hook).
+  - CSRF: `require_csrf` dependency checks the `X-Asto-CSRF: 1` header on
+    the cookie-authenticated endpoints (SameSite=Lax is the primary defense;
+    the header is defense-in-depth).
+- `config.py`: `refresh_token_ttl_days=30`, cookie name/secure/samesite
+  settings. `cors_origins` default is now explicit origins
+  (`http://localhost:3011,http://127.0.0.1:3011`) because browsers reject
+  `*` + credentials.
+- `docker-compose.yml`: backend env passes explicit `ASTO_CORS_ORIGINS` +
+  `ASTO_AUTH_COOKIE_SECURE`/`ASTO_AUTH_COOKIE_SAMESITE` (Secure must be
+  enabled behind TLS in production).
+- Tests: new `tests/unit/test_h1_http_cookie.py` (11 tests) — login sets
+  HttpOnly cookie + stores only the hash, invalid creds set no cookie,
+  refresh requires CSRF, rotation revokes old + issues new, revoked token
+  401, logout revokes + clears, logout-all revokes per user, refresh-token
+  helpers. Full suite: **401 passed** (was 390).
+
+**Frontend:**
+- `lib/auth.ts` rewritten: in-memory token (`getToken`/`storeToken`/
+  `clearToken`), new `restoreSession()` (re-exchanges the cookie on page
+  load/hard reload), `getSession()` restores then verifies. No
+  localStorage persistence anywhere.
+- `lib/api-client.ts`: new `apiFetch()` wrapper adds
+  `credentials:'include'` to **all** requests (58 sites) so the cookie
+  travels and Set-Cookie is accepted; new `refreshSession()`, `logout()`,
+  `logoutAll()`.
+- Gates on `/`, `/admin`, `/staff`, `/client` converted to
+  `restoreSession().then(...)` so a hard refresh restores the session
+  before routing/data-load; logout handlers now call `logout()` (best-effort
+  cookie revoke) + `clearToken()`.
+- `tsc --noEmit` clean, ESLint clean, `npm run build` clean.
+
+**Live verified** (rebuilt + recreated `asto-backend` + `frontend`): admin
+login via curl cookie jar → JWT in body + `asto_refresh` HttpOnly cookie;
+`/auth/refresh` with CSRF header → fresh JWT + **rotated** cookie;
+replaying the old token → `401 Invalid refresh token`; missing CSRF header →
+`403 CSRF check failed`; `/auth/logout` → `{ok:true}` and the cookie is
+cleared; `refresh_tokens` rows show only 64-char hashes with revoked flags
+for rotated tokens; all routes 200; deployed chunk carries `auth/refresh`
+and **zero** `asto_auth_token` references remain in the build.
+
+**Docs:** `docs/ROADMAP.md` H1 ticked; this SESSION.md entry.
+
+**H2 — Forgot-password / reset flow (continued in this session):**
+
+- New `password_resets` table — one-time, 1h-expiry reset tokens (only
+  SHA-256 hashes stored), audiences staff/client, single-use via `used_at`.
+- `POST /auth/forgot-password` — resolves email across users+clients,
+  returns the **same generic 200 for known and unknown emails** (no account
+  enumeration), inserts the hashed token row, and delivers the link via the
+  new `app/auth/password_reset_email.deliver_reset_link` (console/log
+  fallback while DEC-3 SMTP is undecided, interface stays the same when a
+  real transport lands).
+- `POST /auth/reset-password` — validates unused + unexpired token,
+  reuses bcrypt + min-8 password rule, marks the token used, and revokes
+  **all** of the identity's refresh sessions (password change = logout
+  everywhere, piggybacks on H1's `refresh_tokens`).
+- Frontend: `/login` now has three modes — login / forgot (email → generic
+  success message) / reset (opened from `?reset=<token>` links; token is
+  stripped from the URL via `history.replaceState` after reading);
+  `forgotPassword()` + `resetPassword()` added to `api-client.ts`.
+- Logging fix: uvicorn's default config attaches no root handler, so app
+  INFO logs were silently dropped — `app/main.py` now calls
+  `logging.basicConfig` so the console-reset-link transport (and future
+  app logs) actually reaches the container logs.
+- Tests: `tests/unit/test_h2_password_reset.py` (11) +
+  `tests/integration/test_h2_password_reset.py` (6). Full suite:
+  **417 passed** (was 401). `tsc`/`lint`/`build` all clean.
+- Live-verified: known + unknown forgot links return identical 200s; DB
+  stores only hashes; token reset succeeds; old password → 401, new
+  password → 200; token replay → 400; reset logged the staff account out.
+- Note: the live demo `staff@asto.local` password was consumed by the reset
+  verification and is now `ResetPass2026!` (was `admin123`).
+- Docs: `docs/ROADMAP.md` H2 ticked.
+
+**Next:** H3 — login rate limiting + account lockout.
+
+### Session 15 — 2026-08-12 (Phase H3 — login rate limiting + lockout, completed)
+
+**Context:** H3's backend was already written into the working tree (throttle
+helpers in `auth.py`, `login_max_failures`/`login_max_ip_failures`/
+`login_lockout_minutes`/`login_attempt_prune_hours` in `config.py`, the
+`login_attempts` table + indexes in `schema.py`) but was **incomplete**: it
+broke the pre-existing H1 login test and had no H3 tests of its own. This
+session closed H3 properly.
+
+**Fix for the H1 regression:** `post /auth/login` now runs the throttle —
+prune stale rows (DELETE), COUNT recent failures (SELECT), raise 429 when an
+counter is at its cap — *before* the user lookup. The H1 unit test
+(`test_h1_http_cookie.py::test_login_sets_httponly_cookie_and_hashes_token`)
+mocked `cur.fetchone` to return the staff-user row directly, so the throttle
+COUNT query consumed that row and the `email_fails` key was missing
+(`KeyError`). The mock now yields a throttle row (`{"email_fails": 0,
+"ip_fails": 0}`) first, then the staff user.
+
+**New tests:**
+- `tests/unit/test_h3_login_rate_limit.py` (10 tests): 429 when email is at
+  the 5-failure cap or IP at the 10-failure cap (with `Retry-After` /
+  `X-RateLimit-*` response headers), below-threshold proceeds to lookup,
+  prune runs on every attempt, successful login clears the email's failure
+  history, failures (including unknown emails) are recorded with an IP,
+  and `/auth/client-login` shares the same throttle + reset.
+- `tests/integration/test_h3_login_rate_limit.py` (5 tests): real-DB
+  lockout at 5 failures + 429 with the correct password on the 6th attempt,
+  4 failures still allow login, the shared client-login throttle, stale
+  (>15m) failures no longer block login, and success resets the counter.
+- Full suite: **389 passed, 43 skipped** (was 379 passed). The 43 skips are
+  integration tests that need a live Postgres (Docker not running this
+  session) — they collect and skip cleanly and will run when the container
+  is up.
+
+**Docs:** `docs/ROADMAP.md` H3 ticked.
+
+**Next:** H5 — session revocation (logout-all already exists behind H1; the
+remaining piece is the admin `DELETE /admin/users/{id}/sessions` kill) or
+H6 — password change UI (backend endpoint exists; needs the frontend
+Settings wiring).
+
 ### Session 4 — 2026-08-08 (Phase D — frontend: chat UX, client portal, admin dashboard)
 
 **Done (Phase D):**
@@ -549,6 +693,131 @@ that carry the `asto_smart_suggestions` marker with **no** lazy
 is shared React internals (where the error is *thrown*), not the mismatch
 source, and is unchanged because its code didn't change.
 
+### Session 12 — 2026-08-12 (Role-gate fix: super_admin treated as staff + identity display)
+
+**Symptom:** logging in with the seeded admin (`admin@asto.local`) landed on
+the **staff** workspace, and the chat ("Ask Asto") showed identity "Staff
+super admin". The admin panel's own gate would have blocked `super_admin`.
+
+**Root cause:** the seed creates the admin as role `super_admin`
+(`backend/scripts/seed_db.py`), and the backend correctly treats it as admin
+(`rbac.ADMIN_ROLES = {"super_admin", "admin"}`), but **every frontend gate
+compared the exact string `role === "admin"`**:
+- `frontend/app/login/page.tsx:36` — `super_admin` failed the check → routed
+  to `/staff` instead of `/admin`.
+- `frontend/app/staff/page.tsx` — only rejected `"admin"`, so `super_admin`
+  was kept in the staff panel.
+- `frontend/app/page.tsx` (Ask Asto chat) — `super_admin` was not redirected
+  to `/admin`, stayed on the chat.
+- `frontend/app/admin/page.tsx` — gate was `claims?.role !== "admin"`, so a
+  `super_admin` would actually be **blocked** from the admin page.
+
+Additionally the chat hardcoded the identity as `name: "Staff"`, producing
+"Staff super admin" for a real admin.
+
+**Fix:**
+- Added `isAdminRole()` / `isStaffRole()` helpers in
+  `frontend/lib/auth.ts` mirroring backend `rbac.ADMIN_ROLES`.
+- Swapped all four gates (`login`, `page`/chat, `staff`, `admin`) to use
+  `isAdminRole()` so `super_admin` routes/behaves identically to `admin`.
+- Added a `name` claim to JWTs (`backend/app/auth/jwt_handler.py` +
+  `backend/app/api/v1/auth.py`, sourced from `users.full_name` /
+  `clients.full_name`, falling back to email) so the UI can show the real
+  name. `TokenClaims` + chat/staff/admin AppShell + SettingsModal now prefer
+  `claims.name`.
+- Chat, staff, and admin pages no longer hardcode identity labels; they
+  derive from JWT claims.
+
+**Verified:** `npx tsc --noEmit` + `npm run lint` clean; backend `pytest -q`
+→ **366 passed** (including the 7 env-dependent tests that previously
+failed). No retrieval/ranking/confidence changes — no benchmark re-run
+required (CLAUDE.md rule 7).
+
+**Not done / carry to next session:**
+- Phase G (staff client-data interface, staff document upload → admin
+  review with metadata edit + reject reason, notifications) — designed,
+  not yet implemented. See Next Steps below.
+
+### Session 13 — 2026-08-12 (Phase G — staff client interface + doc review with metadata edit + notifications)
+
+**Design decision (user):** Notifications are a **generic** table (`user_id`,
+`type`, `title`, `body`, `link`, `is_read`) so SOP outcomes + message pings
+are just new rows later. Staff document upload mirrors the existing client
+upload flow (validate → `storage/pending/` sidecar, batch ingestion later,
+never inline) and **auto-notifies admins**; admin approve/reject
+**auto-notifies the uploader**.
+
+**Backend:**
+- `db/postgres/schema.py`: new `notifications` table + index (user_id, unread
+  first, created_at desc).
+- New `api/v1/notifications.py`: `GET /staff/notifications` (own only,
+  RBAC in WHERE — `user_id = current`), `POST /staff/notifications/{id}/read`
+  (scoped, 404 when not found), `POST /staff/notifications/read-all`. Generic
+  `create_notification()` helper used by the review + upload paths.
+- `api/v1/approvals.py` (G2 + G3): `PATCH /admin/documents/{id}` — metadata
+  only (title / doc_type / department, empty or no-op patch → 400, only
+  `pending` docs editable); reject now **requires a non-blank `reason`** (422
+  otherwise) persisted to `approval_log.reason`; approve/reject both
+  auto-create a notification for the uploader (approve note / reject reason).
+- `api/v1/staff.py` (G1): `POST /staff/documents/upload` — scoped to a client
+  the staff member is assigned to (`staff_client_assignments` in SQL),
+  validates file + client, writes `storage/pending/` sidecar, sets
+  `uploaded_by`, auto-notifies admins.
+- `api/v1/staff.py` (G4): `GET /staff/clients` — assigned clients each with
+  `properties`, `cases`, and `documents` **including `approval_status`** +
+  `uploaded_by` (admins see all clients).
+- `documents/indexing.py` / `db/postgres/models.py`: `uploaded_by` column +
+  row mapping; version-bump lookup prefers active rows.
+- Tests: new `tests/unit/test_phase_g.py` (24 tests) — route wiring, 401/403
+  audience gating, assignment-scoped staff clients SQL, upload validation +
+  pending sidecar + admin notification, metadata edit (empty/approved/ok),
+  reject-reason required + persisted + uploader notified, notifications
+  list/mark-read scoping/read-all. Full suite: **390 passed** (was 366).
+
+**Frontend:**
+- `lib/api-client.ts`: `Notification` type + staff notifications
+  (list/mark-read/mark-all), `updateDocumentMetadata`, staff
+  `uploadDocument` + `onboardClient`, staff clients list, `rejectDocument`
+  now takes a `reason`.
+- Staff `app/staff/page.tsx` (G4 + G5): new **Clients tab** — assigned-client
+  cards with properties, cases, and documents with approval status badges; a
+  **document-upload dialog** (client picker + file) per client; Onboard-client
+  dialog in the header.
+- `app/admin/page.tsx` (G6): Approvals queue cards gained **Edit** (metadata
+  dialog: title/type/department via `PATCH`) and **Reject** now opens a
+  required-reason dialog before submitting; uploader email shown on pending
+  cards; `EditMetadataForm` + `RejectForm` subcomponents.
+- `components/layout/AppShell.tsx` + `config/navigation.tsx`: **notification
+  bell** with unread badge + dropdown in the staff header (own notifications,
+  mark-read / mark-all), new Clients nav entry.
+- `tsc --noEmit` clean, ESLint clean.
+
+**Live verified (rebuilt + recreated `asto-backend` + `frontend`):**
+- Staff login (`staff@asto.local`, password inherited `admin123` from the
+  demo seed that cloned the admin hash) → `GET /staff/clients` returns the 2
+  assigned clients each with properties/cases/documents incl. `approval_status`
+  (client 1 → docs 444 approved + 445 pending; client 37 → doc 446 approved).
+- **End-to-end flow (full chain):** staff `POST /staff/documents/upload` for
+  client 1 → 201, `storage/pending/<uuid>_phase_g_test.txt` + `.meta.json`
+  sidecar (`client_id=1, uploaded_by=29`), and the admin was auto-notified
+  ("New document awaiting review - staff@asto.local uploaded 'phase_g_test.txt'",
+  `document_upload`, unread=1). Ran `python -m app.documents.ingest_batch` in
+  the container → indexed **doc 1025**, version 1, `approval_status=pending`,
+  `uploaded_by_email=staff@asto.local`. Admin then `PATCH /admin/documents/1025`
+  (→ `updated=[title,doc_type]`) and `POST …/1025/reject` with reason
+  "Missing client signature on page 3" (→ `{message, reason}`).
+- Staff notifications after the reject: **unread=1**, `[document_rejected]`
+  "Document rejected — 'Phase G Live Doc (edited)' was rejected: Missing client
+  signature on page 3" (link `/staff?tab=clients`); `POST …/notifications/2/read`
+  → unread 0. Approval history for 1025 shows `pending → rejected` by
+  admin@asto.local with the reason persisted.
+- All routes 200 after `-L`: `/login`, `/admin`, `/staff`, `/client`, `/portal`;
+  the deployed admin chunk (`page-490b73f66fa732c8.js`) contains the new
+  "Edit document metadata" / "Reject document — reason is required" UI markers.
+
+**Not done / carry to next session:**
+- None for Phase G.
+
 ### Session 3 — 2026-08-08
 
 **Done (Phase B3 + Phase C — approval workflow + client auth backend):**
@@ -736,6 +1005,56 @@ rebuild. ⚠️ = needs a design decision before building (stop and ask).
       user, date-range, outcome) + admin Audit Log view with pagination.
       *(Done Session 9 — filterable + paginated audit view; 10 tests; 355
       total. Phase F fully complete.)*
+
+### Phase H+ — Product roadmap (added 2026-08-12)
+
+> **Full detailed plan lives in `docs/ROADMAP.md`** — every planned feature
+> (security hardening, documents/review, search, client experience, staff ops,
+> system/ops, polish) with implementation steps, DoD, dependencies, and a
+> feature tracker. Implementation proceeds phase-by-phase from that file.
+
+### Phase G — Staff client-data interface + doc review w/ metadata edit + notifications (added 2026-08-12)
+User-driven feature set. Each phase DoD: endpoints tested under
+`backend/tests/`, docs updated, live-verified after rebuild. DoD per
+CLAUDE.md (RBAC in the SQL WHERE clause, batch-only ingestion, no new
+standing services).
+
+- [x] **G0 Notifications (new schema):** generic `notifications` table
+      (`id`, `user_id`, `type`, `title`, `body`, `link`, `is_read`,
+      `created_at`) + `GET /notifications` (own only, RBAC in WHERE) +
+      `POST /notifications/{id}/read` (+ mark-all-read). Generic so SOP
+      outcomes + message pings are just new rows later. *(Done Session 13 —
+      `api/v1/notifications.py`, scoped reads, read/read-all, generic helper.)*
+- [x] **G1 Staff document upload:** add `uploaded_by` (→ users.id) to
+      `documents`; new `POST /staff/documents/upload` scoped to a client
+      the staff member is assigned to (mirrors `client.py` upload flow:
+      validate → `storage/pending/` sidecar, batch ingestion later; never
+      inline). Duplicate-titled re-upload = version bump (Session 10).
+      *(Done Session 13 — assignment-scoped upload, sidecar, admin notified.)*
+- [x] **G2 Admin review enhancement:** `PATCH /admin/documents/{id}` for
+      **metadata only** (title / doc_type / department — no file replace);
+      reject endpoint gains a **required `reason`** (persisted to the unused
+      `approval_log.reason` column). *(Done Session 13.)*
+- [x] **G3 Auto-notify on review:** approve/reject auto-creates a
+      notification for the uploader (body carries approve note or reject
+      reason) — wired in `approvals.py`, never skipped. *(Done Session 13.)*
+- [x] **G4 Staff Clients tab:** new staff view listing assigned clients →
+      their properties, cases, and documents **with approval status**.
+      *(Done Session 13.)*
+- [x] **G5 Staff upload UI + notification bell:** document-upload dialog on
+      the Clients tab; notifications bell/badge (unread count) in the staff
+      AppShell header. *(Done Session 13.)*
+- [x] **G6 Admin Approvals tab:** metadata-edit dialog + reject-with-reason
+      dialog in the Approvals queue. *(Done Session 13.)*
+- [x] **G7 Tests:** unit tests for notifications CRUD, staff upload scoping,
+      metadata edit, reject-reason persistence, auto-notify. Full suite must
+      stay green (366 → more). *(Done Session 13 — `test_phase_g.py` 24
+      tests; full suite **390 passed**.)*
+- [x] **G8 Verify:** `tsc` + `lint` + `pytest -q`; SESSION.md updated;
+      docker rebuild + live verification (staff upload → admin edit/reject →
+      staff sees notification). *(Done Session 13 — 390 passed, tsc/lint
+      clean, full chain live-verified end-to-end, SESSION.md updated.)*
+      **Phase G complete.**
 ---
 
 ## Open Questions / Decisions for the User

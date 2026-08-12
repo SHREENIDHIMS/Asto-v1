@@ -233,7 +233,10 @@ class TestApprovalEndpointAuth:
                 ("post", "/api/v1/admin/documents/1/reject"),
                 ("get", "/api/v1/admin/documents/1/history"),
             ]:
-                response = getattr(client, method)(path, headers=headers)
+                kwargs = {}
+                if method == "post" and path.endswith("/reject"):
+                    kwargs = {"json": {"reason": "test"}}
+                response = getattr(client, method)(path, headers=headers, **kwargs)
                 assert response.status_code == 403, f"{method} {path} should 403 for client"
         finally:
             app.dependency_overrides.pop(require_auth, None)

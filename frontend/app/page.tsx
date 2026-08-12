@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   getStaffDashboard,
+  logout,
   searchKnowledgeBaseStream,
   SearchResponse,
   SearchStage,
@@ -17,7 +18,7 @@ import {
   StreamedSentence,
   StructuredFact,
 } from "@/lib/api-client";
-import { clearToken, decodeToken, getToken } from "@/lib/auth";
+import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { useChatHistory } from "@/hooks/use-chat-history";
 import ChatMessage from "@/components/chat/ChatMessage";
 import StreamingPreview from "@/components/chat/StreamingPreview";
@@ -58,6 +59,7 @@ export default function ChatPage() {
   const [streamFacts, setStreamFacts] = useState<StructuredFact[]>([]);
   const [streamSentences, setStreamSentences] = useState<StreamedSentence[]>([]);
   const [role, setRole] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
@@ -80,35 +82,36 @@ export default function ChatPage() {
   const [casesError, setCasesError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = getToken();
-    const claims = token ? decodeToken(token) : null;
-    setRole(claims?.role ?? null);
-
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
-    // Auto-route each identity to its own interface.
-    if (claims?.audience === "client") {
-      router.replace("/client");
-      return;
-    }
-    if (claims?.role === "admin") {
-      router.replace("/admin");
-      return;
-    }
-    // Staff (non-admin) stay on the staff chat.
+    let mounted = true;
+    restoreSession().then((token) => {
+      if (!mounted) return;
+      if (!token) {
+        router.replace("/login");
+        return;
+      }
+      const claims = decodeToken(token);
+      setRole(claims?.role ?? null);
+      setUserName(claims?.name ?? claims?.sub ?? null);
+      // Auto-route each identity to its own interface.
+      if (claims?.audience === "client") {
+        router.replace("/client");
+        return;
+      }
+      if (isAdminRole(claims?.role)) {
+        router.replace("/admin");
+        return;
+      }
+      // Staff (non-admin) stay on the staff chat.
+      getStaffDashboard(token)
+        .then((dash) => setCases(dash.cases ?? []))
+        .catch((err) =>
+          setCasesError(err instanceof Error ? err.message : "Failed to load cases")
+        );
+    });
+    return () => {
+      mounted = false;
+    };
   }, [router]);
-
-  useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    getStaffDashboard(token)
-      .then((dash) => setCases(dash.cases ?? []))
-      .catch((err) =>
-        setCasesError(err instanceof Error ? err.message : "Failed to load cases")
-      );
-  }, []);
 
   useEffect(() => {
     // Scroll to bottom only when a new message/response begins.
@@ -117,6 +120,7 @@ export default function ChatPage() {
   }, [turns.length, isLoading, pendingQuestion, regeneratingId]);
 
   const handleLogout = useCallback(() => {
+    logout();
     clearToken();
     setRole(null);
     router.push("/login");
@@ -325,7 +329,7 @@ export default function ChatPage() {
           </div>
         </div>
       }
-      user={{ name: "Staff", role: role ?? "Staff" }}
+      user={{ name: userName ?? "Staff", role: role ?? "Staff" }}
       onSettings={() => setSettingsOpen(true)}
       onSignOut={handleLogout}
     >
@@ -492,7 +496,7 @@ export default function ChatPage() {
       <SettingsModal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        user={{ name: "Staff", role: role ?? "Staff" }}
+        user={{ name: userName ?? "Staff", role: role ?? "Staff" }}
         onSignOut={handleLogout}
         onSignOutAll={handleLogout}
         onNewChat={() => setShowClearDialog(true)}

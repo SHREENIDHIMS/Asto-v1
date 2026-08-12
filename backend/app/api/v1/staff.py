@@ -19,12 +19,17 @@ All checks live here on read/write; search-time RBAC is unaffected.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from passlib.hash import bcrypt
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth.rbac import is_admin
 from app.auth.roles_config import can as role_can
+from app.config import settings
 from app.db.postgres.models import (
     case_note_row_to_dict,
     conversation_row_to_dict,
@@ -41,6 +46,8 @@ from app.api.v1.messaging import (
 )
 from app.db.postgres import session
 from app.dependencies import require_auth
+from app.documents.validation import validate_upload
+from app.api.v1.notifications import notify_admins
 
 router = APIRouter()
 
@@ -725,3 +732,180 @@ async def staff_send_message(
             row = dict(cur.fetchone())
         _touch_conversation(conn, conversation_id)
     return {"message": message_row_to_dict(row)}
+
+
+# ---------------------------------------------------------------------------
+# Staff clients (Phase G4) + staff document upload (Phase G1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/clients")
+async def staff_clients(user: dict = Depends(require_auth)) -> dict:
+    """List the staff member's assigned clients with their property data.
+
+    Each client carries their properties, cases, and documents (with
+    approval status). Non-admins only see assigned clients; admins see
+    all. Scoping is enforced in the SQL WHERE clause (CLAUDE.md rule 1).
+    """
+    _require_staff(user)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "SELECT id, email, full_name, is_active, created_at "
+                    "FROM clients WHERE is_active = true ORDER BY full_name, email"
+                )
+            else:
+                cur.execute(
+                    "SELECT cl.id, cl.email, cl.full_name, cl.is_active, cl.created_at "
+                    "FROM clients cl "
+                    "JOIN staff_client_assignments sca ON sca.client_id = cl.id "
+                    "WHERE cl.is_active = true AND sca.user_id = %s "
+                    "ORDER BY cl.full_name, cl.email",
+                    (user["id"],),
+                )
+            client_rows = [dict(row) for row in cur.fetchall()]
+            client_ids = [c["id"] for c in client_rows]
+
+            if not client_ids:
+                return {"clients": []}
+
+            cur.execute(
+                "SELECT id, client_id, address, city, state, postal_code, "
+                "property_type, is_active, created_at "
+                "FROM properties WHERE client_id = ANY(%s) AND is_active = true "
+                "ORDER BY client_id, id",
+                (client_ids,),
+            )
+            property_rows = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                "SELECT id, case_number, client_id, property_id, loan_amount, "
+                "status, is_active, created_at "
+                "FROM cases WHERE client_id = ANY(%s) AND is_active = true "
+                "ORDER BY client_id, id",
+                (client_ids,),
+            )
+            case_rows = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                "SELECT id, title, doc_type, department, source_path, "
+                "client_id, property_id, uploaded_by, approval_status, "
+                "is_approved, version, created_at "
+                "FROM documents WHERE client_id = ANY(%s) AND is_active = true "
+                "ORDER BY client_id, created_at DESC, id DESC",
+                (client_ids,),
+            )
+            document_rows = [dict(row) for row in cur.fetchall()]
+
+    clients = []
+    for c in client_rows:
+        clients.append(
+            {
+                **c,
+                "properties": [p for p in property_rows if p["client_id"] == c["id"]],
+                "cases": [cc for cc in case_rows if cc["client_id"] == c["id"]],
+                "documents": [d for d in document_rows if d["client_id"] == c["id"]],
+            }
+        )
+
+    return {"clients": clients}
+
+
+@router.post("/documents/upload", status_code=status.HTTP_201_CREATED)
+async def staff_upload_document(
+    file: UploadFile = File(...),
+    client_id: int | None = None,
+    property_id: int | None = None,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Accept a staff member's document upload for an assigned client.
+
+    Per CLAUDE.md rule 5: validates and writes to ``storage/pending/``
+    only — ingestion runs separately. A ``<uuid>.meta.json`` sidecar
+    carries ``client_id`` / ``property_id`` / ``uploaded_by`` so the batch
+    ingestion can scope the indexed document and the review pipeline can
+    notify the uploader. The document enters the approval queue as pending.
+    """
+    _require_staff(user)
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No filename provided",
+        )
+
+    if client_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="client_id is required for staff uploads",
+        )
+    _assert_client_visible(user, client_id)
+
+    if property_id is not None:
+        with session.acquire() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM properties "
+                    "WHERE id = %s AND client_id = %s AND is_active = true",
+                    (property_id, client_id),
+                )
+                owned = cur.fetchone()
+        if owned is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Property not found or not owned by this client",
+            )
+
+    file_size = 0
+    content = b""
+    while chunk := await file.read(8192):
+        file_size += len(chunk)
+        content += chunk
+
+    result = validate_upload(file.filename, file_size)
+    if not result.valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.error,
+        )
+
+    pending_dir = Path(settings.storage_pending_dir)
+    pending_dir.mkdir(parents=True, exist_ok=True)
+
+    token = uuid.uuid4().hex
+    unique_name = f"{token}_{file.filename}"
+    dest = pending_dir / unique_name
+    dest.write_bytes(content)
+
+    sidecar = pending_dir / f"{token}.meta.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "client_id": client_id,
+                "property_id": property_id,
+                "uploaded_by": user["id"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with session.acquire() as conn:
+        notify_admins(
+            conn,
+            "document_upload",
+            "New document awaiting review",
+            f"{user.get('name') or user.get('email') or 'A staff member'} uploaded '{file.filename}'.",
+            link=f"/admin?tab=approvals",
+        )
+        conn.commit()
+
+    return {
+        "message": "File uploaded successfully and queued for indexing",
+        "filename": file.filename,
+        "stored_as": str(dest),
+        "size_bytes": file_size,
+        "client_id": client_id,
+        "property_id": property_id,
+    }

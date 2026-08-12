@@ -89,6 +89,7 @@ DDL_STATEMENTS: list[str] = [
         department      TEXT NOT NULL DEFAULT 'general',
         client_id       BIGINT REFERENCES clients(id),
         property_id     BIGINT REFERENCES properties(id),
+        uploaded_by     BIGINT REFERENCES users(id),
         approval_status TEXT NOT NULL DEFAULT 'approved'
                          CHECK (approval_status IN ('pending','approved','rejected')),
         approved_by     BIGINT REFERENCES users(id),
@@ -253,6 +254,64 @@ DDL_STATEMENTS: list[str] = [
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # --- Notifications (generic, Phase G0) ---
+    """
+    CREATE TABLE IF NOT EXISTS notifications (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type       TEXT NOT NULL DEFAULT 'info',
+        title      TEXT NOT NULL,
+        body       TEXT,
+        link       TEXT,
+        is_read    BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Refresh tokens (H1: HttpOnly rotating session cookie) ---
+    # Only the SHA-256 hash of each refresh token is stored, so a DB leak
+    # never exposes a usable credential. user_id XOR client_id is set per
+    # audience; audience is validated on read. Rows are soft-revoked for
+    # logout / rotation / logout-all (H5).
+    """
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id         BIGSERIAL PRIMARY KEY,
+        token_hash TEXT        NOT NULL UNIQUE,
+        user_id    BIGINT      REFERENCES users(id) ON DELETE CASCADE,
+        client_id  BIGINT      REFERENCES clients(id) ON DELETE CASCADE,
+        audience   TEXT        NOT NULL CHECK (audience IN ('staff','client')),
+        expires_at TIMESTAMPTZ NOT NULL,
+        revoked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Password resets (H2: forgot-password flow) ---
+    # One-time, short-lived (1h) reset tokens; only the hash is stored.
+    # identity_id targets users XOR clients depending on audience.
+    """
+    CREATE TABLE IF NOT EXISTS password_resets (
+        id          BIGSERIAL PRIMARY KEY,
+        email       TEXT        NOT NULL,
+        audience    TEXT        NOT NULL CHECK (audience IN ('staff','client')),
+        identity_id BIGINT      NOT NULL,
+        token_hash  TEXT        NOT NULL UNIQUE,
+        expires_at  TIMESTAMPTZ NOT NULL,
+        used_at     TIMESTAMPTZ,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Login attempts (H3: brute-force throttle) ---
+    # Per-email + per-IP evidence for the 5-failure/15m lockout. Rows are
+    # pruned past 24h inside the same transaction that counts them. On a
+    # successful login the email's failure rows are deleted (counter reset).
+    """
+    CREATE TABLE IF NOT EXISTS login_attempts (
+        id           BIGSERIAL PRIMARY KEY,
+        email        TEXT        NOT NULL,
+        ip           TEXT        NOT NULL DEFAULT '',
+        attempted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        success      BOOLEAN     NOT NULL DEFAULT false
+    )
+    """,
 ]
 
 # Idempotent column additions for schemas created before the dual-audience
@@ -260,6 +319,7 @@ DDL_STATEMENTS: list[str] = [
 ALTER_STATEMENTS: list[str] = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES clients(id)",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS property_id BIGINT REFERENCES properties(id)",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_by BIGINT REFERENCES users(id)",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES users(id)",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
@@ -307,6 +367,11 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_conversations_client ON conversations (client_id)",
     "CREATE INDEX IF NOT EXISTS idx_conversations_case ON conversations (case_id)",
     "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages (conversation_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, is_read, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id, client_id, revoked_at)",
+    "CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets (token_hash, used_at)",
+    "CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts (email, attempted_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts (ip, attempted_at DESC)",
 ]
 
 

@@ -1,7 +1,23 @@
-// Client-side JWT auth management
-// No server-side sessions — token lives in browser localStorage.
+// Client-side auth management (Phase H1)
+// The access JWT is kept in JS memory only — never in localStorage, so an
+// XSS payload cannot steal a persistent credential. Long-lived sessions are
+// carried by the HttpOnly asto_refresh cookie (set/revoked by the backend);
+// restoreSession() exchanges it for a fresh access JWT on page load and
+// after any reload.
 
-import { verifyToken } from './api-client';
+import { refreshSession, verifyToken } from './api-client';
+
+const ADMIN_ROLES = ["super_admin", "admin"];
+
+/** True for any role with admin-level access (mirrors backend rbac.ADMIN_ROLES). */
+export function isAdminRole(role: string | null | undefined): boolean {
+  return !!role && ADMIN_ROLES.includes(role);
+}
+
+/** True for any staff-audience role (mirrors backend rbac hierarchy). */
+export function isStaffRole(role: string | null | undefined): boolean {
+  return !!role && role !== "client";
+}
 
 export interface UserSession {
   token: string;
@@ -11,6 +27,7 @@ export interface UserSession {
 
 export interface TokenClaims {
   sub: string;
+  name?: string;
   role: string;
   department: string;
   allowed_departments: string[];
@@ -20,7 +37,9 @@ export interface TokenClaims {
   exp: number;
 }
 
-const TOKEN_KEY = 'asto_auth_token';
+// In-memory access token. Starts null and is populated by storeToken()
+// (right after login) or restoreSession() (on page load via the cookie).
+let memoryToken: string | null = null;
 
 export function decodeToken(token: string): TokenClaims | null {
   try {
@@ -31,30 +50,43 @@ export function decodeToken(token: string): TokenClaims | null {
   }
 }
 
+/** Store the access JWT in memory (login success). Not persisted anywhere. */
 export function storeToken(token: string, remember: boolean = true): void {
-  if (typeof window === 'undefined') return;
-  if (remember) {
-    localStorage.setItem(TOKEN_KEY, token);
-    sessionStorage.removeItem(TOKEN_KEY);
-  } else {
-    sessionStorage.setItem(TOKEN_KEY, token);
-    localStorage.removeItem(TOKEN_KEY);
+  memoryToken = token;
+}
+
+/** The in-memory access token, or null when not restored yet. */
+export function getToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return memoryToken;
+}
+
+/** Forget the in-memory token. Does NOT clear the server cookie — call
+ *  logout() from api-client for that. */
+export function clearToken(): void {
+  memoryToken = null;
+}
+
+/**
+ * Restore the session: reuse the in-memory token, else exchange the
+ * HttpOnly refresh cookie for a fresh access JWT. Returns the token or null
+ * when no (valid) session exists. Call from every page gate before reading
+ * getToken() after a hard navigation.
+ */
+export async function restoreSession(): Promise<string | null> {
+  if (memoryToken) return memoryToken;
+  try {
+    const result = await refreshSession();
+    memoryToken = result.access_token;
+    return memoryToken;
+  } catch {
+    return null;
   }
 }
 
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY);
-}
-
-export function clearToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(TOKEN_KEY);
-}
-
+/** Resolve the current session, restoring it from the cookie if needed. */
 export async function getSession(): Promise<UserSession | null> {
-  const token = getToken();
+  const token = await restoreSession();
   if (!token) return null;
 
   try {

@@ -155,6 +155,20 @@ def message_row_to_dict(row: dict) -> dict:
     }
 
 
+def notification_row_to_dict(row: dict) -> dict:
+    """Shape a notifications table row for JSON responses."""
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "type": row["type"],
+        "title": row["title"],
+        "body": row.get("body"),
+        "link": row.get("link"),
+        "is_read": row["is_read"],
+        "created_at": row.get("created_at"),
+    }
+
+
 def audit_row_to_dict(row: dict) -> dict:
     """Shape an audit_log table row for JSON responses (Phase F7).
 
