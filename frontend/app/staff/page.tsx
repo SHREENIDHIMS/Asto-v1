@@ -35,6 +35,7 @@ import {
   getStaffClients,
   staffUploadDocument,
   logout,
+  logoutAll,
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
@@ -48,10 +49,11 @@ import {
   SopAccessRequest,
   Conversation,
 } from "@/lib/api-client";
-import { clearToken, decodeToken, isAdminRole, restoreSession } from "@/lib/auth";
+import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ConversationThread from "@/components/messages/ConversationThread";
+import SettingsModal from "@/components/settings/SettingsModal";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1578,6 +1580,7 @@ export default function StaffPage() {
   const [userRole, setUserRole] = useState<string | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refreshNotifications = useCallback(async () => {
     if (!token) return;
@@ -1643,6 +1646,19 @@ export default function StaffPage() {
     router.push("/login");
   }, [router]);
 
+  const handleLogoutAll = useCallback(async () => {
+    const t = getToken();
+    if (t) {
+      try {
+        await logoutAll(t);
+      } catch {
+        // best-effort; local session is cleared regardless
+      }
+    }
+    clearToken();
+    router.push("/login");
+  }, [router]);
+
   if (!isStaff || !token) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -1677,6 +1693,7 @@ export default function StaffPage() {
       }
       user={{ name: userName ?? "Staff", role: userRole ?? "Staff" }}
       onSignOut={handleLogout}
+      onSettings={() => setSettingsOpen(true)}
       onNotifications={() => setNotificationsOpen(true)}
       notificationCount={unreadCount}
     >
@@ -1748,6 +1765,14 @@ export default function StaffPage() {
       onOpenChange={setNotificationsOpen}
       token={token}
       onCountChange={setUnreadCount}
+    />
+
+    <SettingsModal
+      open={settingsOpen}
+      onOpenChange={setSettingsOpen}
+      user={{ name: userName ?? "Staff", role: userRole ?? "Staff" }}
+      onSignOut={handleLogout}
+      onSignOutAll={handleLogoutAll}
     />
     </>
   );

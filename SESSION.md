@@ -298,6 +298,51 @@ refresh cookie fails `/auth/refresh` (401) while a fresh login still works;
 `/auth/change-password` endpoint already exists for both audiences; needs
 the frontend Settings wiring).
 
+### Session 17 — 2026-08-12 (Phase H6 — password change UI, staff + client)
+
+**Context:** `POST /auth/change-password` (both audiences, current-password
+verify, strength rules) already existed behind H2-era work, and the client
+portal wired it through `SettingsModal`. Two gaps closed this session.
+
+**Backend — revoke sessions after change (ROADMAP H6 step 1):** the
+endpoint only updated `password_hash`; it now also revokes every live
+`refresh_tokens` row for the identity (`user_id`/`client_id` + audience
+scoped) so a stolen session dies the moment the password changes. The
+current access token keeps working until expiry. Wrong-current / weak-new
+behavior unchanged.
+
+**Tests:** `tests/unit/test_change_password.py` extended — asserts the
+`UPDATE refresh_tokens` statement runs for staff (`user_id` + `'staff'`)
+and client (`client_id` + `'client'`) after a successful change. Suite:
+**448 passed**.
+
+**Frontend — staff/admin Settings wiring (ROADMAP H6 step 2):** the
+AppShell "Settings" button was a no-op on the staff and admin pages because
+neither passed `onSettings`. Both now render `SettingsModal` (which includes
+the Change-password form), so staff and admins can rotate their passwords:
+- `app/staff/page.tsx`: `settingsOpen` state, `onSettings` on AppShell, and
+  `<SettingsModal>` with `user` + sign-out handlers.
+- `app/admin/page.tsx`: same (return now wrapped in a fragment for the
+  sibling modal).
+- Both also got a real `handleLogoutAll` (calls `logoutAll(token)` then
+  clears the local session) instead of reusing plain logout.
+- Fixed the same pre-existing shortcut on `app/page.tsx` (staff chat) and
+  `app/client/page.tsx`: the "Sign out on all devices" button called local
+  logout only — it now actually calls `POST /auth/logout-all` (H5's
+  endpoint) via the new `handleLogoutAll`.
+- `tsc --noEmit` + `next lint` clean.
+
+**Live verified:** rebuilt + recreated `asto-backend` + `frontend`. For a
+staff user: wrong current password → 401, weak new password → 422, correct
+change → 200 `{"updated":true}`; the old password then fails login while the
+new password succeeds, and the pre-change refresh cookie is rejected at
+`/auth/refresh` (401) — confirming the H6 session revocation. `/admin`
+serves 200.
+
+**Docs:** `docs/ROADMAP.md` H6 ticked; this SESSION.md entry.
+
+**Next:** H4 — admin 2FA (TOTP), the last open Phase H item.
+
 ### Session 4 — 2026-08-08 (Phase D — frontend: chat UX, client portal, admin dashboard)
 
 **Done (Phase D):**

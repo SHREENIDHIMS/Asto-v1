@@ -107,6 +107,9 @@ class TestChangePasswordBehavior:
         new_hash = calls[1].args[1][0]
         assert bcrypt.verify(NEW_PW, new_hash)
         assert calls[1].args[1][1] == STAFF_USER["id"]
+        assert "UPDATE refresh_tokens" in calls[2].args[0]
+        assert "user_id" in calls[2].args[0]
+        assert calls[2].args[1][0] == STAFF_USER["id"]
         conn.commit.assert_called_once()
         conn.cursor.return_value.close.assert_called_once()
 
@@ -118,6 +121,10 @@ class TestChangePasswordBehavior:
         calls = conn.cursor.return_value.execute.call_args_list
         assert "FROM clients" in calls[0].args[0]
         assert "UPDATE clients SET password_hash" in calls[1].args[0]
+        assert "UPDATE refresh_tokens" in calls[2].args[0]
+        assert "client_id" in calls[2].args[0]
+        assert "'client'" in calls[2].args[0]
+        assert calls[2].args[1][0] == CLIENT_USER["id"]
         conn.commit.assert_called_once()
 
     def test_unknown_audience_defaults_to_users(self, authorized_client):

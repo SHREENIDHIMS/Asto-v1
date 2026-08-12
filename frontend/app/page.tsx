@@ -11,6 +11,7 @@ import {
 import {
   getStaffDashboard,
   logout,
+  logoutAll,
   searchKnowledgeBaseStream,
   SearchResponse,
   SearchStage,
@@ -121,6 +122,20 @@ export default function ChatPage() {
 
   const handleLogout = useCallback(() => {
     logout();
+    clearToken();
+    setRole(null);
+    router.push("/login");
+  }, [router]);
+
+  const handleLogoutAll = useCallback(async () => {
+    const t = getToken();
+    if (t) {
+      try {
+        await logoutAll(t);
+      } catch {
+        // best-effort; local session is cleared regardless
+      }
+    }
     clearToken();
     setRole(null);
     router.push("/login");
@@ -498,7 +513,7 @@ export default function ChatPage() {
         onOpenChange={setSettingsOpen}
         user={{ name: userName ?? "Staff", role: role ?? "Staff" }}
         onSignOut={handleLogout}
-        onSignOutAll={handleLogout}
+        onSignOutAll={handleLogoutAll}
         onNewChat={() => setShowClearDialog(true)}
         onClearHistory={() => {
           clearHistory();

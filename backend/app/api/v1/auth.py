@@ -695,6 +695,23 @@ async def change_password(
                 f"UPDATE {table} SET password_hash = %s WHERE id = %s",
                 (new_hash, user_id),
             )
+            # Revoke every other live refresh session for this identity so a
+            # stolen session dies on password change (H6). The current request
+            # carries an access token and keeps working until expiry.
+            if table == "clients":
+                cur.execute(
+                    "UPDATE refresh_tokens SET revoked_at = now() "
+                    "WHERE client_id = %s AND audience = 'client' "
+                    "AND revoked_at IS NULL",
+                    (user_id,),
+                )
+            else:
+                cur.execute(
+                    "UPDATE refresh_tokens SET revoked_at = now() "
+                    "WHERE user_id = %s AND audience = 'staff' "
+                    "AND revoked_at IS NULL",
+                    (user_id,),
+                )
             conn.commit()
         finally:
             cur.close()

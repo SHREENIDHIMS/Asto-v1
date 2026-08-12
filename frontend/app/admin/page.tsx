@@ -24,6 +24,7 @@ import {
   listPendingDocuments,
   approveDocument,
   logout,
+  logoutAll,
   rejectDocument,
   getDocumentHistory,
   updateDocumentMetadata,
@@ -64,9 +65,10 @@ import {
   AdminClient,
   KnowledgeGap,
 } from "@/lib/api-client";
-import { clearToken, decodeToken, isAdminRole, restoreSession } from "@/lib/auth";
+import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
+import SettingsModal from "@/components/settings/SettingsModal";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -2364,6 +2366,7 @@ export default function AdminPage() {
   const [activeNavId, setActiveNavId] = useState("dashboard");
   const [userName, setUserName] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -2399,6 +2402,19 @@ export default function AdminPage() {
     router.push("/login");
   }, [router]);
 
+  const handleLogoutAll = useCallback(async () => {
+    const t = getToken();
+    if (t) {
+      try {
+        await logoutAll(t);
+      } catch {
+        // best-effort; local session is cleared regardless
+      }
+    }
+    clearToken();
+    router.push("/login");
+  }, [router]);
+
   if (!isAdmin || !token) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -2408,7 +2424,8 @@ export default function AdminPage() {
   }
 
   return (
-    <AppShell
+    <>
+      <AppShell
       navGroups={NAV_GROUPS.admin}
       activeNavId={activeNavId}
       onNavigate={(id) => setActiveNavId(id)}
@@ -2426,6 +2443,7 @@ export default function AdminPage() {
       }
       user={{ name: userName ?? "Administrator", role: userRole ?? "admin" }}
       onSignOut={handleLogout}
+      onSettings={() => setSettingsOpen(true)}
     >
       <div className="max-w-5xl mx-auto px-4 py-8 flex-1 overflow-y-auto">
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
@@ -2489,5 +2507,14 @@ export default function AdminPage() {
         </footer>
       </div>
     </AppShell>
+
+    <SettingsModal
+      open={settingsOpen}
+      onOpenChange={setSettingsOpen}
+      user={{ name: userName ?? "Administrator", role: userRole ?? "admin" }}
+      onSignOut={handleLogout}
+      onSignOutAll={handleLogoutAll}
+    />
+    </>
   );
 }

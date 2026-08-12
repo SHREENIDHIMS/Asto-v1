@@ -37,6 +37,7 @@ import {
   getClientPropertyDocuments,
   openBlobInNewTab,
   logout,
+  logoutAll,
   searchKnowledgeBaseStream,
   sendClientMessage,
   SearchResponse,
@@ -1172,6 +1173,19 @@ export default function ClientPage() {
     router.push("/login");
   }, [router]);
 
+  const handleLogoutAll = useCallback(async () => {
+    const t = getToken();
+    if (t) {
+      try {
+        await logoutAll(t);
+      } catch {
+        // best-effort; local session is cleared regardless
+      }
+    }
+    clearToken();
+    router.push("/login");
+  }, [router]);
+
   const handleNewChat = useCallback(() => {
     sessions.createSession();
     setView("chat");
@@ -1492,7 +1506,7 @@ export default function ClientPage() {
         role: "Client",
       }}
       onSignOut={handleLogout}
-      onSignOutAll={handleLogout}
+      onSignOutAll={handleLogoutAll}
       onNewChat={handleNewChat}
       onClearHistory={() => {
         sessions.clearAllSessions();
