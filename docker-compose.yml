@@ -77,6 +77,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Same-origin /api/v1 through nginx's proxy (CSP blocks cross-origin
+        # fetches to localhost:8011 from the 3011 origin).
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-/api/v1}"
     container_name: asto_frontend
     restart: unless-stopped
     depends_on:
