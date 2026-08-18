@@ -50,15 +50,38 @@ from app.response.confidence_thresholds import route_by_confidence
 from app.response.package_builder import build_response_package
 from app.response.validation import validate_package
 from app.search.hybrid_orchestrator import search_knowledge_base
+from app.search.suggest import suggest_queries
 
 router = APIRouter()
 
 STAGES = ["processing", "searching", "ranking", "packaging", "done"]
 
 
+class SearchFilters(BaseModel):
+    """Optional faceted filters folded into the document-path SQL WHERE.
+
+    Each filter narrows the candidate set at query time alongside the RBAC
+    clause (CLAUDE.md rule #1) — a filter can only ever restrict, never
+    widen, the user's scope. ``client_id`` is additionally bounded by the
+    staff/assigned-client RBAC clause, so staff can't filter to clients
+    they aren't assigned.
+    """
+
+    departments: list[str] | None = None
+    doc_types: list[str] | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    client_id: int | None = None
+
+
 class SearchRequest(BaseModel):
     query: str
     case_id: int | None = None
+    filters: SearchFilters | None = None
+
+
+class SuggestResponse(BaseModel):
+    suggestions: list[str]
 
 
 class SearchResponse(BaseModel):
@@ -90,6 +113,7 @@ def _serialize(package) -> dict:
                     "chunk_type": e.source.chunk_type,
                 },
                 "confidence": e.confidence,
+                "matched_terms": e.matched_terms,
             }
             for e in package.excerpts
         ],
@@ -101,6 +125,7 @@ def _serialize(package) -> dict:
                     "section": s.source_section,
                     "chunk_type": s.chunk_type,
                 },
+                "matched_terms": s.matched_terms,
             }
             for s in package.summary
         ],
@@ -123,7 +148,9 @@ def _serialize(package) -> dict:
     return payload
 
 
-def _no_sub_queries_response(user_id, query: str, start_ms: float) -> SearchResponse:
+def _no_sub_queries_response(
+    user_id, query: str, start_ms: float, audience: str | None = None
+) -> SearchResponse:
     log_query(AuditLogEntry(
         user_id=user_id,
         query=query,
@@ -133,6 +160,7 @@ def _no_sub_queries_response(user_id, query: str, start_ms: float) -> SearchResp
         response_id="",
         outcome="no_sub_queries",
         latency_ms=time.time() * 1000 - start_ms,
+        audience=audience,
     ))
     return SearchResponse(
         response_id="",
@@ -171,6 +199,7 @@ def _log_audit(
     response_id: str,
     outcome: str,
     latency_ms: float,
+    audience: str | None = None,
 ) -> None:
     log_query(AuditLogEntry(
         user_id=user_id,
@@ -181,6 +210,7 @@ def _log_audit(
         response_id=response_id,
         outcome=outcome,
         latency_ms=latency_ms,
+        audience=audience,
     ))
 
 
@@ -188,6 +218,7 @@ def _run_pipeline(
     query: str,
     user: dict,
     case_id: int | None = None,
+    filters: SearchFilters | None = None,
     emit: Callable[[str, dict], None] | None = None,
 ) -> SearchResponse:
     """Execute the full search pipeline and return a SearchResponse.
@@ -217,7 +248,9 @@ def _run_pipeline(
     plan = process_query(query)
 
     if not plan.sub_queries:
-        return _no_sub_queries_response(user["id"], query, start_ms)
+        return _no_sub_queries_response(
+            user["id"], query, start_ms, audience=user.get("audience")
+        )
 
     sub_query_texts = [sq.expanded for sq in plan.sub_queries]
     sub_query_displays = [sq.display for sq in plan.sub_queries]
@@ -248,6 +281,7 @@ def _run_pipeline(
             response_id=fact_package.response_id,
             outcome=fact_package.routing,
             latency_ms=round(latency_ms, 1),
+            audience=user.get("audience"),
         )
 
         payload = _serialize(fact_package)
@@ -262,6 +296,7 @@ def _run_pipeline(
             conn=conn,
             sub_queries=sub_query_texts,
             user=user,
+            filters=filters,
         )
 
     chunk_lookup = {c.chunk_id: c.__dict__ for c in result.candidates}
@@ -339,6 +374,7 @@ def _run_pipeline(
             response_id=package.response_id,
             outcome=f"validation_failed:{reason}",
             latency_ms=time.time() * 1000 - start_ms,
+            audience=user.get("audience"),
         ))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -355,6 +391,7 @@ def _run_pipeline(
         response_id=package.response_id,
         outcome=package.routing,
         latency_ms=round(latency_ms, 1),
+        audience=user.get("audience"),
     )
 
     if not package.related_questions:
@@ -366,7 +403,7 @@ def _run_pipeline(
 
     for s in payload["summary"]:
         if emit:
-            emit("sentence", {"text": s["text"], "source": s.get("source")})
+            emit("sentence", {"text": s["text"], "source": s.get("source"), "matched_terms": s.get("matched_terms", [])})
     status("done")
     return SearchResponse(**payload)
 
@@ -377,7 +414,23 @@ async def search(
     user: Annotated[dict, Depends(require_auth)],
 ) -> SearchResponse:
     """Search the knowledge base for the user's query (sync, JSON)."""
-    return _run_pipeline(request.query, user, case_id=request.case_id)
+    return _run_pipeline(request.query, user, case_id=request.case_id, filters=request.filters)
+
+
+@router.get("/suggest", response_model=SuggestResponse)
+async def suggest(
+    q: str,
+    user: Annotated[dict, Depends(require_auth)],
+) -> SuggestResponse:
+    """Return prefix-matched suggestions from past successful queries.
+
+    Scoped to the caller (J4): clients see their own queries, staff see
+    queries from their department scope, admins see all. Empty prefix
+    returns an empty list.
+    """
+    with session.acquire() as conn:
+        suggestions = suggest_queries(conn=conn, prefix=q, user=user)
+    return SuggestResponse(suggestions=suggestions)
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -421,6 +474,7 @@ async def search_stream(
                 request.query,
                 user,
                 case_id=request.case_id,
+                filters=request.filters,
                 emit=emit,
             )
             queue.put_nowait(("result", result))

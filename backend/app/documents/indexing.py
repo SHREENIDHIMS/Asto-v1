@@ -15,6 +15,7 @@ from psycopg import Connection
 
 from app.db.postgres.models import content_hash
 from app.documents.chunking.structural_chunker import Chunk
+from app.documents.pii_check import has_pii
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,12 @@ def index_document(
     assert len(chunks) == (len(embeddings) if embeddings else 0) or not embeddings
     is_approved = approval_status == "approved"
 
+    # Heuristic PII scan (I6, batch-only). Flags per-chunk content so the admin
+    # review queue can gate "publish anyway". Document-level flag is true if
+    # ANY chunk contains likely PII.
+    chunk_pii = [has_pii(c.content) for c in chunks]
+    doc_pii_flagged = any(chunk_pii)
+
     with conn.cursor() as cur:
         # Re-upload = version bump: if an active document with the same
         # title/department/client already exists, deactivate it and carry
@@ -89,43 +96,42 @@ def index_document(
             INSERT INTO documents
                 (title, doc_type, department, source_path,
                  client_id, property_id, uploaded_by,
-                 approval_status, is_approved, version)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 approval_status, is_approved, version, pii_flagged)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (doc_title, doc_type, department, source_path,
              client_id, property_id, uploaded_by,
-             approval_status, is_approved, version),
+             approval_status, is_approved, version, doc_pii_flagged),
         )
         document_id = cur.fetchone()["id"]
         logger.info(
-            "Indexing document '%s' (id=%d, version=%d, approval_status=%s)",
-            doc_title, document_id, version, approval_status,
+            "Indexing document '%s' (id=%d, version=%d, approval_status=%s, pii=%s)",
+            doc_title, document_id, version, approval_status, doc_pii_flagged,
         )
 
-    indexed = 0
-    skipped = 0
-    seen_hashes: set[str] = set()
+        indexed = 0
+        skipped = 0
+        seen_hashes: set[str] = set()
 
-    for i, chunk in enumerate(chunks):
-        ch = content_hash(chunk.content)
-        if ch in seen_hashes:
-            skipped += 1
-            continue
-        seen_hashes.add(ch)
+        for i, chunk in enumerate(chunks):
+            ch = content_hash(chunk.content)
+            if ch in seen_hashes:
+                skipped += 1
+                continue
+            seen_hashes.add(ch)
 
-        embedding = (
-            embeddings[i] if embeddings else None
-        )
+            embedding = (
+                embeddings[i] if embeddings else None
+            )
 
-        with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO document_chunks
                     (document_id, content, content_hash, embedding,
                      section, chunk_type, department,
-                     approval_status, is_approved)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     approval_status, is_approved, pii_flagged)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (content_hash) DO NOTHING
                 """,
                 (
@@ -138,6 +144,7 @@ def index_document(
                     department,
                     approval_status,
                     is_approved,
+                    chunk_pii[i],
                 ),
             )
             if cur.rowcount > 0:

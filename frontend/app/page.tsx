@@ -4,15 +4,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
+  Bookmark,
   MessageSquarePlus,
   Sparkles,
   Trash2,
 } from "lucide-react";
 import {
   getStaffDashboard,
+  listSavedSearches,
   logout,
   logoutAll,
+  saveSearch,
+  deleteSavedSearch,
+  SavedSearch,
   searchKnowledgeBaseStream,
+  SearchFilters,
   SearchResponse,
   SearchStage,
   StaffDashboardCase,
@@ -24,6 +30,7 @@ import { useChatHistory } from "@/hooks/use-chat-history";
 import ChatMessage from "@/components/chat/ChatMessage";
 import StreamingPreview from "@/components/chat/StreamingPreview";
 import SearchBar from "@/components/search/SearchBar";
+import SearchFilterBar from "@/components/search/SearchFilterBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
 import HeroSection from "@/components/home/HeroSection";
 import SettingsModal from "@/components/settings/SettingsModal";
@@ -81,6 +88,11 @@ export default function ChatPage() {
   const [cases, setCases] = useState<StaffDashboardCase[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState<number | null>(null);
   const [casesError, setCasesError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<SearchFilters>({});
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
+  const [savedSearchesError, setSavedSearchesError] = useState<string | null>(null);
+  const [savingSearch, setSavingSearch] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -93,6 +105,13 @@ export default function ChatPage() {
       const claims = decodeToken(token);
       setRole(claims?.role ?? null);
       setUserName(claims?.name ?? claims?.sub ?? null);
+      setDepartments(
+        claims?.allowed_departments?.length
+          ? claims.allowed_departments
+          : claims?.department
+            ? [claims.department]
+            : []
+      );
       // Auto-route each identity to its own interface.
       if (claims?.audience === "client") {
         router.replace("/client");
@@ -107,6 +126,13 @@ export default function ChatPage() {
         .then((dash) => setCases(dash.cases ?? []))
         .catch((err) =>
           setCasesError(err instanceof Error ? err.message : "Failed to load cases")
+        );
+      listSavedSearches(token)
+        .then((searches) => setSavedSearches(searches))
+        .catch((err) =>
+          setSavedSearchesError(
+            err instanceof Error ? err.message : "Failed to load saved searches"
+          )
         );
     });
     return () => {
@@ -201,7 +227,8 @@ export default function ChatPage() {
           onFact: (f) => setStreamFacts((prev) => [...prev, f]),
           onSentence: (s) => setStreamSentences((prev) => [...prev, s]),
         },
-        selectedCaseId
+        selectedCaseId,
+        filters
       );
       appendTurn(q, result);
       setPendingQuestion(null);
@@ -241,7 +268,8 @@ export default function ChatPage() {
             onFact: (f) => setStreamFacts((prev) => [...prev, f]),
             onSentence: (s) => setStreamSentences((prev) => [...prev, s]),
           },
-          selectedCaseId
+          selectedCaseId,
+          filters
         );
         // Replace the assistant response in place — do not append.
         replaceTurnResponse(turnId, result);
@@ -257,7 +285,7 @@ export default function ChatPage() {
         setRegeneratingId(null);
       }
     },
-    [isLoading, replaceTurnResponse, selectedCaseId]
+    [isLoading, replaceTurnResponse, selectedCaseId, filters]
   );
 
   const handleOpenRecentChat = useCallback(
@@ -269,6 +297,43 @@ export default function ChatPage() {
     },
     []
   );
+
+  const handleSaveSearch = useCallback(async () => {
+    const token = getToken();
+    if (!token || turns.length === 0 || savingSearch) return;
+    const lastTurn = turns[turns.length - 1];
+    setSavingSearch(true);
+    try {
+      const saved = await saveSearch(token, lastTurn.query, filters);
+      setSavedSearches((prev) => [saved, ...prev].slice(0, 50));
+    } catch (err) {
+      setSavedSearchesError(
+        err instanceof Error ? err.message : "Failed to save search"
+      );
+    } finally {
+      setSavingSearch(false);
+    }
+  }, [turns, filters, savingSearch]);
+
+  const handleDeleteSavedSearch = useCallback(async (id: number) => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      await deleteSavedSearch(token, id);
+      setSavedSearches((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setSavedSearchesError(
+        err instanceof Error ? err.message : "Failed to delete saved search"
+      );
+    }
+  }, []);
+
+  const handleRunSavedSearch = (saved: SavedSearch) => {
+    if (saved.filters && Object.keys(saved.filters).length > 0) {
+      setFilters(saved.filters);
+    }
+    handleSearch(saved.query);
+  };
 
   return (
     <>
@@ -339,6 +404,52 @@ export default function ChatPage() {
                       </Button>
                     </div>
                   ))
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-1">
+              <p className="text-xs font-medium text-muted-foreground">
+                Saved searches
+              </p>
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+              {savedSearchesError && (
+                <p className="text-xs text-destructive px-1 py-1">
+                  {savedSearchesError}
+                </p>
+              )}
+              {!savedSearchesError && savedSearches.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-1 py-1">
+                  No saved searches
+                </p>
+              ) : (
+                savedSearches.map((s) => (
+                  <div
+                    key={s.id}
+                    className="group flex items-center gap-1"
+                  >
+                    <button
+                      type="button"
+                      className="flex-1 justify-start gap-2 font-normal text-sm h-8 px-2 text-left rounded-md hover:bg-muted"
+                      onClick={() => handleRunSavedSearch(s)}
+                      title={s.query}
+                    >
+                      <span className="truncate text-xs">{s.query}</span>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 flex-shrink-0 opacity-0 group-hover:opacity-100"
+                      onClick={() => handleDeleteSavedSearch(s.id)}
+                      aria-label={`Delete saved search "${s.query}"`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))
               )}
             </div>
           </div>
@@ -473,6 +584,29 @@ export default function ChatPage() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="max-w-3xl mx-auto mb-2 flex items-center gap-2">
+            {turns.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSaveSearch}
+                disabled={savingSearch}
+                className="text-xs"
+              >
+                <Bookmark className="h-3.5 w-3.5 mr-1.5" />
+                {savingSearch ? "Saving…" : "Save this search"}
+              </Button>
+            )}
+          </div>
+          <div className="max-w-3xl mx-auto mb-2">
+            <SearchFilterBar
+              departments={departments}
+              cases={cases}
+              active={filters}
+              onChange={setFilters}
+            />
           </div>
           <SearchBar
             onSearch={handleSearch}

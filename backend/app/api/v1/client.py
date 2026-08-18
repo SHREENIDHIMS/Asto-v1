@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Form, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
@@ -39,6 +40,7 @@ from app.api.v1.messaging import (
 )
 from app.documents.file_serve import resolve_stored_file
 from app.documents.validation import validate_upload
+from app.documents.watermark import watermark_bytes
 
 router = APIRouter()
 
@@ -76,7 +78,7 @@ async def client_me(user: dict = Depends(require_auth)) -> dict:
     with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, email, full_name, is_active, created_at "
+                "SELECT id, email, full_name, is_active, created_at, notification_prefs "
                 "FROM clients WHERE id = %s",
                 (user["client_id"],),
             )
@@ -214,22 +216,109 @@ async def client_case_detail(
 
 
 @router.get("/documents")
-async def client_documents(user: dict = Depends(require_auth)) -> dict:
-    """Return the client's own approved documents (never pending/rejected)."""
+async def client_documents(
+    user: dict = Depends(require_auth),
+    tag: str | None = None,
+) -> dict:
+    """Return the client's own approved documents (never pending/rejected).
+
+    ``?tag=name`` narrows to documents carrying that tag (I8).
+    """
     _require_client(user)
+    tag_clause = ""
+    params: list = [user["client_id"]]
+    if tag is not None:
+        tag = tag.strip().lower()
+        params.append(tag)
+        tag_clause = "AND %s = ANY(tags) "
     with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, title, source_path, doc_type, department, "
-                "version, property_id, created_at "
+                "version, property_id, created_at, tags "
                 "FROM documents "
                 "WHERE client_id = %s AND is_active = true AND is_approved = true "
+                f"{tag_clause}"
                 "ORDER BY created_at DESC",
+                params,
+            )
+            documents = [dict(row) for row in cur.fetchall()]
+
+    return {"documents": documents}
+
+
+@router.get("/documents/rejected")
+async def client_rejected_documents(user: dict = Depends(require_auth)) -> dict:
+    """Return the client's rejected documents with the latest rejection reason.
+
+    Rejected docs are hidden from the approved list (and from search) but
+    must stay visible to the uploader so they can see why and upload a
+    corrected version (I3). The latest rejection reason is embedded per doc.
+    """
+    _require_client(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT d.id, d.title, d.source_path, d.doc_type, d.department,
+                       d.version, d.property_id, d.created_at,
+                       r.reason AS rejection_reason,
+                       r.created_at AS rejected_at
+                FROM documents d
+                LEFT JOIN LATERAL (
+                    SELECT al.reason, al.created_at
+                    FROM approval_log al
+                    WHERE al.document_id = d.id AND al.to_status = 'rejected'
+                    ORDER BY al.id DESC
+                    LIMIT 1
+                ) r ON true
+                WHERE d.client_id = %s
+                  AND d.is_active = true
+                  AND d.approval_status = 'rejected'
+                ORDER BY d.created_at DESC
+                """,
                 (user["client_id"],),
             )
             documents = [dict(row) for row in cur.fetchall()]
 
     return {"documents": documents}
+
+
+@router.get("/documents/{document_id}/rejections")
+async def client_document_rejections(
+    document_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return the full rejection history for one of the client's own documents.
+
+    Scoping is enforced in the SQL WHERE clause (CLAUDE.md rule 1): the
+    document must belong to the authenticated client.
+    """
+    _require_client(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM documents WHERE id = %s AND client_id = %s",
+                (document_id, user["client_id"]),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Document not found",
+                )
+            cur.execute(
+                """
+                SELECT al.id, al.reason, al.created_at, u.email AS reviewed_by_email
+                FROM approval_log al
+                LEFT JOIN users u ON u.id = al.reviewed_by
+                WHERE al.document_id = %s AND al.to_status = 'rejected'
+                ORDER BY al.id DESC
+                """,
+                (document_id,),
+            )
+            rejections = [dict(row) for row in cur.fetchall()]
+
+    return {"document_id": document_id, "rejections": rejections}
 
 
 @router.get("/properties/{property_id}/documents")
@@ -259,6 +348,8 @@ async def client_property_documents(
 @router.post("/documents/upload")
 async def client_upload_document(
     file: UploadFile = File(...),
+    doc_type: str = Form(default="policy"),
+    title: str = Form(...),
     property_id: int | None = None,
     user: dict = Depends(require_auth),
 ) -> dict:
@@ -266,9 +357,12 @@ async def client_upload_document(
 
     Per CLAUDE.md rule 5: validates and writes to ``storage/pending/``
     only â€” ingestion runs separately. A ``<uuid>.meta.json`` sidecar
-    carries the ``client_id``/``property_id`` so the batch ingestion can
-    scope the indexed document. The document enters the approval queue as
-    pending and is searchable only after an admin approves it.
+    carries the ``client_id``/``property_id``/``doc_type``/``title`` so the
+    batch ingestion can scope the indexed document. The document enters the
+    approval queue as pending and is searchable only after an admin approves it.
+
+    ``doc_type`` and ``title`` are required; ``property_id`` is optional and
+    must reference a property the client owns.
     """
     _require_client(user)
 
@@ -280,6 +374,18 @@ async def client_upload_document(
 
     if property_id is not None:
         _assert_owns_property(user, property_id)
+
+    # Validate required metadata fields
+    if not doc_type.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="doc_type is required and must not be empty",
+        )
+    if not title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="title is required and must not be empty",
+        )
 
     file_size = 0
     content = b""
@@ -304,7 +410,14 @@ async def client_upload_document(
 
     sidecar = pending_dir / f"{token}.meta.json"
     sidecar.write_text(
-        json.dumps({"client_id": user["client_id"], "property_id": property_id}),
+        json.dumps(
+            {
+                "client_id": user["client_id"],
+                "property_id": property_id,
+                "doc_type": doc_type.strip(),
+                "title": title.strip(),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -313,6 +426,8 @@ async def client_upload_document(
         "filename": file.filename,
         "stored_as": str(dest),
         "size_bytes": file_size,
+        "doc_type": doc_type.strip(),
+        "title": title.strip(),
         "property_id": property_id,
     }
 
@@ -325,7 +440,9 @@ async def client_document_file(
     """Serve a client's own approved document file (never pending/rejected).
 
     Scoping is enforced by ``client_id`` from the JWT â€” the document
-    must belong to the authenticated client AND be approved.
+    must belong to the authenticated client AND be approved. The served
+    copy is stamped with a "Viewed by {client} on {date}" watermark (I5);
+    staff/admin file endpoints are untouched.
     """
     _require_client(user)
     with session.acquire() as conn:
@@ -344,10 +461,34 @@ async def client_document_file(
             detail="Document not found or not accessible",
         )
 
+    viewer_name = user.get("full_name")
+    if not viewer_name:
+        with session.acquire() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT full_name FROM clients WHERE id = %s",
+                    (user["client_id"],),
+                )
+                client_row = cur.fetchone()
+        viewer_name = client_row["full_name"] if client_row else "the client"
+
     file_path = resolve_stored_file(row["source_path"])
-    return FileResponse(
-        file_path,
-        filename=row["title"] or file_path.name,
+    raw = file_path.read_bytes()
+    watermarked = watermark_bytes(raw, file_path.name, viewer_name)
+
+    if watermarked == raw:
+        return FileResponse(
+            file_path,
+            filename=row["title"] or file_path.name,
+        )
+
+    media_type = "application/pdf" if file_path.name.lower().endswith(".pdf") else None
+    return Response(
+        content=watermarked,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{row["title"] or file_path.name}"'
+        },
     )
 
 
@@ -463,3 +604,285 @@ async def client_send_message(
             row = dict(cur.fetchone())
         _touch_conversation(conn, conversation_id)
     return {"message": message_row_to_dict(row)}
+
+
+# ---------------------------------------------------------------------------
+# Case checklist (K1: Document checklist derived from case type)
+# ---------------------------------------------------------------------------
+
+CASE_CHECKLIST_DEFAULTS: dict[str, list[str]] = {
+    "mortgage": [
+        "Income verification",
+        "Property appraisal",
+        "Title search",
+        "DTI ratio calculation",
+        "Down payment documentation",
+    ],
+    "refinance": [
+        "Current mortgage statement",
+        "Income verification",
+        "Credit report",
+        "Property appraisal",
+        "Closing disclosure",
+    ],
+    "home equity": [
+        "Income verification",
+        "Credit report",
+        "Appraisal",
+        "Loan-to-value calculation",
+        "Title search",
+    ],
+}
+
+
+def _derive_case_checklist(case_number: str | None) -> list[str]:
+    """Derive checklist items from the case number prefix (case type)."""
+    if not case_number:
+        return []
+    prefix = case_number.split("-")[0].lower() if "-" in case_number else case_number.lower()
+    return CASE_CHECKLIST_DEFAULTS.get(prefix, [])
+
+
+@router.get("/cases/{case_id}/checklist")
+async def client_case_checklist(
+    case_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return the document checklist for one of the client's own cases.
+
+    Derives required items from the case type (case number prefix),
+    then checks which have been satisfied by approved documents.
+    Scoping is enforced in the SQL WHERE clause (CLAUDE.md rule 1).
+    """
+    _require_client(user)
+    _assert_owns_case(user, case_id)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # Get case number to determine checklist type
+            cur.execute(
+                "SELECT case_number FROM cases WHERE id = %s AND client_id = %s",
+                (case_id, user["client_id"]),
+            )
+            case_row = cur.fetchone()
+            if not case_row:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Case not found",
+                )
+
+            case_number = case_row[0]
+            required_items = _derive_case_checklist(case_number)
+
+            # Check which items are satisfied by approved documents matching
+            # the item as doc_type (case-insensitive).
+            if required_items:
+                cur.execute(
+                    """
+                    SELECT reqs.item,
+                           EXISTS(
+                               SELECT 1 FROM documents d
+                               WHERE d.client_id = %s
+                                 AND d.is_active = true
+                                 AND d.approval_status = 'approved'
+                                 AND LOWER(d.doc_type) = LOWER(reqs.item)
+                           ) AS satisfied
+                    FROM (SELECT UNNEST(%s::text[]) AS item) AS reqs
+                    ORDER BY reqs.item
+                    """,
+                    (user["client_id"], required_items),
+                )
+                items = [
+                    {"item": row["item"], "satisfied": bool(row["satisfied"])}
+                    for row in cur.fetchall()
+                ]
+            else:
+                items = []
+
+    return {"case_id": case_id, "checklist": items}
+
+
+@router.get("/cases/{case_id}/timeline")
+async def client_case_timeline(
+    case_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return the ordered status timeline for one of the client's own cases.
+
+    Events are fetched from the ``case_events`` table, sorted by ``created_at``
+    ascending, so the UI can render a vertical timeline of case progress.
+    Scoping is enforced in the SQL WHERE clause (CLAUDE.md rule 1).
+    """
+    _require_client(user)
+    _assert_owns_case(user, case_id)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, case_id, status, note, created_at "
+                "FROM case_events WHERE case_id = %s ORDER BY created_at ASC, id ASC",
+                (case_id,),
+            )
+            events = [dict(row) for row in cur.fetchall()]
+
+    return {"case_id": case_id, "timeline": events}
+
+
+# ---------------------------------------------------------------------------
+# Client profile settings (K4: change contact details + notification prefs)
+# ---------------------------------------------------------------------------
+
+
+class ProfileUpdate(BaseModel):
+    full_name: str | None = None
+    notification_prefs: list[str] | None = None
+
+
+@router.patch("/me")
+async def client_profile_update(
+    profile: ProfileUpdate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Update the authenticated client's profile (contact details + notification prefs)."""
+    _require_client(user)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # Build the update dynamically from provided fields
+            set_parts: list[str] = []
+            params: list = []
+
+            if profile.full_name is not None:
+                set_parts.append("full_name = %s")
+                params.append(profile.full_name.strip())
+
+            if profile.notification_prefs is not None:
+                # Validate notification prefs are valid types
+                valid_types = {"info", "warning", "error", "success"}
+                prefs = [p.strip() for p in profile.notification_prefs if p.strip() in valid_types]
+                set_parts.append("notification_prefs = %s")
+                params.append(json.dumps(prefs))
+
+            if not set_parts:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="At least one field to update must be provided",
+                )
+
+            params.append(user["client_id"])
+            set_clause = ", ".join(set_parts)
+
+            cur.execute(
+                f"UPDATE clients SET {set_clause} WHERE id = %s RETURNING id, email, full_name, is_active, created_at, notification_prefs",
+                params,
+            )
+            row = cur.fetchone()
+            conn.commit()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found",
+        )
+
+    return {"client": client_row_to_dict(dict(row))}
+
+
+# ---------------------------------------------------------------------------
+# E-sign (K5: client views and signs signature requests on their own cases)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/signature-requests")
+async def client_signature_requests(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List the client's signature requests (across their own cases).
+
+    Scoping is enforced in the SQL WHERE clause (CLAUDE.md rule 1): requests
+    must belong to a case owned by the authenticated client.
+    """
+    _require_client(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sr.id, sr.case_id, sr.document_id, sr.status, "
+                "sr.signed_name, sr.signed_at, sr.created_at, "
+                "d.title AS document_title "
+                "FROM signature_requests sr "
+                "JOIN cases c ON c.id = sr.case_id "
+                "LEFT JOIN documents d ON d.id = sr.document_id "
+                "WHERE c.client_id = %s "
+                "ORDER BY sr.created_at DESC",
+                (user["client_id"],),
+            )
+            requests = [dict(row) for row in cur.fetchall()]
+
+    return {"signature_requests": requests}
+
+
+class SignatureSignRequest(BaseModel):
+    signed_name: str = Field(min_length=1, max_length=200)
+    consent: bool = True
+
+
+@router.post("/signature-requests/{request_id}/sign")
+async def client_sign_signature_request(
+    request_id: int,
+    payload: SignatureSignRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Client signs a pending signature request on one of their own cases.
+
+    Only the client who owns the case may sign. The request must be pending.
+    """
+    _require_client(user)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sr.id, sr.document_id, sr.status "
+                "FROM signature_requests sr "
+                "JOIN cases c ON c.id = sr.case_id "
+                "WHERE sr.id = %s AND c.client_id = %s",
+                (request_id, user["client_id"]),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Signature request not found",
+                )
+            if row["status"] != "pending":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Signature request is not in pending state",
+                )
+            if not payload.consent:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Consent is required to sign",
+                )
+
+            signed_at = datetime.now(timezone.utc)
+            cur.execute(
+                "UPDATE signature_requests SET status = 'signed', "
+                "signed_name = %s, consent = true, signed_at = %s, "
+                "updated_at = now() WHERE id = %s",
+                (payload.signed_name.strip(), signed_at, request_id),
+            )
+
+            doc_id = row["document_id"]
+            if doc_id is not None:
+                cur.execute(
+                    "UPDATE documents SET approval_status = 'approved', "
+                    "is_approved = true, version = version + 1 WHERE id = %s",
+                    (doc_id,),
+                )
+            conn.commit()
+
+    return {
+        "message": "Document signed",
+        "document_id": doc_id,
+        "signed_at": signed_at.isoformat(),
+    }

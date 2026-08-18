@@ -111,8 +111,13 @@ class TestStaffDashboard:
                     "updated_at": None, "is_active": True,
                 }
             ],
+            [{"client_id": 7}],  # assigned client ids (overdue tasks scope)
         ]
-        cur.fetchone.return_value = None  # no approved SOP access
+        cur.fetchone.side_effect = [
+            None,  # no approved SOP access
+            {"count": 0},  # overdue workflows
+            {"count": 1},  # overdue tasks
+        ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             try:
                 response = _authorized(STAFF_USER).get(
@@ -126,6 +131,8 @@ class TestStaffDashboard:
         assert response.status_code == 200
         data = response.json()
         assert data["sop_access"] is False
+        assert data["overdue_workflows"] == 0
+        assert data["overdue_tasks"] == 1
         calls = [c.args[0] for c in cur.execute.call_args_list]
         assert any("client_id = ANY(%s)" in sql for sql in calls)
         assert any("department = ANY(%s)" in sql for sql in calls)
@@ -149,7 +156,11 @@ class TestStaffDashboard:
                 }
             ],
         ]
-        cur.fetchone.return_value = None
+        cur.fetchone.side_effect = [
+            None,  # no approved SOP access row needed
+            {"count": 0},  # overdue workflows
+            {"count": 0},  # overdue tasks
+        ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             try:
                 response = _authorized(ADMIN_USER).get(
@@ -161,7 +172,10 @@ class TestStaffDashboard:
                 app.dependency_overrides.pop(require_auth, None)
 
         assert response.status_code == 200
-        assert response.json()["sop_access"] is True  # admins always may author
+        data = response.json()
+        assert data["sop_access"] is True  # admins always may author
+        assert data["overdue_workflows"] == 0
+        assert data["overdue_tasks"] == 0
         calls = [c.args[0] for c in cur.execute.call_args_list]
         assert not any("ANY(%s)" in sql for sql in calls)
 
@@ -217,7 +231,10 @@ class TestWorkflowAdvance:
     def test_advances_in_progress_to_review(self):
         conn = _conn()
         cur = conn.cursor.return_value
-        cur.fetchone.return_value = {"id": 3, "status": "in_progress"}
+        cur.fetchone.side_effect = [
+            {"id": 3, "status": "in_progress"},
+            {"due_at": None},
+        ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             try:
                 response = _authorized(STAFF_USER).post(
@@ -521,3 +538,360 @@ class TestClientCases:
                 from app.dependencies import require_auth
                 app.dependency_overrides.pop(require_auth, None)
         assert response.status_code == 404
+
+
+class TestClient360View:
+    def test_admin_sees_full_360(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.return_value = {
+            "id": 7, "email": "client@asto.local", "full_name": "Client User",
+            "is_active": True, "created_at": None,
+        }
+        cur.fetchall.side_effect = [
+            [{"id": 3, "client_id": 7, "address": "123 Main St", "city": "SF",
+              "state": "CA", "postal_code": "94101", "property_type": "sfh",
+              "is_active": True, "created_at": None}],
+            [{"id": 1, "case_number": "CAS-1", "client_id": 7, "property_id": 3,
+              "loan_amount": 275000.0, "status": "active", "is_active": True,
+              "created_at": None}],
+            [{"case_id": 1, "status": "submitted", "note": "In", "created_at": None},
+             {"case_id": 1, "status": "active", "note": "Approved", "created_at": None}],
+            [{"id": 9, "title": "Deed.pdf", "doc_type": "deed", "department": "general",
+              "version": 1, "approval_status": "approved", "property_id": None,
+              "created_at": None}],
+            [{"id": 2, "case_id": 1, "subject": "Update", "created_at": None,
+              "updated_at": None}],
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).get(
+                    "/api/v1/staff/clients/7/360"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["client"]["full_name"] == "Client User"
+        assert len(data["properties"]) == 1
+        assert data["cases"][0]["timeline"][0]["status"] == "submitted"
+        assert len(data["documents"]) == 1
+        assert len(data["conversations"]) == 1
+
+    def test_unassigned_staff_360_404(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchone.return_value = None
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).get(
+                    "/api/v1/staff/clients/999/360"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 404
+
+
+class TestStaffTasks:
+    def test_list_tasks_scoped_for_non_admin(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchall.side_effect = [
+            [{"client_id": 7}],  # assigned client ids
+            [{"id": 1, "case_id": 1, "title": "Call borrower", "description": None,
+              "assignee_id": 2, "due_at": None, "status": "pending",
+              "created_by": 1, "created_at": None, "updated_at": None,
+              "assignee_email": "staff@asto.local", "case_number": "CAS-1"}],
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).get("/api/v1/staff/tasks")
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        assert response.json()["tasks"][0]["title"] == "Call borrower"
+        calls = [c.args[0] for c in cur.execute.call_args_list]
+        assert any("client_id = ANY(%s)" in sql for sql in calls)
+
+    def test_create_task_no_assignee(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 5, "case_id": 1, "title": "Fetch deed", "description": None,
+             "assignee_id": None, "due_at": None, "status": "pending", "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).post(
+                    "/api/v1/staff/tasks",
+                    json={"case_id": 1, "title": "Fetch deed"},
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 201
+        assert response.json()["task"]["title"] == "Fetch deed"
+        conn.commit.assert_called_once()
+
+    def test_create_task_with_assignee_notifies(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 2},  # assignee exists
+            {"id": 6, "case_id": 1, "title": "Review docs", "description": None,
+             "assignee_id": 2, "due_at": None, "status": "pending", "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).post(
+                    "/api/v1/staff/tasks",
+                    json={"title": "Review docs", "assignee_id": 2},
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 201
+        conn.commit.assert_called_once()
+        # Assignee notification inserted before commit.
+        notifications = [c for c in conn.cursor.return_value.execute.call_args_list
+                         if "INSERT INTO notifications" in c.args[0]]
+        assert notifications
+
+    def test_update_task_completed_notifies_creator(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 5, "title": "Fetch deed", "created_by": 1},  # visible row
+            {"id": 5, "case_id": 1, "title": "Fetch deed", "description": None,
+             "assignee_id": 2, "due_at": None, "status": "completed", "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).patch(
+                    "/api/v1/staff/tasks/5",
+                    json={"status": "completed"},
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        assert response.json()["task"]["status"] == "completed"
+        notifications = [c for c in cur.execute.call_args_list
+                         if "INSERT INTO notifications" in c.args[0]]
+        assert notifications
+
+    def test_update_task_bad_status_422(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchone.side_effect = [
+            {"id": 5, "title": "Fetch deed", "created_by": 1},  # visible row
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).patch(
+                    "/api/v1/staff/tasks/5", json={"status": "bogus"}
+                )
+                assert response.status_code == 422
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+
+    def test_update_task_out_of_scope_404(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchall.return_value = []
+        conn.cursor.return_value.fetchone.return_value = None
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).patch(
+                    "/api/v1/staff/tasks/5", json={"title": "Nope"}
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 404
+
+
+class TestWorkflowDefinitions:
+    def test_list_definitions(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchall.return_value = [
+            {"id": 1, "name": "Underwriting", "description": "Steps",
+             "stages": ["intake"], "transitions": [], "is_active": True,
+             "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).get(
+                    "/api/v1/staff/workflow-definitions"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        assert response.json()["workflow_definitions"][0]["name"] == "Underwriting"
+
+    def test_create_definition_admin_only(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.return_value = {
+            "id": 1, "name": "Underwriting", "description": "Steps",
+            "stages": ["intake"], "transitions": [], "is_active": True,
+            "created_at": None,
+        }
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).post(
+                    "/api/v1/staff/workflow-definitions",
+                    json={"name": "Underwriting", "stages": ["intake"]},
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 201
+        conn.commit.assert_called_once()
+
+    def test_create_definition_denies_staff(self):
+        try:
+            response = _authorized(STAFF_USER).post(
+                "/api/v1/staff/workflow-definitions",
+                json={"name": "Underwriting"},
+            )
+            assert response.status_code == 403
+        finally:
+            from app.main import app
+            from app.dependencies import require_auth
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_delete_definition_admin_only(self):
+        conn = _conn()
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).delete(
+                    "/api/v1/staff/workflow-definitions/3"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        conn.commit.assert_called_once()
+
+
+class TestMessageTemplates:
+    def test_list_templates_scoped_to_dept(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchall.return_value = [
+            {"id": 1, "name": "Intro", "body": "Hi", "department": "general",
+             "created_at": None, "updated_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).get(
+                    "/api/v1/staff/message-templates"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        assert response.json()["message_templates"][0]["name"] == "Intro"
+        calls = [c.args[0] for c in conn.cursor.return_value.execute.call_args_list]
+        assert any("department = ANY(%s)" in sql for sql in calls)
+
+    def test_create_template_for_other_dept_403(self):
+        try:
+            response = _authorized(STAFF_USER).post(
+                "/api/v1/staff/message-templates",
+                json={"name": "Intro", "body": "Hi", "department": "compliance"},
+            )
+            assert response.status_code == 403
+        finally:
+            from app.main import app
+            from app.dependencies import require_auth
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_delete_template_not_found_404(self):
+        conn = _conn()
+        conn.cursor.return_value.rowcount = 0
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).delete(
+                    "/api/v1/staff/message-templates/99"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 404
+
+
+class TestStaffAppointments:
+    def test_list_appointments(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchall.return_value = [
+            {"id": 1, "title": "Call", "description": None, "start_at": None,
+             "end_at": None, "department": "general", "staff_id": 2,
+             "status": "scheduled", "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).get(
+                    "/api/v1/staff/appointments"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        assert response.json()["appointments"][0]["title"] == "Call"
+
+    def test_create_appointment_success(self):
+        conn = _conn()
+        conn.cursor.return_value.fetchone.return_value = {
+            "id": 1, "title": "Call", "description": None, "start_at": None,
+            "end_at": None, "department": "general", "staff_id": None,
+            "status": "scheduled", "created_at": None,
+        }
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).post(
+                    "/api/v1/staff/appointments",
+                    json={
+                        "title": "Call",
+                        "start_at": "2026-08-19T10:00:00Z",
+                        "end_at": "2026-08-19T11:00:00Z",
+                    },
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 201
+        conn.commit.assert_called_once()
+
+    def test_create_appointment_end_before_start_422(self):
+        try:
+            response = _authorized(STAFF_USER).post(
+                "/api/v1/staff/appointments",
+                json={
+                    "title": "Call",
+                    "start_at": "2026-08-19T11:00:00Z",
+                    "end_at": "2026-08-19T10:00:00Z",
+                },
+            )
+            assert response.status_code == 422
+        finally:
+            from app.main import app
+            from app.dependencies import require_auth
+            app.dependency_overrides.pop(require_auth, None)

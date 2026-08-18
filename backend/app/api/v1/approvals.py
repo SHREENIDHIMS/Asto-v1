@@ -27,11 +27,21 @@ router = APIRouter()
 VALID_STATUSES = {"pending", "approved", "rejected"}
 
 
-def _apply_document_status(document_id: int, to_status: str, reviewer_id: int, reason: str | None) -> None:
+def _apply_document_status(
+    document_id: int,
+    to_status: str,
+    reviewer_id: int,
+    reason: str | None,
+    conn,
+) -> None:
     """Transition a document + its chunks to a new approval status.
 
     Notifies the document uploader (if any) of the outcome — approval
     carries the reviewer's note, rejection carries the required reason.
+
+    ``conn`` must be an already-acquired connection (via
+    ``session.acquire()``); the caller owns the transaction and is
+    responsible for committing (or rolling back on error).
     """
     if to_status not in VALID_STATUSES:
         raise HTTPException(
@@ -39,13 +49,12 @@ def _apply_document_status(document_id: int, to_status: str, reviewer_id: int, r
             detail=f"Invalid status '{to_status}'",
         )
 
-    with session.acquire() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT approval_status, title, uploaded_by FROM documents WHERE id = %s",
-                (document_id,),
-            )
-            row = cur.fetchone()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT approval_status, title, uploaded_by FROM documents WHERE id = %s",
+            (document_id,),
+        )
+        row = cur.fetchone()
 
         if row is None:
             raise HTTPException(
@@ -105,7 +114,6 @@ def _apply_document_status(document_id: int, to_status: str, reviewer_id: int, r
                     f"'{doc_title}' was rejected" + (f": {reason}" if reason else "."),
                     link="/staff?tab=clients",
                 )
-        conn.commit()
 
 
 @router.get("/documents/pending")
@@ -123,7 +131,8 @@ async def list_pending_documents(
                 """
                 SELECT d.id, d.title, d.doc_type, d.department, d.client_id,
                        d.approval_status, d.source_path, d.version, d.created_at,
-                       d.uploaded_by, u.email AS uploaded_by_email
+                       d.uploaded_by, d.pii_flagged, d.tags,
+                       u.email AS uploaded_by_email
                 FROM documents d
                 LEFT JOIN users u ON u.id = d.uploaded_by
                 WHERE d.approval_status = 'pending'
@@ -140,12 +149,69 @@ async def list_pending_documents(
 @router.post("/documents/{document_id}/approve")
 async def approve_document(
     document_id: int,
+    request: ApproveRequest,
     user: dict = Depends(require_auth),
 ) -> dict:
-    """Approve a pending document and its chunks. Requires admin role."""
+    """Approve a pending document and its chunks. Requires admin role.
+
+    A document flagged as containing PII (``pii_flagged``) must be approved
+    with an explicit ``publish_anyway=true`` confirmation â the admin review
+    queue should surface that checkbox only for flagged docs.
+    """
     require_role(user, "admin")
-    _apply_document_status(document_id=document_id, to_status="approved", reviewer_id=user["id"], reason=None)
+    with session.acquire() as conn:
+        _check_pii_publish(document_id, request.publish_anyway, conn)
+        _apply_document_status(
+            document_id=document_id,
+            to_status="approved",
+            reviewer_id=user["id"],
+            reason=None,
+            conn=conn,
+        )
+        conn.commit()
     return {"message": f"Document {document_id} approved"}
+
+
+class ApproveRequest(BaseModel):
+    publish_anyway: bool = False
+
+
+def _check_pii_publish(document_id: int, publish_anyway: bool, conn) -> None:
+    """Raise 422 unless a PII-flagged document is explicitly published."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pii_flagged FROM documents WHERE id = %s",
+            (document_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document {document_id} not found",
+        )
+    if row["pii_flagged"] and not publish_anyway:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Document contains flagged PII; set publish_anyway=true to approve",
+        )
+
+
+def _check_pii_publish_bulk(document_ids: list[int], publish_anyway: bool, conn) -> None:
+    """Raise 422 unless every PII-flagged doc in a bulk approve is confirmed."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM documents WHERE id = ANY(%s) AND pii_flagged = true",
+            (document_ids,),
+        )
+        flagged = [row["id"] for row in cur.fetchall()]
+    if flagged and not publish_anyway:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{len(flagged)} document(s) contain flagged PII; "
+                "set publish_anyway=true to approve"
+            ),
+        )
 
 
 class RejectRequest(BaseModel):
@@ -172,13 +238,142 @@ async def reject_document(
     """
     require_role(user, "admin")
     reason = request.reason.strip()
-    _apply_document_status(
-        document_id=document_id,
+    with session.acquire() as conn:
+        _apply_document_status(
+            document_id=document_id,
+            to_status="rejected",
+            reviewer_id=user["id"],
+            reason=reason,
+            conn=conn,
+        )
+        conn.commit()
+    return {"message": f"Document {document_id} rejected", "reason": reason}
+
+
+class BulkApproveRequest(BaseModel):
+    document_ids: list[int] = Field(min_length=1, max_length=200)
+    publish_anyway: bool = False
+
+    @field_validator("document_ids")
+    @classmethod
+    def _ids_unique_and_positive(cls, v: list[int]) -> list[int]:
+        if len(set(v)) != len(v):
+            raise ValueError("document_ids must be unique")
+        if any(i <= 0 for i in v):
+            raise ValueError("document_ids must be positive integers")
+        return v
+
+
+class BulkRejectRequest(BaseModel):
+    document_ids: list[int] = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("document_ids")
+    @classmethod
+    def _ids_unique_and_positive(cls, v: list[int]) -> list[int]:
+        if len(set(v)) != len(v):
+            raise ValueError("document_ids must be unique")
+        if any(i <= 0 for i in v):
+            raise ValueError("document_ids must be positive integers")
+        return v
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("A reason is required when rejecting a document")
+        return v
+
+
+@router.post("/documents/bulk-approve")
+async def bulk_approve_documents(
+    request: BulkApproveRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Approve multiple documents in one transaction.
+
+    Each document moves through the same state machine as the single
+    approve endpoint, one ``approval_log`` row per document, and each
+    uploader is notified. An unknown/invalid id aborts the whole batch
+    (404) with no partial commits. Requires admin role.
+    """
+    require_role(user, "admin")
+    _bulk_apply_status(
+        document_ids=request.document_ids,
+        to_status="approved",
+        reviewer_id=user["id"],
+        reason=None,
+        publish_anyway=request.publish_anyway,
+    )
+    return {"message": f"{len(request.document_ids)} documents approved"}
+
+
+@router.post("/documents/bulk-reject")
+async def bulk_reject_documents(
+    request: BulkRejectRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Reject multiple documents in one transaction.
+
+    A shared reason is persisted to each document's ``approval_log`` row
+    and shown to each uploader. An unknown/invalid id aborts the whole
+    batch (404) with no partial commits. Requires admin role.
+    """
+    require_role(user, "admin")
+    _bulk_apply_status(
+        document_ids=request.document_ids,
         to_status="rejected",
         reviewer_id=user["id"],
-        reason=reason,
+        reason=request.reason.strip(),
     )
-    return {"message": f"Document {document_id} rejected", "reason": reason}
+    return {"message": f"{len(request.document_ids)} documents rejected"}
+
+
+def _bulk_apply_status(
+    document_ids: list[int],
+    to_status: str,
+    reviewer_id: int,
+    reason: str | None,
+    publish_anyway: bool = False,
+) -> None:
+    """Apply a status transition to many documents inside one transaction.
+
+    Every id is resolved up front so a missing id aborts the batch before
+    any row is written (all-or-nothing). Reuses ``_apply_document_status``
+    per document (sharing one connection) for the per-doc audit log +
+    uploader notification, then commits once at the end.
+    """
+    if to_status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{to_status}'",
+        )
+
+    with session.acquire() as conn:
+        if to_status == "approved":
+            _check_pii_publish_bulk(document_ids, publish_anyway, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM documents WHERE id = ANY(%s)",
+                (document_ids,),
+            )
+            found = {row["id"] for row in cur.fetchall()}
+        missing = [d for d in document_ids if d not in found]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document(s) not found: {missing}",
+            )
+
+        for document_id in document_ids:
+            _apply_document_status(
+                document_id=document_id,
+                to_status=to_status,
+                reviewer_id=reviewer_id,
+                reason=reason,
+                conn=conn,
+            )
+        conn.commit()
 
 
 class MetadataUpdateRequest(BaseModel):
@@ -278,3 +473,137 @@ async def approval_history(
             history = [dict(row) for row in cur.fetchall()]
 
     return {"document_id": document_id, "history": history}
+
+
+@router.get("/documents/{document_id}/versions")
+async def document_versions(
+    document_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return every version of a document family.
+
+    A "family" is all documents sharing the same title/department/client/
+    property — the identity that ``index_document`` uses to bump versions.
+    Requires admin role.
+    """
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT title, department, client_id, property_id
+                FROM documents WHERE id = %s
+                """,
+                (document_id,),
+            )
+            anchor = cur.fetchone()
+            if anchor is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Document not found",
+                )
+            cur.execute(
+                """
+                SELECT d.id, d.title, d.source_path, d.doc_type, d.department,
+                       d.client_id, d.property_id, d.approval_status,
+                       d.is_active, d.is_approved, d.version, d.created_at, d.tags,
+                       d.uploaded_by, u.email AS uploaded_by_email
+                FROM documents d
+                LEFT JOIN users u ON u.id = d.uploaded_by
+                WHERE d.title = %s AND d.department = %s
+                  AND d.client_id IS NOT DISTINCT FROM %s
+                  AND d.property_id IS NOT DISTINCT FROM %s
+                ORDER BY d.version ASC
+                """,
+                (
+                    anchor["title"],
+                    anchor["department"],
+                    anchor["client_id"],
+                    anchor["property_id"],
+                ),
+            )
+            versions = [dict(row) for row in cur.fetchall()]
+
+    return {"document_id": document_id, "versions": versions}
+
+
+class TagsUpdateRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("tags")
+    @classmethod
+    def _normalize_tags(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for raw in v:
+            tag = raw.strip().lower()
+            if not tag:
+                raise ValueError("Tags cannot be empty")
+            if len(tag) > 50:
+                raise ValueError("Tags must be 50 characters or fewer")
+            if tag in seen:
+                continue
+            seen.add(tag)
+            normalized.append(tag)
+        return normalized
+
+
+@router.put("/documents/{document_id}/tags")
+async def update_document_tags(
+    document_id: int,
+    request: TagsUpdateRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Replace a document's tags (admin-only).
+
+    Tags are a lightweight browse/filter taxonomy (I8) stored on the
+    ``documents`` row as ``text[]``. The full list is replaced on each call;
+    empty clears all tags. Tag values are lower-cased, trimmed, and
+    deduplicated server-side.
+    """
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM documents WHERE id = %s", (document_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Document {document_id} not found",
+                )
+            cur.execute(
+                "UPDATE documents SET tags = %s WHERE id = %s",
+                (request.tags, document_id),
+            )
+        conn.commit()
+
+    return {"document_id": document_id, "tags": request.tags}
+
+
+@router.get("/tags")
+async def list_tags(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return every tag with the number of documents carrying it (admin-only).
+
+    Used to render tag-filter chips in the admin Documents list. Only tags on
+    active documents are counted.
+    """
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT tag, COUNT(*) AS count
+                FROM documents d, unnest(d.tags) AS tag
+                WHERE d.is_active = true
+                GROUP BY tag
+                ORDER BY count DESC, tag ASC
+                """,
+            )
+            tags = [{"tag": row["tag"], "count": row["count"]} for row in cur.fetchall()]
+
+    return {"tags": tags}

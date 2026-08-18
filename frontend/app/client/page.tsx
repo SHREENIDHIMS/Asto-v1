@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -17,16 +17,20 @@ import {
   LogOut,
   MessageSquare,
   MessageSquarePlus,
+  PenLine,
   Settings,
   ShieldCheck,
   Trash2,
   Upload,
   X,
+  XCircle,
 } from "lucide-react";
 import {
   clientUploadDocument,
   createClientConversation,
   getClientCaseDetail,
+  getClientCaseChecklist,
+  ChecklistItem,
   getClientCases,
   getClientConversationMessages,
   getClientConversations,
@@ -35,7 +39,11 @@ import {
   getClientMe,
   getClientProperties,
   getClientPropertyDocuments,
-  openBlobInNewTab,
+  getClientRejectedDocuments,
+  getClientSignatureRequests,
+  signClientSignatureRequest,
+  SignatureRequest,
+  ClientRejectedDocument,
   logout,
   logoutAll,
   searchKnowledgeBaseStream,
@@ -58,6 +66,8 @@ import { NAV_GROUPS } from "@/config/navigation";
 import ChatMessage from "@/components/chat/ChatMessage";
 import StreamingPreview from "@/components/chat/StreamingPreview";
 import SettingsModal from "@/components/settings/SettingsModal";
+import { FileDropzone } from "@/components/upload/FileDropzone";
+import { DocumentPreviewDialog } from "@/components/documents/DocumentPreviewDialog";
 import SearchBar from "@/components/search/SearchBar";
 import RelatedQuestions from "@/components/search/RelatedQuestions";
 import HeroSection from "@/components/home/HeroSection";
@@ -66,6 +76,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -291,61 +302,266 @@ function ChatView({
 }
 
 // ---------------------------------------------------------------------------
+// E-sign (K5): documents awaiting the client's signature
+// ---------------------------------------------------------------------------
+
+function SignatureRequestsCard({
+  token,
+  onError,
+}: {
+  token: string;
+  onError: (msg: string) => void;
+}) {
+  const [requests, setRequests] = useState<SignatureRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [signingId, setSigningId] = useState<number | null>(null);
+  const [signName, setSignName] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getClientSignatureRequests(token);
+      setRequests(res.signature_requests);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load signatures");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const pending = requests.filter((r) => r.status === "pending");
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading signature requests…
+        </CardContent>
+      </Card>
+    );
+  }
+  if (pending.length === 0) {
+    return null;
+  }
+
+  const handleSign = async (r: SignatureRequest) => {
+    if (!signName.trim()) {
+      setError("Please enter your full name to sign");
+      return;
+    }
+    if (!consent) {
+      setError("Please consent before signing");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await signClientSignatureRequest(token, r.id, signName.trim(), consent);
+      setSigningId(null);
+      setSignName("");
+      setConsent(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to sign");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="border-primary/40">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <PenLine className="h-4 w-4 text-primary" />
+          Documents awaiting your signature
+        </CardTitle>
+        <CardContent className="p-0 space-y-4">
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          {pending.map((r) => (
+            <div key={r.id} className="space-y-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{r.document_title || `Document #${r.document_id ?? "—"}`}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Case #{r.case_id} · requested{" "}
+                    {r.created_at ? formatDate(r.created_at) : ""}
+                  </p>
+                </div>
+                <Badge variant="warning">Pending</Badge>
+              </div>
+              {signingId === r.id ? (
+                <div className="space-y-2">
+                  <Input
+                    value={signName}
+                    onChange={(e) => setSignName(e.target.value)}
+                    placeholder="Sign as (full legal name)"
+                    disabled={busy}
+                  />
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={consent}
+                      onCheckedChange={(c) => setConsent(!!c)}
+                    />
+                    I agree this is my signature and consent to the document.
+                  </label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => handleSign(r)}
+                      disabled={busy}
+                    >
+                      {busy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <PenLine className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Sign document
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSigningId(null);
+                        setSignName("");
+                        setConsent(false);
+                        setError(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSigningId(r.id)}
+                >
+                  <PenLine className="h-3.5 w-3.5 mr-1.5" />
+                  Sign
+                </Button>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </CardHeader>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Documents view
 // ---------------------------------------------------------------------------
 
 function DocumentsView({
   token,
   documents,
+  rejectedDocuments,
   properties,
   onUploaded,
   onError,
 }: {
   token: string;
   documents: ClientDocument[];
+  rejectedDocuments: ClientRejectedDocument[];
   properties: ClientProperty[];
   onUploaded: () => void;
   onError: (msg: string) => void;
 }) {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [propertyId, setPropertyId] = useState<string>("");
+  const [docType, setDocType] = useState<string>("");
+  const [docTitle, setDocTitle] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [uploadHint, setUploadHint] = useState<string | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveTag(null);
+  }, [documents]);
+
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const d of documents) {
+      for (const tag of d.tags ?? []) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [documents]);
+
+  const visibleDocuments = activeTag
+    ? documents.filter((d) => (d.tags ?? []).includes(activeTag))
+    : documents;
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
+    if (!docType.trim()) {
+      onError("Please select a document type");
+      return;
+    }
+    if (!docTitle.trim()) {
+      onError("Please enter a document title");
+      return;
+    }
     setUploading(true);
     setMessage(null);
+    setProgress(null);
     try {
-      const res = await clientUploadDocument(
-        file,
-        token,
-        propertyId ? Number(propertyId) : null
-      );
+      let uploadedCount = 0;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setProgress({ done: i, total: files.length, name: file.name });
+        await clientUploadDocument(
+          file,
+          token,
+          docType.trim(),
+          docTitle.trim(),
+          propertyId ? Number(propertyId) : null
+        );
+        uploadedCount += 1;
+      }
+      setProgress({ done: files.length, total: files.length, name: "" });
       setMessage(
-        `"${res.filename}" uploaded. It is queued for indexing and will appear after an admin approves it.`
+        `${uploadedCount} document${uploadedCount === 1 ? "" : "s"} uploaded. They are queued for indexing and will appear after an admin approves them.`
       );
-      setFile(null);
+      setFiles([]);
       setPropertyId("");
+      setDocType("");
+      setDocTitle("");
+      setUploadHint(null);
+      setShowUpload(false);
       onUploaded();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   };
 
-  const handleView = async (doc: ClientDocument) => {
-    try {
-      const blob = await getClientDocumentFile(doc.id, token);
-      openBlobInNewTab(blob, doc.title || `document-${doc.id}`);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to load document");
-    }
+  const handleView = (doc: ClientDocument) => {
+    setPreviewId(doc.id);
   };
 
   return (
     <div className="space-y-6 max-w-3xl">
+      <SignatureRequestsCard token={token} onError={onError} />
+
       <div>
         <h2 className="text-2xl font-bold flex items-center gap-2">
           <Upload className="w-6 h-6 text-primary" />
@@ -360,20 +576,61 @@ function DocumentsView({
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
-            <Upload className="w-4 h-4" />
+            <Upload className="h-4 w-4" />
             Upload a document
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {showUpload && uploadHint && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+              {uploadHint}
+            </p>
+          )}
+          <FileDropzone
+            files={files}
+            onFilesChange={setFiles}
+            disabled={uploading}
+            accept=".pdf,.docx,.txt,.doc"
+            label="Drag & drop documents here, or click to browse"
+            hint="Multiple files are uploaded one at a time."
+          />
+          {progress && (
+            <p className="text-sm text-muted-foreground">
+              {progress.name
+                ? `Uploading "${progress.name}" (${progress.done + 1} of ${progress.total})…`
+                : `Uploading ${progress.total} file${progress.total === 1 ? "" : "s"}…`}
+            </p>
+          )}
           <div className="flex items-end gap-3 flex-wrap">
-            <div className="flex-1 min-w-[200px]">
+            <div className="w-56">
               <Label className="mb-1 block text-xs text-muted-foreground">
-                File (PDF, DOCX, TXT…)
+                Document type
+              </Label>
+              <Select value={docType} onValueChange={setDocType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="policy">Policy</SelectItem>
+                  <SelectItem value="statement">Statement</SelectItem>
+                  <SelectItem value="appraisal">Appraisal</SelectItem>
+                  <SelectItem value="title">Title report</SelectItem>
+                  <SelectItem value="tax">Tax document</SelectItem>
+                  <SelectItem value="income">Income verification</SelectItem>
+                  <SelectItem value="id">Identification</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-72 flex-1">
+              <Label className="mb-1 block text-xs text-muted-foreground">
+                Title
               </Label>
               <Input
-                type="file"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="cursor-pointer"
+                value={docTitle}
+                onChange={(e) => setDocTitle(e.target.value)}
+                placeholder="e.g. 2025 tax return"
+                disabled={uploading}
               />
             </div>
             {properties.length > 0 && (
@@ -398,14 +655,14 @@ function DocumentsView({
             <Button
               type="button"
               onClick={handleUpload}
-              disabled={!file || uploading}
+              disabled={files.length === 0 || uploading}
             >
               {uploading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Upload className="h-4 w-4 mr-1.5" />
               )}
-              Upload
+              Upload {files.length > 0 ? `${files.length} file${files.length === 1 ? "" : "s"}` : ""}
             </Button>
           </div>
           {message && (
@@ -418,20 +675,50 @@ function DocumentsView({
 
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-muted-foreground">
-          {documents.length} approved documents
+          {visibleDocuments.length} approved document
+          {visibleDocuments.length === 1 ? "" : "s"}
+          {activeTag ? ` tagged "${activeTag}"` : ""}
         </h3>
       </div>
 
-      {documents.length === 0 ? (
+      {tagCounts.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant={activeTag == null ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTag(null)}
+          >
+            All
+          </Button>
+          {tagCounts.map(([tag, count]) => (
+            <Button
+              key={tag}
+              type="button"
+              variant={activeTag === tag ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+              className="gap-1.5"
+            >
+              {tag}
+              <span className="text-xs text-muted-foreground">({count})</span>
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {visibleDocuments.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
-            No approved documents yet.
+            {activeTag
+              ? "No approved documents carry this tag yet."
+              : "No approved documents yet."}
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardContent className="divide-y divide-border">
-            {documents.map((d) => (
+            {visibleDocuments.map((d) => (
               <div
                 key={d.id}
                 className="py-3 flex items-center justify-between gap-4"
@@ -446,6 +733,15 @@ function DocumentsView({
                     {d.property_id != null && ` · property #${d.property_id}`} ·{" "}
                     {formatDate(d.created_at)}
                   </p>
+                  {d.tags && d.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {d.tags.map((tag) => (
+                        <Badge key={tag} variant="secondary" className="text-xs font-normal">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <Button
                   type="button"
@@ -461,6 +757,66 @@ function DocumentsView({
           </CardContent>
         </Card>
       )}
+
+      {rejectedDocuments.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-muted-foreground">
+            {rejectedDocuments.length}{" "}
+            {rejectedDocuments.length === 1 ? "document needs" : "documents need"} your
+            attention
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1 mb-3">
+            A corrected upload for the same document becomes a new version and
+            re-enters the review queue.
+          </p>
+          <Card>
+            <CardContent className="divide-y divide-border">
+              {rejectedDocuments.map((d) => (
+                <div key={d.id} className="py-3 flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="font-medium truncate flex items-center gap-2">
+                      <XCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      {d.title}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      v{d.version} · rejected{" "}
+                      {d.rejected_at ? formatDate(d.rejected_at) : ""}
+                    </p>
+                    {d.rejection_reason && (
+                      <p className="text-xs mt-1.5 text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                        Reason: {d.rejection_reason}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      setPropertyId(String(d.property_id ?? ""));
+                      setUploadHint(
+                        `Uploading a corrected version of "${d.title}" — the previous version was rejected: ${d.rejection_reason ?? "no reason given"}`
+                      );
+                      setShowUpload(true);
+                    }}
+                  >
+                    <Upload className="h-3.5 w-3.5 mr-1.5" />
+                    Upload corrected version
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <DocumentPreviewDialog
+        open={previewId != null}
+        onOpenChange={(open) => !open && setPreviewId(null)}
+        items={visibleDocuments.map((d) => ({ id: d.id, title: d.title }))}
+        initialId={previewId ?? visibleDocuments[0]?.id ?? 0}
+        fetchBlob={(id) => getClientDocumentFile(id, token)}
+        loadingLabel="Loading approved document…"
+      />
     </div>
   );
 }
@@ -481,6 +837,7 @@ function PropertiesView({
   const [expanded, setExpanded] = useState<number | null>(null);
   const [docs, setDocs] = useState<Record<number, ClientDocument[]>>({});
   const [loadingDocs, setLoadingDocs] = useState<number | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
 
   const toggle = async (propertyId: number) => {
     if (expanded === propertyId) {
@@ -503,13 +860,8 @@ function PropertiesView({
     }
   };
 
-  const handleView = async (doc: ClientDocument) => {
-    try {
-      const blob = await getClientDocumentFile(doc.id, token);
-      openBlobInNewTab(blob, doc.title || `document-${doc.id}`);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to load document");
-    }
+  const handleView = (doc: ClientDocument) => {
+    setPreviewId(doc.id);
   };
 
   return (
@@ -608,6 +960,17 @@ function PropertiesView({
           ))}
         </div>
       )}
+
+      <DocumentPreviewDialog
+        open={previewId != null}
+        onOpenChange={(open) => !open && setPreviewId(null)}
+        items={Object.values(docs)
+          .flat()
+          .map((d) => ({ id: d.id, title: d.title }))}
+        initialId={previewId ?? 0}
+        fetchBlob={(id) => getClientDocumentFile(id, token)}
+        loadingLabel="Loading approved document…"
+      />
     </div>
   );
 }
@@ -627,6 +990,7 @@ function CasesView({
 }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<number, CaseDetail>>({});
+  const [checklists, setChecklists] = useState<Record<number, ChecklistItem[]>>({});
   const [loadingId, setLoadingId] = useState<number | null>(null);
 
   const toggleCase = async (c: ClientCase) => {
@@ -635,11 +999,15 @@ function CasesView({
       return;
     }
     setExpandedId(c.id);
-    if (!details[c.id]) {
+    if (!details[c.id] || !checklists[c.id]) {
       setLoadingId(c.id);
       try {
-        const detail = await getClientCaseDetail(token, c.id);
+        const [detail, checklist] = await Promise.all([
+          getClientCaseDetail(token, c.id),
+          getClientCaseChecklist(token, c.id),
+        ]);
         setDetails((prev) => ({ ...prev, [c.id]: detail }));
+        setChecklists((prev) => ({ ...prev, [c.id]: checklist.checklist }));
       } catch (err) {
         onError(err instanceof Error ? err.message : "Failed to load case");
       } finally {
@@ -713,14 +1081,17 @@ function CasesView({
                 </button>
 
                 {expandedId === c.id && (
-                  <div className="mt-4 border-t border-border pt-4">
+                  <div className="mt-4 border-t border-border pt-4 space-y-6">
                     {loadingId === c.id ? (
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Loading timeline…
+                        Loading case details…
                       </div>
                     ) : (
-                      <Timeline detail={details[c.id]} />
+                      <>
+                        <Checklist items={checklists[c.id]} />
+                        <Timeline detail={details[c.id]} />
+                      </>
                     )}
                   </div>
                 )}
@@ -729,6 +1100,48 @@ function CasesView({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function Checklist({ items }: { items: ChecklistItem[] | undefined }) {
+  if (!items || items.length === 0 || (items.length === 1 && !items[0].item)) {
+    return null;
+  }
+  const doneCount = items.filter((i) => i.satisfied).length;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-sm font-medium">Document checklist</h4>
+        <span className="text-xs text-muted-foreground">
+          {doneCount} of {items.length} complete
+        </span>
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((item, i) => (
+          <li key={i} className="flex items-center gap-2 text-sm">
+            <span
+              className={cn(
+                "flex h-4 w-4 items-center justify-center rounded-full border text-[10px]",
+                item.satisfied
+                  ? "bg-green-100 border-green-500 text-green-700"
+                  : "border-muted-foreground/40 text-transparent"
+              )}
+            >
+              ✓
+            </span>
+            <span
+              className={cn(
+                item.satisfied
+                  ? "text-muted-foreground line-through"
+                  : "text-foreground"
+              )}
+            >
+              {item.item}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1094,6 +1507,7 @@ export default function ClientPage() {
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [properties, setProperties] = useState<ClientProperty[]>([]);
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
+  const [rejectedDocuments, setRejectedDocuments] = useState<ClientRejectedDocument[]>([]);
   const [cases, setCases] = useState<ClientCase[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1146,16 +1560,18 @@ export default function ClientPage() {
     const t = getToken();
     if (!t) return;
     try {
-      const [me, props, docsRes, casesRes] = await Promise.all([
+      const [me, props, docsRes, casesRes, rejectedRes] = await Promise.all([
         getClientMe(t),
         getClientProperties(t),
         getClientDocuments(t),
         getClientCases(t),
+        getClientRejectedDocuments(t),
       ]);
       setProfile(me.client);
       setProperties(props.properties);
       setDocuments(docsRes.documents);
       setCases(casesRes.cases);
+      setRejectedDocuments(rejectedRes.documents);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load portal data");
     } finally {
@@ -1465,6 +1881,7 @@ export default function ClientPage() {
           <DocumentsView
             token={token}
             documents={documents}
+            rejectedDocuments={rejectedDocuments}
             properties={properties}
             onUploaded={loadData}
             onError={setError}
@@ -1505,6 +1922,8 @@ export default function ClientPage() {
         email: profile?.email,
         role: "Client",
       }}
+      clientProfile={profile}
+      onProfileChange={setProfile}
       onSignOut={handleLogout}
       onSignOutAll={handleLogoutAll}
       onNewChat={handleNewChat}

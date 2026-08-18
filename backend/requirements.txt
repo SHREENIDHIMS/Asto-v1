@@ -35,3 +35,8 @@ pdf2image==1.17.0
 openpyxl==3.1.5
 python-pptx==1.0.2
 striprtf==0.0.28
+
+# --- Client-facing watermark (I5: app/documents/watermark.py) ---
+# pypdf merges a reportlab-generated text page onto each PDF page.
+pypdf==6.16.1
+reportlab==5.0.0

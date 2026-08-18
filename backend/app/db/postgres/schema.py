@@ -321,10 +321,116 @@ DDL_STATEMENTS: list[str] = [
     # trade-off: admin session-kill revokes the refresh rows (no new access
     # tokens) but already-issued access JWTs stay valid until expiry unless
     # their jti is individually revoked here.
-    """
+"""
     CREATE TABLE IF NOT EXISTS revoked_jtis (
-        jti        TEXT        PRIMARY KEY,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        jti         TEXT        PRIMARY KEY,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Workflow definitions (L4: config-driven) ---
+    """
+    CREATE TABLE IF NOT EXISTS workflow_definitions (
+        id          BIGSERIAL PRIMARY KEY,
+        name        TEXT NOT NULL,
+        description TEXT,
+        stages      JSONB NOT NULL DEFAULT '[]'::jsonb,
+        transitions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        is_active   BOOL NOT NULL DEFAULT true,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Case document requirements (K1: Document checklist) ---
+    """
+    CREATE TABLE IF NOT EXISTS case_document_requirements (
+        id              BIGSERIAL PRIMARY KEY,
+        case_id         BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+        name            TEXT NOT NULL,
+        description     TEXT,
+        required_from   TEXT NOT NULL DEFAULT 'upload',
+        status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('required','pending','received','approved')),
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Signature requests (K5: E-sign / document request) ---
+    """
+    CREATE TABLE IF NOT EXISTS signature_requests (
+        id              BIGSERIAL PRIMARY KEY,
+        case_id         BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+        document_id     BIGINT REFERENCES documents(id) ON DELETE SET NULL,
+        requested_from  TEXT NOT NULL,
+        token           TEXT NOT NULL UNIQUE,
+        signed_name     TEXT,
+        consent         BOOLEAN NOT NULL DEFAULT false,
+        signed_at       TIMESTAMPTZ,
+        status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','signed','cancelled')),
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Tasks (L2: Task assignment to teammates) ---
+    """
+    CREATE TABLE IF NOT EXISTS tasks (
+        id              BIGSERIAL PRIMARY KEY,
+        case_id         BIGINT REFERENCES cases(id) ON DELETE SET NULL,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        assignee_id     BIGINT REFERENCES users(id),
+        due_at          TIMESTAMPTZ,
+        status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','assigned','in_progress','completed','overdue')),
+        created_by      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Feature flags (M8: Safe ship-half-built features) ---
+    """
+    CREATE TABLE IF NOT EXISTS feature_flags (
+        name            TEXT PRIMARY KEY,
+        enabled         BOOLEAN NOT NULL DEFAULT true,
+        department      TEXT NOT NULL DEFAULT 'general',
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Saved searches (J7: Saved searches / search history) ---
+    """
+    CREATE TABLE IF NOT EXISTS saved_searches (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        query           TEXT NOT NULL,
+        filters         JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Message templates (L5: staff CRUD) ---
+    """
+    CREATE TABLE IF NOT EXISTS message_templates (
+        id          BIGSERIAL PRIMARY KEY,
+        name        TEXT NOT NULL,
+        body        TEXT NOT NULL,
+        department  TEXT NOT NULL DEFAULT 'general',
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Appointments (L6: calendar / stretch) ---
+    """
+    CREATE TABLE IF NOT EXISTS appointments (
+        id          BIGSERIAL PRIMARY KEY,
+        title       TEXT NOT NULL,
+        description TEXT,
+        start_at    TIMESTAMPTZ NOT NULL,
+        end_at      TIMESTAMPTZ NOT NULL,
+        department  TEXT NOT NULL DEFAULT 'general',
+        staff_id    BIGINT REFERENCES users(id),
+        status      TEXT NOT NULL DEFAULT 'scheduled'
+                    CHECK (status IN ('scheduled', 'completed', 'cancelled')),
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
 ]
@@ -343,6 +449,9 @@ ALTER_STATEMENTS: list[str] = [
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE clients ADD COLUMN IF NOT EXISTS notification_prefs JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ",
+    "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS metadata JSONB",
 ]
 
 # CHECK constraints added via ALTER (no IF NOT EXISTS for constraints in PG,

@@ -43,6 +43,8 @@ import {
   twoFaSetup,
   twoFaStatus,
   twoFaVerify,
+  updateClientProfile,
+  type ClientProfile,
 } from "@/lib/api-client";
 import { getToken, decodeToken, isAdminRole, type TokenClaims } from "@/lib/auth";
 
@@ -65,6 +67,9 @@ export interface SettingsModalProps {
   onToggleSuggestions?: (enabled: boolean) => void;
   timeoutSeconds?: number;
   onTimeoutChange?: (seconds: number) => void;
+  /** Client-only: the authenticated client's profile, enables the profile card. */
+  clientProfile?: ClientProfile | null;
+  onProfileChange?: (profile: ClientProfile) => void;
 };
 
 const SESSION_TIMEOUTS = [
@@ -294,6 +299,127 @@ function TwoFactorCard({ token }: { token: string }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// K4: client profile — contact details + notification preferences
+// ---------------------------------------------------------------------------
+
+const NOTIFICATION_TYPES = [
+  { value: "info", label: "General updates" },
+  { value: "warning", label: "Warnings" },
+  { value: "error", label: "Errors / urgent" },
+  { value: "success", label: "Success confirmations" },
+];
+
+function ClientProfileCard({
+  token,
+  profile,
+  onProfileChange,
+}: {
+  token: string;
+  profile: ClientProfile;
+  onProfileChange?: (profile: ClientProfile) => void;
+}) {
+  const [fullName, setFullName] = useState(profile.full_name ?? "");
+  const [prefs, setPrefs] = useState<string[]>(profile.notification_prefs ?? []);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setFullName(profile.full_name ?? "");
+    setPrefs(profile.notification_prefs ?? []);
+  }, [profile]);
+
+  const togglePref = (value: string) => {
+    setPrefs((prev) =>
+      prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]
+    );
+    setSaved(false);
+  };
+
+  const handleSave = async () => {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await updateClientProfile(token, {
+        full_name: fullName.trim(),
+        notification_prefs: prefs,
+      });
+      onProfileChange?.(res.client);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save profile");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <User className="h-4 w-4" />
+          Profile
+        </CardTitle>
+        <CardDescription>
+          Update your display name and which notification types you receive.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid gap-2">
+          <Label className="text-xs text-muted-foreground">Full name</Label>
+          <Input
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Your name"
+            disabled={busy}
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label className="text-xs text-muted-foreground">
+            Notify me about
+          </Label>
+          {NOTIFICATION_TYPES.map((n) => (
+            <label
+              key={n.value}
+              className="flex items-center gap-2 text-sm"
+            >
+              <Checkbox
+                checked={prefs.includes(n.value)}
+                onCheckedChange={() => togglePref(n.value)}
+              />
+              {n.label}
+            </label>
+          ))}
+        </div>
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        {saved && (
+          <p className="text-xs text-green-700">Profile saved.</p>
+        )}
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={handleSave}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Save className="h-3.5 w-3.5 mr-1.5" />
+          )}
+          Save profile
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SettingsModal({
   trigger,
   open,
@@ -307,6 +433,8 @@ export default function SettingsModal({
   onToggleSuggestions,
   timeoutSeconds = 0,
   onTimeoutChange,
+  clientProfile,
+  onProfileChange,
 }: SettingsModalProps) {
   const [pwCurrent, setPwCurrent] = useState("");
   const [pwNew, setPwNew] = useState("");
@@ -439,6 +567,15 @@ const identity = user ?? (() => {
           </Button>
         </CardContent>
       </Card>
+
+      {/* K4: client profile (contact + notification prefs) */}
+      {clientProfile && sessionToken && (
+        <ClientProfileCard
+          token={sessionToken}
+          profile={clientProfile}
+          onProfileChange={onProfileChange}
+        />
+      )}
 
       {/* H4: admin two-factor authentication */}
       {isAdmin && sessionToken && <TwoFactorCard token={sessionToken} />}

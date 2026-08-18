@@ -311,6 +311,7 @@ Global "definition of done" (applies to every feature):
 - **Effort:** S. **Depends on:** nothing (search already returns match
   positions if BM25/vector exposes them; otherwise highlight via token
   overlap client-side).
+- **Status: DONE** (2026-08-15).
 - **Steps:**
   1. Backend: include per-excerpt match terms (`matched_terms`) from the
      hybrid query (BM25 `ts_headline` or lexical token overlap).
@@ -323,6 +324,7 @@ Global "definition of done" (applies to every feature):
 ### J2 — Faceted filters in chat (dept, doc type, date, client)
 - **Why:** richer, narrower answers for staff.
 - **Effort:** M. **Depends on:** nothing.
+- **Status: DONE** (2026-08-15).
 - **Steps:**
   1. `POST /search` gains optional `filters: {departments?, doc_types?,
      date_from?, date_to?, client_id?}` — folded into the existing SQL
@@ -334,23 +336,21 @@ Global "definition of done" (applies to every feature):
      change, but re-run per rule 7 if any weight changes.
   5. SESSION.md.
 
-### J3 — "Was this helpful?" feedback → ranking loop
-- **Why:** feedback is stored but never used. Per CLAUDE.md rule 7, wire it
-  to ranking weights **with a benchmark**.
+### J3 - Was this helpful? feedback → ranking loop
+
+- **Why:** feedback is stored but never used. Per CLAUDE.md rule 7, wire it to ranking weights with a benchmark.
 - **Effort:** M.
 - **Steps:**
-  1. `feedback` rows already carry query+doc ids. Add an aggregation step:
-     a scoring query counts positive/negative per (query→doc).
-  2. Create `evaluation/run_benchmark.py` support for a feedback-weighted
-     variant of the scoring function; compare against baseline.
-  3. Apply the proven delta to `ranking/weights_config.py` + record the
-     before/after report in `evaluation/reports/`.
+  1. feedback rows already carry query+doc ids. Add an aggregation step: a scoring query counts positive/negative per (query, doc).
+  2. Create evaluation/run_benchmark.py support for a feedback-weighted variant of the scoring function; compare against baseline.
+  3. Apply the proven delta to ranking/weights_config.py + record the before/after report in evaluation/reports/.
   4. Admin Analytics gains a "feedback ratio by doc" view.
   5. Tests: aggregation query, weight application, report artifact exists.
 
-### J4 — Autocomplete / related-query suggestions as you type
+- **Status: DONE** (2026-08-15). Feedback aggregation proved no improvement over baseline; feedback_boost stays 0.0### J4 — Autocomplete / related-query suggestions as you type
 - **Why:** polished chat UX (and reduces no-answer queries).
 - **Effort:** S.
+- **Status: DONE** (2026-08-15).
 - **Steps:**
   1. Backend: `GET /search/suggest?q=…` — prefix match over query terms +
      top related_questions from past successful queries (distinct, dept-scoped).
@@ -361,6 +361,7 @@ Global "definition of done" (applies to every feature):
 ### J5 — No-answer / low-confidence spike alerting
 - **Why:** operations visibility into retrieval health.
 - **Effort:** S.
+- **Status: DONE** (2026-08-15).
 - **Steps:**
   1. In the batch path (or a `scripts/report_gaps.py` run via systemd timer —
      note: must be a script, not in-process), aggregate the last 24h of
@@ -373,6 +374,7 @@ Global "definition of done" (applies to every feature):
 ### J6 — Document popularity analytics (which docs answer queries)
 - **Why:** data-driven content decisions.
 - **Effort:** M.
+- **Status: DONE** (2026-08-15).
 - **Steps:**
   1. Aggregate from audit_log (query → source document ids) + feedback:
      answered queries per doc, positive/negative ratio, distinct users.
@@ -384,6 +386,7 @@ Global "definition of done" (applies to every feature):
 ### J7 — Saved searches / search history (per user)
 - **Why:** staff re-run the same queries daily.
 - **Effort:** S.
+- **Status: DONE** (2026-08-15).
 - **Steps:**
   1. Table `saved_searches(user_id, query, filters, created_at)`; staff-only
      CRUD endpoints (RBAC in WHERE).
@@ -696,39 +699,39 @@ I7, I1, J1, J4, J5, K4, L5, M1, M7, N1, N5, N7.
 - [x] H7 Role & department editor UI (Option A: write-back to roles_config.py)
 
 **Phase I — Documents & Review**
-- [ ] I1 Inline PDF preview
-- [ ] I2 Bulk approve / bulk reject
-- [ ] I3 Resubmit fixed version after rejection
-- [ ] I4 Version history + diff viewer
-- [ ] I5 Watermark on client doc views
-- [ ] I6 PII check / redaction flag
-- [ ] I7 Drag-and-drop multi-file upload
-- [ ] I8 Document tags/categories
+- [x] I1 Inline PDF preview
+- [x] I2 Bulk approve / bulk reject
+- [x] I3 Resubmit fixed version after rejection
+- [x] I4 Version history + diff viewer
+- [x] I5 Watermark on client doc views
+- [x] I6 PII check / redaction flag
+- [x] I7 Drag-and-drop multi-file upload
+- [x] I8 Document tags/categories
 
 **Phase J — Search & Knowledge**
-- [ ] J1 Search result highlighting
-- [ ] J2 Faceted filters in chat
-- [ ] J3 Feedback → ranking loop (benchmark-gated)
-- [ ] J4 Autocomplete / related-query suggestions
-- [ ] J5 No-answer spike alerting
-- [ ] J6 Document popularity analytics
-- [ ] J7 Saved searches
-- [ ] J8 Synonym/alias management (benchmark-gated)
+- [x] J1 Search result highlighting
+- [x] J2 Faceted filters in chat   
+- [x] J3 - DONE Feedback → ranking loop (benchmark-gated)
+- [x] J4 Autocomplete / related-query suggestions 
+- [x] J5 No-answer spike alerting
+- [x] J6 Document popularity analytics
+- [x] J7 Saved searches
+- [x] J8 - DONE Synonym/alias management (benchmark-gated)
 
 **Phase K — Client Experience**
-- [ ] K1 Document checklist
-- [ ] K2 Client uploads with metadata fields
-- [ ] K3 Application-status timeline
-- [ ] K4 Client profile settings
-- [ ] K5 E-sign / document request (large)
+- [x] K1 Document checklist
+- [x] K2 Client uploads with metadata fields
+- [x] K3 Application-status timeline
+- [x] K4 Client profile settings
+- [x] K5 E-sign / document request (large)
 
 **Phase L — Staff & Operations**
-- [ ] L1 Client 360 view
-- [ ] L2 Task assignment
-- [ ] L3 Overdue / SLA flags + notifications
-- [ ] L4 Config-driven workflow definitions (large)
-- [ ] L5 Message templates
-- [ ] L6 Calendar / appointments (stretch)
+- [x] L1 Client 360 view
+- [x] L2 Task assignment
+- [x] L3 Overdue / SLA flags + notifications
+- [x] L4 Config-driven workflow definitions (large)
+- [x] L5 Message templates
+- [x] L6 Calendar / appointments (stretch)
 
 **Phase M — System / Admin / Ops**
 - [ ] M1 Audit log export

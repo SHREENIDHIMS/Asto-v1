@@ -11,13 +11,15 @@ requires an NLTK model download), keeping the runtime dependency-free.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from sumy.nlp.stemmers import Stemmer
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.summarizers.text_rank import TextRankSummarizer
 from sumy.utils import get_stop_words
+
+from app.search.matched_terms import matched_terms
 
 if TYPE_CHECKING:
     from app.response.package_builder import Excerpt
@@ -58,6 +60,7 @@ class SummarySentence:
     chunk_type: str = "paragraph"
     document_id: int | None = None
     chunk_id: int | None = None
+    matched_terms: list[str] = field(default_factory=list)
 
 
 def _normalize(text: str) -> str:
@@ -82,6 +85,7 @@ def _find_source_excerpt(
 def summarize_excerpts(
     excerpts: list[Excerpt],
     sentences_count: int = DEFAULT_SENTENCES,
+    query_text: str = "",
 ) -> list[SummarySentence]:
     """Select the most salient sentences from the top excerpts.
 
@@ -121,6 +125,7 @@ def summarize_excerpts(
             chunk_type=excerpt.source.chunk_type,
             document_id=excerpt.source.document_id,
             chunk_id=excerpt.source.chunk_id,
+            matched_terms=matched_terms(query_text, text),
         ))
 
     return summary

@@ -1,0 +1,6 @@
+[Unit]
+Description=Run no-answer spike report (J5)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_report_gaps.sh

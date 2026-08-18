@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Search, Loader2, AlertCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Search, Loader2, AlertCircle, CornerDownLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { getSearchSuggestions } from "@/lib/api-client";
+import { getToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 interface SearchBarProps {
@@ -16,6 +18,9 @@ interface SearchBarProps {
   prefill?: string;
 }
 
+const DEBOUNCE_MS = 250;
+const MIN_PREFIX = 2;
+
 export default function SearchBar({
   onSearch,
   isLoading = false,
@@ -25,17 +30,71 @@ export default function SearchBar({
 }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [urgency, setUrgency] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tokenRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  // Seed the input when a parent programmaticaly prefills a query
+  useEffect(() => {
+    tokenRef.current = getToken() ?? undefined;
+  }, []);
+
+  // Seed the input when a parent programmatically prefills a query
   // (e.g. clicking a recent chat in the sidebar).
   useEffect(() => {
-    if (prefill) setQuery(prefill);
+    if (prefill) {
+      setQuery(prefill);
+      setOpen(false);
+    }
   }, [prefill]);
+
+  // Debounced suggestion fetch (J4). Only fires for non-empty prefixes.
+  const fetchSuggestions = useCallback((value: string) => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(async () => {
+      const trimmed = value.trim();
+      if (trimmed.length < MIN_PREFIX) {
+        setSuggestions([]);
+        setOpen(false);
+        setHighlighted(-1);
+        return;
+      }
+      try {
+        const results = await getSearchSuggestions(trimmed, tokenRef.current);
+        setSuggestions(results);
+        setOpen(results.length > 0);
+        setHighlighted(-1);
+      } catch {
+        setSuggestions([]);
+        setOpen(false);
+      }
+    }, DEBOUNCE_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  const selectSuggestion = useCallback(
+    (s: string) => {
+      setQuery(s);
+      setOpen(false);
+      setSuggestions([]);
+      setHighlighted(-1);
+      inputRef.current?.focus();
+    },
+    []
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +102,30 @@ export default function SearchBar({
     if (trimmed && !isLoading) {
       onSearch(trimmed, showUrgency ? urgency : undefined);
       setQuery("");
+      setOpen(false);
+      setSuggestions([]);
       if (showUrgency) setUrgency(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlighted((h) => (h + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted((h) =>
+        h <= 0 ? suggestions.length - 1 : h - 1
+      );
+    } else if (e.key === "Enter") {
+      if (highlighted >= 0 && highlighted < suggestions.length) {
+        e.preventDefault();
+        selectSuggestion(suggestions[highlighted]);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setHighlighted(-1);
     }
   };
 
@@ -54,10 +136,19 @@ export default function SearchBar({
           ref={inputRef}
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            fetchSuggestions(e.target.value);
+          }}
+          onKeyDown={handleKeyDown}
+          onFocus={() => {
+            if (suggestions.length > 0) setOpen(true);
+          }}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder={placeholder}
           disabled={isLoading}
           maxLength={500}
+          autoComplete="off"
           className={cn(
             "pl-12 pr-28 text-lg rounded-xl shadow-sm transition-colors",
             showUrgency && urgency && "border-destructive/50 focus:border-destructive"
@@ -102,6 +193,35 @@ export default function SearchBar({
           )}
         </Button>
       </div>
+
+      {open && suggestions.length > 0 && (
+        <ul
+          role="listbox"
+          className="absolute left-0 right-0 top-full mt-1 z-50 overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
+        >
+          {suggestions.map((s, i) => (
+            <li
+              key={s}
+              role="option"
+              aria-selected={i === highlighted}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                selectSuggestion(s);
+              }}
+              onMouseEnter={() => setHighlighted(i)}
+              className={cn(
+                "flex items-center justify-between gap-2 px-3 py-2.5 text-sm cursor-pointer",
+                i === highlighted ? "bg-muted" : "bg-transparent"
+              )}
+            >
+              <span className="truncate">{s}</span>
+              {i === highlighted && (
+                <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </form>
   );
 }

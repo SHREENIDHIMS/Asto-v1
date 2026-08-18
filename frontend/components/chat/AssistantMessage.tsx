@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { ChatTurn } from "@/hooks/use-chat-history";
 import { submitFeedback } from "@/lib/api-client";
 import { getToken } from "@/lib/auth";
+import { HighlightedText } from "@/components/chat/HighlightedText";
 
 interface AssistantMessageProps {
   turn: ChatTurn;
@@ -90,6 +91,18 @@ function buildAnswerText(turn: ChatTurn): string {
   return text;
 }
 
+/** Unique matched terms across summary sentences + excerpts (J1 highlighting). */
+function collectMatchedTerms(turn: ChatTurn): string[] {
+  const set = new Set<string>();
+  for (const s of turn.response.summary ?? []) {
+    for (const t of s.matched_terms ?? []) set.add(t);
+  }
+  for (const e of turn.response.excerpts ?? []) {
+    for (const t of e.matched_terms ?? []) set.add(t);
+  }
+  return Array.from(set);
+}
+
 export default function AssistantMessage({
   turn,
   onRegenerate,
@@ -99,6 +112,7 @@ export default function AssistantMessage({
   const { response } = turn;
   const noAnswer = response.routing === "no_answer";
   const answerText = buildAnswerText(turn);
+  const answerTerms = collectMatchedTerms(turn);
   const hasFacts = (response.facts ?? []).length > 0;
 
   const showFeedback = !noAnswer && (Boolean(answerText) || hasFacts);
@@ -255,7 +269,11 @@ export default function AssistantMessage({
             <p className="m-0">{noAnswerText}</p>
           ) : (
             <>
-              {answerText && <p className="m-0">{answerText}</p>}
+              {answerText && (
+                <p className="m-0">
+                  <HighlightedText text={answerText} terms={answerTerms} />
+                </p>
+              )}
               {hasFacts && <FactRows facts={response.facts} />}
               {!answerText && !hasFacts && (
                 <p className="m-0">{noAnswerText}</p>

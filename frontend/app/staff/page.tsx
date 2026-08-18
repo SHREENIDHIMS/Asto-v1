@@ -34,6 +34,19 @@ import {
   onboardClient,
   getStaffClients,
   staffUploadDocument,
+  getStaffDocumentFile,
+  getStaffTasks,
+  createStaffTask,
+  updateStaffTask,
+  getStaffClient360,
+  getWorkflowDefinitions,
+  createWorkflowDefinition,
+  deleteWorkflowDefinition,
+  getMessageTemplates,
+  createMessageTemplate,
+  deleteMessageTemplate,
+  getStaffAppointments,
+  createStaffAppointment,
   logout,
   logoutAll,
   getNotifications,
@@ -45,6 +58,11 @@ import {
   StaffDashboardResponse,
   StaffWorkflow,
   StaffSop,
+  StaffTask,
+  Client360,
+  WorkflowDefinition,
+  MessageTemplate,
+  StaffAppointment,
   CaseNote,
   SopAccessRequest,
   Conversation,
@@ -54,6 +72,8 @@ import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ConversationThread from "@/components/messages/ConversationThread";
 import SettingsModal from "@/components/settings/SettingsModal";
+import { FileDropzone } from "@/components/upload/FileDropzone";
+import { DocumentPreviewDialog } from "@/components/documents/DocumentPreviewDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -123,6 +143,8 @@ function StaffDashboardTab({
     { label: "My cases", value: data ? data.cases.length.toLocaleString() : "—", hint: "assigned clients" },
     { label: "Active workflows", value: data ? data.workflows.length.toLocaleString() : "—", hint: "in progress or review" },
     { label: "Department SOPs", value: data ? data.sops.length.toLocaleString() : "—", hint: "available to you" },
+    { label: "Overdue workflows", value: data ? data.overdue_workflows.toLocaleString() : "—", hint: "past due date" },
+    { label: "Overdue tasks", value: data ? data.overdue_tasks.toLocaleString() : "—", hint: "hand-assigned" },
   ];
 
   return (
@@ -137,7 +159,7 @@ function StaffDashboardTab({
         </Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {statCards.map((s) => (
           <Card key={s.label}>
             <CardHeader className="pb-1">
@@ -426,118 +448,265 @@ function WorkflowsTab({
 }
 
 // ---------------------------------------------------------------------------
-// Tasks tab (Phase F5 — derived from workflows)
+// Tasks tab (Phase L2 — real assigned tasks)
 // ---------------------------------------------------------------------------
 
-function TasksTab({
-  workflows,
-  token,
-  onRefresh,
-}: {
-  workflows: StaffWorkflow[];
-  token: string;
-  onRefresh: () => void;
-}) {
-  const [busyId, setBusyId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function taskStatusBadge(status: string) {
+  switch (status) {
+    case "completed":
+      return <Badge className="bg-green-100 text-green-800 border-green-200">completed</Badge>;
+    case "in_progress":
+      return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">in progress</Badge>;
+    case "overdue":
+      return <Badge className="bg-red-100 text-red-800 border-red-200">overdue</Badge>;
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+}
 
-  const handleAdvance = async (id: number) => {
-    setBusyId(id);
-    setError(null);
+function TasksTab({
+  token,
+  onError,
+}: {
+  token: string;
+  onError: (message: string) => void;
+}) {
+  const [tasks, setTasks] = useState<StaffTask[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [caseId, setCaseId] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
+  const [dueAt, setDueAt] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
     try {
-      await advanceWorkflow(token, id);
-      onRefresh();
+      const res = await getStaffTasks(token);
+      setTasks(res.tasks);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to advance task");
+      onError(err instanceof Error ? err.message : "Failed to load tasks");
     } finally {
-      setBusyId(null);
+      setIsLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!title.trim() || creating) return;
+    setCreating(true);
+    try {
+      await createStaffTask(token, {
+        title: title.trim(),
+        description: description.trim() || null,
+        case_id: caseId ? Number(caseId) : null,
+        assignee_id: assigneeId ? Number(assigneeId) : null,
+        due_at: dueAt ? new Date(dueAt).toISOString() : null,
+      });
+      setTitle("");
+      setDescription("");
+      setCaseId("");
+      setAssigneeId("");
+      setDueAt("");
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create task");
+    } finally {
+      setCreating(false);
     }
   };
 
-  const actionable = workflows.filter((w) => w.status !== "done");
-  const doneCount = workflows.length - actionable.length;
+  const handleComplete = async (task: StaffTask) => {
+    try {
+      await updateStaffTask(token, task.id, { status: "completed" });
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to complete task");
+    }
+  };
 
-  const statCards = [
-    { label: "Open tasks", value: actionable.length.toLocaleString(), hint: "in progress or review" },
-    { label: "Completed", value: doneCount.toLocaleString(), hint: "finished workflows" },
-  ];
+  const handleDelete = async (task: StaffTask) => {
+    try {
+      await updateStaffTask(token, task.id, { status: "overdue" });
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to update task");
+    }
+  };
+
+  const openCount = tasks.filter((t) => t.status !== "completed" && t.status !== "overdue").length;
+  const overdueCount = tasks.filter((t) => t.status === "overdue").length;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Tasks are derived from your department&apos;s active workflows.
+          Assign and track tasks with teammates.
         </p>
-        <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
-          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={load}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Refresh
+          </Button>
+          <Button type="button" size="sm" onClick={() => setShowCreate((v) => !v)}>
+            New task
+          </Button>
+        </div>
       </div>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        {statCards.map((s) => (
-          <Card key={s.label}>
-            <CardHeader className="pb-1">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {s.label}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{s.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {actionable.length === 0 ? (
-        <Card>
-          <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-600" />
-            All caught up — no open tasks.
-          </CardContent>
-        </Card>
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
       ) : (
-        actionable.map((wf) => (
-          <Card key={wf.id}>
-            <CardContent className="p-4 flex items-center justify-between gap-4">
-              <div className="min-w-0 flex items-start gap-3">
-                <WorkflowIcon className="h-4 w-4 text-muted-foreground mt-0.5" />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium">{wf.title}</p>
-                    {workflowBadge(wf.status)}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {wf.department}
-                    {wf.case_number ? ` · ${wf.case_number}` : ""}
-                  </p>
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {[
+              { label: "Open tasks", value: openCount, hint: "pending or in progress" },
+              { label: "Overdue", value: overdueCount, hint: "past due date" },
+              { label: "Total tasks", value: tasks.length, hint: "all statuses" },
+            ].map((s) => (
+              <Card key={s.label}>
+                <CardHeader className="pb-1">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    {s.label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold">{s.value.toLocaleString()}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {showCreate && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">New task</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="task-title">Title *</Label>
+                  <Input
+                    id="task-title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Collect signed deed"
+                  />
                 </div>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busyId === wf.id}
-                onClick={() => handleAdvance(wf.id)}
-              >
-                {busyId === wf.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Advance"
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-        ))
+                <div className="space-y-1">
+                  <Label htmlFor="task-desc">Description</Label>
+                  <Input
+                    id="task-desc"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="task-case" className="text-xs">Case ID</Label>
+                    <Input
+                      id="task-case"
+                      type="number"
+                      value={caseId}
+                      onChange={(e) => setCaseId(e.target.value)}
+                      placeholder="optional"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="task-assignee" className="text-xs">Assignee user ID</Label>
+                    <Input
+                      id="task-assignee"
+                      type="number"
+                      value={assigneeId}
+                      onChange={(e) => setAssigneeId(e.target.value)}
+                      placeholder="optional"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="task-due" className="text-xs">Due date</Label>
+                    <Input
+                      id="task-due"
+                      type="datetime-local"
+                      value={dueAt}
+                      onChange={(e) => setDueAt(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={!title.trim() || creating}
+                >
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create task"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {tasks.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-600" />
+                No tasks yet — create one to get started.
+              </CardContent>
+            </Card>
+          ) : (
+            tasks.map((t) => (
+              <Card key={t.id}>
+                <CardContent className="p-4 flex items-start justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Briefcase className="h-4 w-4 text-muted-foreground" />
+                      <p className="text-sm font-medium">{t.title}</p>
+                      {taskStatusBadge(t.status)}
+                    </div>
+                    {t.description && (
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        {t.description}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {t.case_number ? `${t.case_number} · ` : ""}
+                      {t.assignee_email ? `assigned to ${t.assignee_email}` : "unassigned"}
+                      {t.due_at ? ` · due ${formatDate(t.due_at)}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {t.status !== "completed" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleComplete(t)}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                        Complete
+                      </Button>
+                    )}
+                    {t.status !== "overdue" && t.status !== "completed" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(t)}
+                      >
+                        Mark overdue
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </>
       )}
     </div>
   );
@@ -1190,37 +1359,49 @@ function StaffUploadDialog({
   client: StaffClient | null;
   onUploaded: () => void;
 }) {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [propertyId, setPropertyId] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
 
   const reset = () => {
-    setFile(null);
+    setFiles([]);
     setPropertyId("");
     setError(null);
     setMessage(null);
+    setProgress(null);
   };
 
   const handleUpload = async () => {
-    if (!file || !client || uploading) return;
+    if (files.length === 0 || !client || uploading) return;
     setUploading(true);
     setError(null);
     setMessage(null);
     try {
-      const result = await staffUploadDocument(
-        file,
-        token,
-        client.id,
-        propertyId ? Number(propertyId) : null
+      let uploadedCount = 0;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setProgress({ done: i, total: files.length, name: file.name });
+        await staffUploadDocument(
+          file,
+          token,
+          client.id,
+          propertyId ? Number(propertyId) : null
+        );
+        uploadedCount += 1;
+      }
+      setProgress({ done: files.length, total: files.length, name: "" });
+      setMessage(
+        `${uploadedCount} document${uploadedCount === 1 ? "" : "s"} queued for indexing.`
       );
-      setMessage(`${result.filename} queued for indexing.`);
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   };
 
@@ -1261,13 +1442,22 @@ function StaffUploadDialog({
           )}
 
           <div className="space-y-1">
-            <Label htmlFor="su-file">File *</Label>
-            <Input
-              id="su-file"
-              type="file"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            <Label htmlFor="su-file">Files *</Label>
+            <FileDropzone
+              files={files}
+              onFilesChange={setFiles}
+              disabled={uploading}
+              label="Drag & drop documents here, or click to browse"
+              hint="Multiple files are uploaded one at a time."
             />
           </div>
+          {progress && (
+            <p className="text-sm text-muted-foreground">
+              {progress.name
+                ? `Uploading "${progress.name}" (${progress.done + 1} of ${progress.total})…`
+                : `Uploading ${progress.total} file${progress.total === 1 ? "" : "s"}…`}
+            </p>
+          )}
           {client && client.properties.length > 0 && (
             <div className="space-y-1">
               <Label htmlFor="su-property">Property (optional)</Label>
@@ -1288,9 +1478,9 @@ function StaffUploadDialog({
           <Button
             type="button"
             onClick={handleUpload}
-            disabled={!file || uploading}
+            disabled={files.length === 0 || uploading}
           >
-            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Upload for review"}
+            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : `Upload ${files.length > 0 ? `${files.length} file${files.length === 1 ? "" : "s"} for review` : "for review"}`}
           </Button>
         </div>
       </DialogContent>
@@ -1308,6 +1498,8 @@ function ClientsTab({
   const [clients, setClients] = useState<StaffClient[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [uploadClient, setUploadClient] = useState<StaffClient | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [view360, setView360] = useState<StaffClient | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -1324,6 +1516,17 @@ function ClientsTab({
   useEffect(() => {
     load();
   }, [load]);
+
+  if (view360) {
+    return (
+      <Client360Tab
+        client={view360}
+        token={token}
+        onBack={() => setView360(null)}
+        onError={onError}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1365,14 +1568,25 @@ function ClientsTab({
                   </div>
                   <p className="text-xs text-muted-foreground">{client.email}</p>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => setUploadClient(client)}
-                >
-                  <Upload className="h-3.5 w-3.5 mr-1.5" />
-                  Upload document
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setView360(client)}
+                  >
+                    <Briefcase className="h-3.5 w-3.5 mr-1.5" />
+                    360 view
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setUploadClient(client)}
+                  >
+                    <Upload className="h-3.5 w-3.5 mr-1.5" />
+                    Upload document
+                  </Button>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-3">
@@ -1427,8 +1641,42 @@ function ClientsTab({
                           v{d.version}
                         </span>
                         {docStatusBadge(d.approval_status)}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1.5 text-xs flex-shrink-0"
+                          onClick={() => setPreviewId(d.id)}
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          View
+                        </Button>
+                        {d.approval_status === "rejected" && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-6 px-2 text-xs flex-shrink-0"
+                            onClick={() => setUploadClient(client)}
+                          >
+                            <Upload className="h-3 w-3 mr-1" />
+                            Upload corrected version
+                          </Button>
+                        )}
                       </div>
                     ))
+                  )}
+                  {client.documents.some((d) => d.approval_status === "rejected") && (
+                    <div className="space-y-1.5 mt-2 border-t border-dashed pt-2">
+                      {client.documents
+                        .filter((d) => d.approval_status === "rejected")
+                        .map((d) => (
+                          <p key={d.id} className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                            &ldquo;{d.title}&rdquo; was rejected
+                            {d.rejection_reason ? `: ${d.rejection_reason}` : ""}
+                            {d.rejected_at ? ` (${formatDate(d.rejected_at)})` : ""}
+                          </p>
+                        ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1444,6 +1692,699 @@ function ClientsTab({
         client={uploadClient}
         onUploaded={load}
       />
+
+      <DocumentPreviewDialog
+        open={previewId != null}
+        onOpenChange={(open) => !open && setPreviewId(null)}
+        items={clients
+          .flatMap((c) => c.documents)
+          .map((d) => ({ id: d.id, title: d.title }))}
+        initialId={previewId ?? 0}
+        fetchBlob={(id) => getStaffDocumentFile(id, token)}
+        loadingLabel="Loading document…"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Client 360 view (Phase L1 — everything about a client on one screen)
+// ---------------------------------------------------------------------------
+
+function Client360Tab({
+  client,
+  token,
+  onBack,
+  onError,
+}: {
+  client: StaffClient;
+  token: string;
+  onBack: () => void;
+  onError: (message: string) => void;
+}) {
+  const [data, setData] = useState<Client360 | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      setData(await getStaffClient360(token, client.id));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load client 360");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, client.id, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="min-w-0">
+          <Button type="button" variant="ghost" size="sm" onClick={onBack} className="mb-1">
+            ← Back to clients
+          </Button>
+          <h2 className="text-lg font-semibold truncate">
+            {client.full_name || client.email}
+          </h2>
+          <p className="text-xs text-muted-foreground">{client.email}</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : data ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Properties</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {data.properties.length === 0 ? (
+                <p className="text-sm text-muted-foreground">None</p>
+              ) : (
+                data.properties.map((p) => (
+                  <div key={p.id} className="text-sm">
+                    {[p.address, p.city, p.state].filter(Boolean).join(", ") ||
+                      `Property #${p.id}`}
+                    {p.property_type ? ` · ${p.property_type}` : ""}
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Documents</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {data.documents.length === 0 ? (
+                <p className="text-sm text-muted-foreground">None</p>
+              ) : (
+                data.documents.map((d) => (
+                  <div key={d.id} className="flex items-center gap-2 text-sm">
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                    <span className="truncate">{d.title}</span>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">
+                      v{d.version}
+                    </span>
+                    {docStatusBadge(d.approval_status)}
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Cases & timeline</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {data.cases.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No cases.</p>
+              ) : (
+                data.cases.map((c) => (
+                  <div key={c.id} className="rounded-md border border-border p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">{c.case_number}</p>
+                      <Badge variant="outline">{c.status}</Badge>
+                    </div>
+                    {c.loan_amount != null && (
+                      <p className="text-sm font-semibold">{formatMoney(c.loan_amount)}</p>
+                    )}
+                    <div className="space-y-1 border-l-2 border-border pl-3">
+                      {c.timeline.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No events yet.</p>
+                      ) : (
+                        c.timeline.map((e, i) => (
+                          <div key={i} className="text-xs">
+                            <span className="font-medium">{e.status}</span>
+                            {e.note ? ` — ${e.note}` : ""}
+                            {e.created_at ? ` · ${formatDate(e.created_at)}` : ""}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Recent conversations</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {data.conversations.length === 0 ? (
+                <p className="text-sm text-muted-foreground">None.</p>
+              ) : (
+                data.conversations.map((cv) => (
+                  <div key={cv.id} className="text-sm flex items-center justify-between gap-2">
+                    <span className="truncate">{cv.subject}</span>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">
+                      {formatDate(cv.updated_at)}
+                    </span>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Workflow definitions (Phase L4)
+// ---------------------------------------------------------------------------
+
+function WorkflowDefinitionsTab({
+  token,
+  isAdmin,
+  onError,
+}: {
+  token: string;
+  isAdmin: boolean;
+  onError: (message: string) => void;
+}) {
+  const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [stages, setStages] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await getWorkflowDefinitions(token);
+      setDefinitions(res.workflow_definitions);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load workflow definitions");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!name.trim() || creating) return;
+    setCreating(true);
+    try {
+      await createWorkflowDefinition(token, {
+        name: name.trim(),
+        description: description.trim() || null,
+        stages: stages
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
+      setName("");
+      setDescription("");
+      setStages("");
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create definition");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await deleteWorkflowDefinition(token, id);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to delete definition");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Config-driven workflow definitions.
+        </p>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={load}>
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Refresh
+          </Button>
+          {isAdmin && (
+            <Button type="button" size="sm" onClick={() => setShowCreate((v) => !v)}>
+              New definition
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          {showCreate && isAdmin && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">New workflow definition</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="wd-name">Name *</Label>
+                  <Input id="wd-name" value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="wd-desc">Description</Label>
+                  <Input
+                    id="wd-desc"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="wd-stages">Stages (comma-separated)</Label>
+                  <Input
+                    id="wd-stages"
+                    value={stages}
+                    onChange={(e) => setStages(e.target.value)}
+                    placeholder="e.g. intake, underwriting, closing"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={!name.trim() || creating}
+                >
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create definition"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {definitions.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                No workflow definitions yet.
+              </CardContent>
+            </Card>
+          ) : (
+            definitions.map((d) => (
+              <Card key={d.id}>
+                <CardContent className="p-4 flex items-start justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <WorkflowIcon className="h-4 w-4 text-muted-foreground" />
+                      <p className="text-sm font-medium">{d.name}</p>
+                      <Badge variant="outline">{d.stages.length} stages</Badge>
+                    </div>
+                    {d.description && (
+                      <p className="text-sm text-muted-foreground">{d.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {d.stages.join(" → ")}
+                    </p>
+                  </div>
+                  {isAdmin && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDelete(d.id)}
+                    >
+                      Deactivate
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Message templates (Phase L5)
+// ---------------------------------------------------------------------------
+
+function MessageTemplatesTab({
+  token,
+  onError,
+}: {
+  token: string;
+  onError: (message: string) => void;
+}) {
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [name, setName] = useState("");
+  const [body, setBody] = useState("");
+  const [department, setDepartment] = useState("general");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await getMessageTemplates(token);
+      setTemplates(res.message_templates);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load message templates");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!name.trim() || !body.trim() || creating) return;
+    setCreating(true);
+    try {
+      await createMessageTemplate(token, {
+        name: name.trim(),
+        body: body.trim(),
+        department,
+      });
+      setName("");
+      setBody("");
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create template");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await deleteMessageTemplate(token, id);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to delete template");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Reusable replies for common client questions.
+        </p>
+        <Button type="button" size="sm" onClick={() => setShowCreate((v) => !v)}>
+          New template
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          {showCreate && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">New message template</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="mt-name">Name *</Label>
+                  <Input id="mt-name" value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="mt-body">Body *</Label>
+                  <textarea
+                    id="mt-body"
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    rows={4}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="mt-dept">Department</Label>
+                  <Select value={department} onValueChange={setDepartment}>
+                    <SelectTrigger id="mt-dept">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="general">general</SelectItem>
+                      <SelectItem value="underwriting">underwriting</SelectItem>
+                      <SelectItem value="compliance">compliance</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={!name.trim() || !body.trim() || creating}
+                >
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create template"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {templates.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                No message templates yet.
+              </CardContent>
+            </Card>
+          ) : (
+            templates.map((t) => (
+              <Card key={t.id}>
+                <CardContent className="p-4 flex items-start justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                      <p className="text-sm font-medium">{t.name}</p>
+                      <Badge variant="outline">{t.department}</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      {t.body.length > 240 ? `${t.body.slice(0, 240)}…` : t.body}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(t.id)}
+                  >
+                    Delete
+                  </Button>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Calendar / appointments (Phase L6)
+// ---------------------------------------------------------------------------
+
+function AppointmentsTab({
+  token,
+  onError,
+}: {
+  token: string;
+  onError: (message: string) => void;
+}) {
+  const [appointments, setAppointments] = useState<StaffAppointment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
+  const [department, setDepartment] = useState("general");
+  const [creating, setCreating] = useState(false);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await getStaffAppointments(token);
+      setAppointments(res.appointments);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load appointments");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!title.trim() || !startAt || !endAt || creating) return;
+    setCreating(true);
+    try {
+      await createStaffAppointment(token, {
+        title: title.trim(),
+        description: description.trim() || null,
+        start_at: new Date(startAt).toISOString(),
+        end_at: new Date(endAt).toISOString(),
+        department,
+      });
+      setTitle("");
+      setDescription("");
+      setStartAt("");
+      setEndAt("");
+      setShowCreate(false);
+      await load();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create appointment");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const sorted = [...appointments].sort((a, b) => {
+    const ta = a.start_at ? new Date(a.start_at).getTime() : 0;
+    const tb = b.start_at ? new Date(b.start_at).getTime() : 0;
+    return ta - tb;
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Schedule and track appointments.
+        </p>
+        <Button type="button" size="sm" onClick={() => setShowCreate((v) => !v)}>
+          New appointment
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          {showCreate && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">New appointment</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="apt-title">Title *</Label>
+                  <Input
+                    id="apt-title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Closing at title office"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="apt-desc">Description</Label>
+                  <Input
+                    id="apt-desc"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="apt-start">Start *</Label>
+                    <Input
+                      id="apt-start"
+                      type="datetime-local"
+                      value={startAt}
+                      onChange={(e) => setStartAt(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="apt-end">End *</Label>
+                    <Input
+                      id="apt-end"
+                      type="datetime-local"
+                      value={endAt}
+                      onChange={(e) => setEndAt(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="apt-dept">Department</Label>
+                  <Select value={department} onValueChange={setDepartment}>
+                    <SelectTrigger id="apt-dept">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="general">general</SelectItem>
+                      <SelectItem value="underwriting">underwriting</SelectItem>
+                      <SelectItem value="compliance">compliance</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={!title.trim() || !startAt || !endAt || creating}
+                >
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create appointment"}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {sorted.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                No appointments scheduled.
+              </CardContent>
+            </Card>
+          ) : (
+            sorted.map((a) => (
+              <Card key={a.id}>
+                <CardContent className="p-4 flex items-center justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-medium">{a.title}</p>
+                    {a.description && (
+                      <p className="text-sm text-muted-foreground truncate">{a.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {a.start_at ? formatDate(a.start_at) : "—"}
+                      {a.end_at ? ` → ${formatDate(a.end_at)}` : ""}
+                      {" · "}
+                      {a.department}
+                    </p>
+                  </div>
+                  <Badge variant="outline">{a.status}</Badge>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1707,14 +2648,17 @@ export default function StaffPage() {
         )}
 
         <Tabs value={activeNavId} onValueChange={setActiveNavId}>
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="grid w-full grid-cols-10">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="clients">Clients</TabsTrigger>
             <TabsTrigger value="cases">My Cases</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
+            <TabsTrigger value="definitions">Definitions</TabsTrigger>
+            <TabsTrigger value="templates">Templates</TabsTrigger>
+            <TabsTrigger value="appointments">Calendar</TabsTrigger>
             <TabsTrigger value="sops">SOPs</TabsTrigger>
-            <TabsTrigger value="collaboration">Collaboration</TabsTrigger>
+            <TabsTrigger value="collaboration">Collab</TabsTrigger>
           </TabsList>
           <TabsContent value="dashboard">
             <StaffDashboardTab data={data} isLoading={isLoading} onRefresh={load} />
@@ -1726,10 +2670,23 @@ export default function StaffPage() {
             <MyCasesTab cases={data?.cases ?? []} token={token} onRefresh={load} />
           </TabsContent>
           <TabsContent value="tasks">
-            <TasksTab workflows={data?.workflows ?? []} token={token} onRefresh={load} />
+            <TasksTab token={token} onError={setError} />
           </TabsContent>
           <TabsContent value="workflows">
             <WorkflowsTab workflows={data?.workflows ?? []} token={token} onRefresh={load} />
+          </TabsContent>
+          <TabsContent value="definitions">
+            <WorkflowDefinitionsTab
+              token={token}
+              isAdmin={isAdminRole(userRole ?? "")}
+              onError={setError}
+            />
+          </TabsContent>
+          <TabsContent value="templates">
+            <MessageTemplatesTab token={token} onError={setError} />
+          </TabsContent>
+          <TabsContent value="appointments">
+            <AppointmentsTab token={token} onError={setError} />
           </TabsContent>
           <TabsContent value="sops">
             <SopsTab

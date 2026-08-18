@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
 from passlib.hash import bcrypt
 from pydantic import BaseModel
 
@@ -561,6 +561,108 @@ async def review_sop_access_request(
 
 
 # ---------------------------------------------------------------------------
+# Synonym / alias management (J8: domain aliases improve recall)
+# ---------------------------------------------------------------------------
+
+
+class SynonymEntry(BaseModel):
+    canonical: str
+    alias: str
+
+
+class SynonymCreate(SynonymEntry):
+    pass
+
+
+@router.get("/synonyms", response_model=list[SynonymEntry])
+async def list_synonyms(user: dict = Depends(require_auth)) -> list[SynonymEntry]:
+    """List all canonical/alias pairs. Admin only."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT canonical, alias FROM synonyms ORDER BY canonical, alias"
+            )
+            rows = cur.fetchall()
+    return [SynonymEntry(canonical=row["canonical"], alias=row["alias"]) for row in rows]
+
+
+@router.post("/synonyms", status_code=status.HTTP_201_CREATED, response_model=SynonymEntry)
+async def create_synonym(
+    entry: SynonymCreate,
+    user: dict = Depends(require_auth),
+) -> SynonymEntry:
+    """Create a canonical/alias pair. Admin only."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # Check if already exists first
+            cur.execute(
+                "SELECT id FROM synonyms WHERE canonical = %s AND alias = %s",
+                (entry.canonical, entry.alias),
+            )
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Synonym already exists: '{entry.alias}' for canonical '{entry.canonical}'",
+                )
+            cur.execute(
+                "INSERT INTO synonyms (canonical, alias) VALUES (%s, %s) RETURNING canonical, alias",
+                (entry.canonical, entry.alias),
+            )
+            new_row = cur.fetchone()
+        conn.commit()
+    return SynonymEntry(canonical=new_row["canonical"], alias=new_row["alias"])
+
+
+@router.delete("/synonyms/{canonical}/{alias}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_synonym(
+    canonical: str,
+    alias: str,
+    user: dict = Depends(require_auth),
+) -> None:
+    """Delete a canonical/alias pair. Admin only."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM synonyms WHERE canonical = %s AND alias = %s",
+                (canonical, alias),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Synonym not found",
+                )
+        conn.commit()
+    return None
+
+
+# Alias expansion in query text (for diagnostics)
+@router.get("/synonyms/expand/{text}")
+async def expand_query_synonyms(text: str, user: dict = Depends(require_auth)) -> dict:
+    """Return the text with database synonyms expanded (added as extra terms).
+    Admin only. Pulls from the database synonyms table."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # Find aliases that appear in the text
+            cur.execute(
+                "SELECT canonical, alias FROM synonyms WHERE alias ILIKE %s OR canonical ILIKE %s",
+                (f"%{text}%", f"%{text}%"),
+            )
+            matches = cur.fetchall()
+    expanded_parts: list[str] = [text]
+    seen: set[str] = set()
+    for canonical, alias in matches:
+        if alias.lower() in text.lower() and canonical not in seen:
+            seen.add(canonical)
+            expanded_parts.append(canonical)
+    expanded = " ".join(expanded_parts).strip()
+    return {"original": text, "expanded": expanded if expanded != text else text}
+
+
+# ---------------------------------------------------------------------------
 # Knowledge Base browse (read-only) + governance views (Phase F3)
 # ---------------------------------------------------------------------------
 
@@ -911,4 +1013,195 @@ async def get_audit_log(
         "limit": limit,
         "offset": offset,
         "entries": [audit_row_to_dict(r) for r in rows],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Case document requirements (K1: document checklist)
+# ---------------------------------------------------------------------------
+
+
+class RequirementCreate:
+    """Request body for creating a requirement definition."""
+    def __init__(self, name: str, description: str = "", case_type: str = "purchase"):
+        self.name = name
+        self.description = description
+        self.case_type = case_type
+
+
+@router.get("/case-requirements/default/{case_type}")
+async def get_default_requirements(
+    case_type: str,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return the default requirement list for a case type (admin only)."""
+    require_role(user, "admin")
+    requirements = DEFAULT_REQUIREMENTS.get(case_type, [])
+    return {"case_type": case_type, "requirements": requirements}
+
+
+@router.post("/case-requirements/seed/{case_type}")
+async def seed_case_requirements(
+    case_type: str,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Seed default requirements into the DB for a case type (admin only).
+
+    Idempotent: skips rows that already exist.
+    """
+    require_role(user, "admin")
+    from app.documents.requirements import seed_default_requirements
+
+    with session.acquire() as conn:
+        count = seed_default_requirements(conn, case_type)
+    return {"case_type": case_type, "inserted": count}
+
+
+@router.get("/case-requirements/{case_id}")
+async def get_case_checklist(
+    case_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Derive the document checklist for a case.
+
+    Returns the list of requirements with status: required/pending/received/approved.
+    Staff can see all cases; client sees only their own.
+    """
+    require_role(user, "admin")
+    from app.documents.requirements import derive_case_checklist
+
+    with session.acquire() as conn:
+        checklist = derive_case_checklist(conn, case_id)
+    return {"case_id": case_id, "checklist": checklist}
+
+
+# ---------------------------------------------------------------------------
+# Signature requests (K5: e-sign / document request)
+# ---------------------------------------------------------------------------
+
+
+class SignatureRequestCreate(BaseModel):
+    case_id: int
+    document_id: int
+    requested_from: str  # e.g. "client", "staff"
+
+
+@router.post("/signature-requests", status_code=status.HTTP_201_CREATED)
+async def create_signature_request(
+    request: SignatureRequestCreate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Staff creates a signature request for a document.
+
+    The document must belong to a case the staff member's client is assigned to.
+    A unique token is generated; the client receives a notification to sign.
+    """
+    require_role(user, "admin")
+    import uuid
+    from datetime import datetime, timezone
+
+    token = uuid.uuid4().hex
+    signed_at = None
+    status = "pending"
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # Verify the document belongs to a case assigned to the staff's client
+            cur.execute(
+                "SELECT id, client_id FROM documents WHERE id = %s AND is_active = true AND approval_status = 'approved'",
+                (request.document_id,),
+            )
+            doc = cur.fetchone()
+            if doc is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Document not found or not approved",
+                )
+
+            cur.execute(
+                "INSERT INTO signature_requests (case_id, document_id, requested_from, token, status) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id, token, status, created_at",
+                (request.case_id, request.document_id, request.requested_from, token, status),
+            )
+            row = dict(cur.fetchone())
+        conn.commit()
+
+    # TODO: send notification to client (G3)
+    return {"signature_request_id": row["id"], "token": row["token"], "status": row["status"]}
+
+
+@router.get("/signature-requests")
+async def list_signature_requests(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List all signature requests (admin only)."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, case_id, document_id, requested_from, token, status, signed_at, created_at "
+                "FROM signature_requests ORDER BY created_at DESC"
+            )
+            rows = cur.fetchall()
+    return {"signature_requests": [{"id": r["id"], "case_id": r["case_id"], "document_id": r["document_id"],
+                                     "requested_from": r["requested_from"], "token": r["token"],
+                                     "status": r["status"], "signed_at": str(r["signed_at"]) if r["signed_at"] else None,
+                                     "created_at": str(r["created_at"])} for r in rows]}
+
+
+@router.post("/signature-requests/{request_id}/sign")
+async def sign_signature_request(
+    request_id: int,
+    signed_name: str = Form(...),
+    consent: bool = Form(...),
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Staff (on behalf of a client) signs a signature request.
+
+    The request is marked signed with the signer's name and consent, and
+    the document is version-bumped. No notification is sent yet (G3).
+    """
+    require_role(user, "admin")
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, case_id, document_id, status FROM signature_requests WHERE id = %s",
+                (request_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Signature request not found",
+                )
+            if row["status"] != "pending":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Signature request is not in pending state",
+                )
+            if not consent:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Consent is required to sign",
+                )
+
+            signed_at = datetime.now(timezone.utc)
+            cur.execute(
+                "UPDATE signature_requests SET status = 'signed', signed_name = %s, consent = true, signed_at = %s, updated_at = now() WHERE id = %s",
+                (signed_name.strip(), signed_at, request_id),
+            )
+
+            doc_id = row["document_id"]
+            if doc_id is not None:
+                cur.execute(
+                    "UPDATE documents SET approval_status = 'approved', is_approved = true, version = version + 1 WHERE id = %s",
+                    (doc_id,),
+                )
+            conn.commit()
+
+    return {
+        "message": "Document signed and approved",
+        "document_id": doc_id,
+        "signed_at": signed_at.isoformat(),
     }

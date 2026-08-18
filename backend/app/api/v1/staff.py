@@ -24,11 +24,13 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from passlib.hash import bcrypt
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth.rbac import is_admin
 from app.auth.roles_config import can as role_can
+from app.auth.permissions import require_role
 from app.config import settings
 from app.db.postgres.models import (
     case_note_row_to_dict,
@@ -47,7 +49,8 @@ from app.api.v1.messaging import (
 from app.db.postgres import session
 from app.dependencies import require_auth
 from app.documents.validation import validate_upload
-from app.api.v1.notifications import notify_admins
+from app.documents.file_serve import resolve_stored_file
+from app.api.v1.notifications import notify_admins, notify_user
 
 router = APIRouter()
 
@@ -293,11 +296,137 @@ async def staff_dashboard(user: dict = Depends(require_auth)) -> dict:
             )
             sop_access = cur.fetchone() is not None
 
+            # L3: overdue workflows + overdue hand-assigned tasks.
+            if is_admin(user):
+                cur.execute(
+                    "SELECT COUNT(*) FROM workflows "
+                    "WHERE due_at IS NOT NULL AND due_at < now() "
+                    "AND status NOT IN ('done', 'overdue')"
+                )
+            else:
+                cur.execute(
+                    "SELECT COUNT(*) FROM workflows "
+                    "WHERE department = ANY(%s) AND due_at IS NOT NULL "
+                    "AND due_at < now() AND status NOT IN ('done', 'overdue')",
+                    (depts,),
+                )
+            overdue_workflows = cur.fetchone()["count"]
+
+            # Overdue hand-assigned tasks (same visibility scope as /tasks).
+            scope, scope_params = _task_visible_scope(cur, user)
+            cur.execute(
+                "SELECT COUNT(*) FROM tasks t "
+                "WHERE t.due_at IS NOT NULL AND t.due_at < now() "
+                "AND t.status NOT IN ('completed', 'overdue') "
+                f"{scope}",
+                scope_params,
+            )
+            overdue_tasks = cur.fetchone()["count"]
+
     return {
         "cases": [dict(r) for r in cases],
         "workflows": [workflow_row_to_dict(dict(r)) for r in workflows],
         "sops": [sop_row_to_dict(dict(r)) for r in sops],
         "sop_access": sop_access or is_admin(user),
+        "overdue_workflows": overdue_workflows,
+        "overdue_tasks": overdue_tasks,
+    }
+
+
+# ---------------------------------------------------------------------------
+# L1: Client 360 view — everything about one client on a single screen
+# ---------------------------------------------------------------------------
+
+
+@router.get("/clients/{client_id}/360")
+async def staff_client_360(
+    client_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """One-call 360 view of a client: profile, properties, cases (+timeline),
+    documents with status, and conversations.
+
+    Scoping (CLAUDE.md rule 1): non-admins may only 360 clients they are
+    assigned to; admins see all. Enforced in the SQL WHERE clause.
+    """
+    _require_staff(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "SELECT id, email, full_name, is_active, created_at "
+                    "FROM clients WHERE id = %s",
+                    (client_id,),
+                )
+            else:
+                cur.execute(
+                    "SELECT cl.id, cl.email, cl.full_name, cl.is_active, cl.created_at "
+                    "FROM clients cl "
+                    "JOIN staff_client_assignments sca ON sca.client_id = cl.id "
+                    "WHERE cl.id = %s AND sca.user_id = %s",
+                    (client_id, user["id"]),
+                )
+            client = cur.fetchone()
+            if client is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Client not found or not assigned to you",
+                )
+
+            cur.execute(
+                "SELECT id, client_id, address, city, state, postal_code, "
+                "property_type, is_active, created_at "
+                "FROM properties WHERE client_id = %s AND is_active = true "
+                "ORDER BY id",
+                (client_id,),
+            )
+            properties = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                "SELECT c.id, c.case_number, c.client_id, c.property_id, "
+                "c.loan_amount, c.status, c.is_active, c.created_at "
+                "FROM cases c WHERE c.client_id = %s AND c.is_active = true "
+                "ORDER BY c.id",
+                (client_id,),
+            )
+            cases = [dict(row) for row in cur.fetchall()]
+
+            events: dict[int, list[dict]] = {}
+            if cases:
+                cur.execute(
+                    "SELECT case_id, status, note, created_at "
+                    "FROM case_events WHERE case_id = ANY(%s) "
+                    "ORDER BY created_at ASC, id ASC",
+                    ([c["id"] for c in cases],),
+                )
+                for e in cur.fetchall():
+                    events.setdefault(e["case_id"], []).append(dict(e))
+
+            cur.execute(
+                "SELECT id, title, doc_type, department, version, "
+                "approval_status, property_id, created_at "
+                "FROM documents WHERE client_id = %s AND is_active = true "
+                "ORDER BY created_at DESC",
+                (client_id,),
+            )
+            documents = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                "SELECT id, case_id, subject, created_at, updated_at "
+                "FROM conversations WHERE client_id = %s "
+                "ORDER BY updated_at DESC LIMIT 10",
+                (client_id,),
+            )
+            conversations = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "client": dict(client),
+        "properties": properties,
+        "cases": [
+            {**dict(c), "timeline": events.get(c["id"], [])} for c in cases
+        ],
+        "documents": documents,
+        "conversations": conversations,
     }
 
 
@@ -399,6 +528,33 @@ async def advance_workflow(
                 "UPDATE workflows SET status = %s, updated_at = now() WHERE id = %s",
                 (next_status, workflow_id),
             )
+
+            # Check if workflow is now overdue (due_at has passed)
+            cur.execute(
+                "SELECT due_at FROM workflows WHERE id = %s",
+                (workflow_id,),
+            )
+            due_row = cur.fetchone()
+            if due_row and due_row["due_at"] and due_row["due_at"] < now():
+                cur.execute(
+                    "UPDATE workflows SET status = 'overdue' WHERE id = %s",
+                    (workflow_id,),
+                )
+                # Create overdue notification
+                notify_msg = f"Workflow is overdue (due was {due_row['due_at']})"
+                cur.execute(
+                    """
+                    INSERT INTO notifications (user_id, title, message, type, metadata, created_at)
+                    VALUES (%s, %s, %s, 'workflow_overdue', %s, NOW())
+                    """,
+                    (
+                        user["id"],
+                        "Overdue Workflow",
+                        notify_msg,
+                        json.dumps({"workflow_id": workflow_id, "due_at": str(due_row[0])}),
+                    ),
+                )
+
         conn.commit()
 
     return WorkflowAdvanceResponse(workflow_id=workflow_id, status=next_status)
@@ -812,6 +968,222 @@ async def staff_clients(user: dict = Depends(require_auth)) -> dict:
 
     return {"clients": clients}
 
+# ---------------------------------------------------------------------------
+# Task assignment (L2: real tasks on the `tasks` table)
+# ---------------------------------------------------------------------------
+
+class TaskCreate(BaseModel):
+    case_id: int | None = None
+    title: str = Field(min_length=1, max_length=300)
+    description: str | None = None
+    assignee_id: int | None = None
+    due_at: str | None = None
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    assignee_id: int | None = None
+    due_at: str | None = None
+    status: str | None = None
+
+
+def _task_visible_scope(cur, user: dict) -> tuple[str, list]:
+    """Return a SQL scope filter for tasks a staff member may see."""
+    if is_admin(user):
+        return "", []
+    assigned = _assigned_client_ids(cur, user) or []
+    if not assigned:
+        return "AND t.case_id IS NULL AND false", []
+    return (
+        "AND (t.case_id IS NULL OR t.case_id IN (SELECT id FROM cases WHERE client_id = ANY(%s)))",
+        [assigned],
+    )
+
+
+@router.get("/tasks")
+async def list_tasks(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List real assigned tasks (L2), scoped to the staff member's clients.
+
+    If there are no hand-assigned tasks yet, returns an empty list — the
+    frontend falls back to derived workflow items.
+    """
+    _require_staff(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            scope, scope_params = _task_visible_scope(cur, user)
+            cur.execute(
+                "SELECT t.id, t.case_id, t.title, t.description, "
+                "t.assignee_id, t.due_at, t.status, t.created_by, "
+                "t.created_at, t.updated_at, "
+                "u.email AS assignee_email, ca.case_number "
+                "FROM tasks t "
+                "LEFT JOIN users u ON u.id = t.assignee_id "
+                "LEFT JOIN cases ca ON ca.id = t.case_id "
+                f"WHERE 1=1 {scope} "
+                "ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC",
+                scope_params,
+            )
+            tasks = [dict(row) for row in cur.fetchall()]
+
+    return {"tasks": tasks}
+
+
+@router.post("/tasks", status_code=status.HTTP_201_CREATED)
+async def create_task(
+    payload: TaskCreate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Create and assign a task. Assignee (if any) gets a notification."""
+    _require_staff(user)
+
+    due_at = None
+    if payload.due_at:
+        from datetime import datetime, timezone
+        try:
+            due_at = datetime.fromisoformat(payload.due_at.replace("Z", "+00:00"))
+            if due_at.tzinfo is None:
+                due_at = due_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="due_at must be an ISO-8601 timestamp",
+            )
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            # If assigned to another user, verify that user exists.
+            if payload.assignee_id is not None:
+                cur.execute(
+                    "SELECT 1 FROM users WHERE id = %s",
+                    (payload.assignee_id,),
+                )
+                if cur.fetchone() is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Assignee user not found",
+                    )
+
+            cur.execute(
+                "INSERT INTO tasks (case_id, title, description, assignee_id, due_at, created_by) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "RETURNING id, case_id, title, description, assignee_id, due_at, status, created_at",
+                (
+                    payload.case_id,
+                    payload.title.strip(),
+                    payload.description.strip() if payload.description else None,
+                    payload.assignee_id,
+                    due_at,
+                    user["id"],
+                ),
+            )
+            row = dict(cur.fetchone())
+
+            if payload.assignee_id is not None:
+                notify_user(
+                    conn,
+                    payload.assignee_id,
+                    "task_assigned",
+                    "New task assigned to you",
+                    f"{user.get('name') or user.get('email')} assigned: {payload.title.strip()}",
+                    link="/staff?tab=tasks",
+                )
+            conn.commit()
+
+    return {"task": row}
+
+
+@router.patch("/tasks/{task_id}")
+async def update_task(
+    task_id: int,
+    payload: TaskUpdate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Reassign or update a task; marks complete and notifies the creator."""
+    _require_staff(user)
+
+    due_at = None
+    if payload.due_at is not None:
+        from datetime import datetime, timezone
+        try:
+            due_at = datetime.fromisoformat(payload.due_at.replace("Z", "+00:00"))
+            if due_at.tzinfo is None:
+                due_at = due_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="due_at must be an ISO-8601 timestamp",
+            )
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            scope, scope_params = _task_visible_scope(cur, user)
+            cur.execute(
+                f"SELECT t.id, t.title, t.created_by FROM tasks t "
+                f"WHERE t.id = %s {scope}",
+                [task_id] + scope_params,
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Task not found or not in your scope",
+                )
+
+            set_parts: list[str] = []
+            params: list = []
+            if payload.title is not None:
+                set_parts.append("title = %s")
+                params.append(payload.title.strip())
+            if payload.description is not None:
+                set_parts.append("description = %s")
+                params.append(payload.description.strip())
+            if payload.assignee_id is not None:
+                set_parts.append("assignee_id = %s")
+                params.append(payload.assignee_id)
+            if payload.due_at is not None:
+                set_parts.append("due_at = %s")
+                params.append(due_at)
+            if payload.status is not None:
+                if payload.status not in {"pending", "assigned", "in_progress", "completed", "overdue"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Invalid task status",
+                    )
+                set_parts.append("status = %s")
+                params.append(payload.status)
+
+            if not set_parts:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="At least one field to update must be provided",
+                )
+
+            set_parts.append("updated_at = now()")
+            params.append(task_id)
+            cur.execute(
+                f"UPDATE tasks SET {', '.join(set_parts)} WHERE id = %s RETURNING "
+                "id, case_id, title, description, assignee_id, due_at, status, created_at",
+                params,
+            )
+            updated = dict(cur.fetchone())
+
+            if payload.status == "completed":
+                notify_user(
+                    conn,
+                    row["created_by"],
+                    "task_completed",
+                    "Task completed",
+                    f"{user.get('name') or user.get('email')} completed: {row['title']}",
+                    link="/staff?tab=tasks",
+                )
+            conn.commit()
+
+    return {"task": updated}
+
+
 
 @router.post("/documents/upload", status_code=status.HTTP_201_CREATED)
 async def staff_upload_document(
@@ -909,3 +1281,358 @@ async def staff_upload_document(
         "client_id": client_id,
         "property_id": property_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Staff document file + rejection history (I4/I7: staff-side counterparts to
+# the client endpoints)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/documents/{document_id}/file")
+async def staff_document_file(
+    document_id: int,
+    user: dict = Depends(require_auth),
+) -> FileResponse:
+    """Serve a stored document file to staff.
+
+    Scoped to documents the staff member can see: assigned clients'
+    documents for non-admins, everything for admins. Enforced in SQL.
+    """
+    _require_staff(user)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "SELECT source_path, title FROM documents "
+                    "WHERE id = %s AND is_active = true",
+                    (document_id,),
+                )
+            else:
+                assigned = _assigned_client_ids(cur, user)
+                if assigned is None:
+                    assigned = []
+                cur.execute(
+                    "SELECT source_path, title FROM documents "
+                    "WHERE id = %s AND is_active = true "
+                    "AND (client_id IS NULL OR client_id = ANY(%s))",
+                    (document_id, assigned),
+                )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or not accessible",
+        )
+
+    file_path = resolve_stored_file(row["source_path"])
+    return FileResponse(
+        file_path,
+        filename=row["title"] or file_path.name,
+    )
+
+
+@router.get("/documents/{document_id}/rejections")
+async def staff_document_rejections(
+    document_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Return the full rejection history for a document.
+
+    Staff can view rejection history for documents they can see (assigned
+    clients for non-admins, everything for admins). Enforced in SQL.
+    """
+    _require_staff(user)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "SELECT 1 FROM documents WHERE id = %s AND is_active = true",
+                    (document_id,),
+                )
+            else:
+                assigned = _assigned_client_ids(cur, user)
+                if assigned is None:
+                    assigned = []
+                cur.execute(
+                    "SELECT 1 FROM documents "
+                    "WHERE id = %s AND is_active = true "
+                    "AND (client_id IS NULL OR client_id = ANY(%s))",
+                    (document_id, assigned),
+                )
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Document not found",
+                )
+            cur.execute(
+                """
+                SELECT al.id, al.reason, al.created_at,
+                       u.email AS reviewed_by_email
+                FROM approval_log al
+                LEFT JOIN users u ON u.id = al.reviewed_by
+                WHERE al.document_id = %s AND al.to_status = 'rejected'
+                ORDER BY al.id DESC
+                """,
+                (document_id,),
+            )
+            rejections = [dict(row) for row in cur.fetchall()]
+
+    return {"document_id": document_id, "rejections": rejections}
+
+
+# ---------------------------------------------------------------------------
+# L4: Config-driven workflow definitions
+# ---------------------------------------------------------------------------
+
+
+class WorkflowDefinitionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+    stages: list[str] = Field(default_factory=list)
+    transitions: list[dict] = Field(default_factory=list)
+
+
+@router.get("/workflow-definitions")
+async def list_workflow_definitions(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List active workflow definitions (admin + staff)."""
+    _require_staff(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, description, stages, transitions, is_active, created_at "
+                "FROM workflow_definitions WHERE is_active = true "
+                "ORDER BY name"
+            )
+            definitions = [dict(row) for row in cur.fetchall()]
+    return {"workflow_definitions": definitions}
+
+
+@router.post("/workflow-definitions", status_code=status.HTTP_201_CREATED)
+async def create_workflow_definition(
+    payload: WorkflowDefinitionCreate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Create a workflow definition (admin only)."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO workflow_definitions (name, description, stages, transitions) "
+                "VALUES (%s, %s, %s::jsonb, %s::jsonb) "
+                "RETURNING id, name, description, stages, transitions, is_active, created_at",
+                (payload.name.strip(), payload.description, json.dumps(payload.stages), json.dumps(payload.transitions)),
+            )
+            row = dict(cur.fetchone())
+        conn.commit()
+    return {"workflow_definition": row}
+
+
+@router.delete("/workflow-definitions/{definition_id}")
+async def deactivate_workflow_definition(
+    definition_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Deactivate a workflow definition (admin only)."""
+    require_role(user, "admin")
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE workflow_definitions SET is_active = false, updated_at = now() "
+                "WHERE id = %s",
+                (definition_id,),
+            )
+        conn.commit()
+    return {"message": "Workflow definition deactivated"}
+
+
+# ---------------------------------------------------------------------------
+# L5: Message templates (staff CRUD)
+# ---------------------------------------------------------------------------
+
+
+class MessageTemplateCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=5000)
+    department: str = "general"
+
+
+@router.get("/message-templates")
+async def list_message_templates(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List message templates scoped to the staff member's departments."""
+    _require_staff(user)
+    depts = _user_departments(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "SELECT id, name, body, department, created_at, updated_at "
+                    "FROM message_templates ORDER BY name"
+                )
+            else:
+                cur.execute(
+                    "SELECT id, name, body, department, created_at, updated_at "
+                    "FROM message_templates WHERE department = ANY(%s) "
+                    "ORDER BY name",
+                    (depts,),
+                )
+            templates = [dict(row) for row in cur.fetchall()]
+    return {"message_templates": templates}
+
+
+@router.post("/message-templates", status_code=status.HTTP_201_CREATED)
+async def create_message_template(
+    payload: MessageTemplateCreate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Create a message template (admin only, or staff for own dept)."""
+    _require_staff(user)
+    depts = _user_departments(user)
+    if not is_admin(user) and payload.department not in depts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create a template for a department you don't belong to",
+        )
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO message_templates (name, body, department) "
+                "VALUES (%s, %s, %s) "
+                "RETURNING id, name, body, department, created_at, updated_at",
+                (payload.name.strip(), payload.body.strip(), payload.department),
+            )
+            row = dict(cur.fetchone())
+        conn.commit()
+    return {"message_template": row}
+
+
+@router.delete("/message-templates/{template_id}")
+async def delete_message_template(
+    template_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Delete a message template (admin, or staff in the owning dept)."""
+    _require_staff(user)
+    depts = _user_departments(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "DELETE FROM message_templates WHERE id = %s",
+                    (template_id,),
+                )
+            else:
+                cur.execute(
+                    "DELETE FROM message_templates "
+                    "WHERE id = %s AND department = ANY(%s)",
+                    (template_id, depts),
+                )
+            deleted = cur.rowcount
+        conn.commit()
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+    return {"message": "Template deleted"}
+
+
+# ---------------------------------------------------------------------------
+# L6: Calendar / appointments
+# ---------------------------------------------------------------------------
+
+
+class AppointmentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    description: str | None = None
+    start_at: str
+    end_at: str
+    department: str = "general"
+    staff_id: int | None = None
+
+
+@router.get("/appointments")
+async def list_appointments(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """List appointments in the staff member's departments (or all for admin)."""
+    _require_staff(user)
+    depts = _user_departments(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            if is_admin(user):
+                cur.execute(
+                    "SELECT id, title, description, start_at, end_at, department, "
+                    "staff_id, status, created_at "
+                    "FROM appointments ORDER BY start_at"
+                )
+            else:
+                cur.execute(
+                    "SELECT id, title, description, start_at, end_at, department, "
+                    "staff_id, status, created_at "
+                    "FROM appointments WHERE department = ANY(%s) "
+                    "ORDER BY start_at",
+                    (depts,),
+                )
+            appointments = [dict(row) for row in cur.fetchall()]
+    return {"appointments": appointments}
+
+
+@router.post("/appointments", status_code=status.HTTP_201_CREATED)
+async def create_appointment(
+    payload: AppointmentCreate,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Create an appointment in the staff member's department."""
+    _require_staff(user)
+    depts = _user_departments(user)
+    if not is_admin(user) and payload.department not in depts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create an appointment for a department you don't belong to",
+        )
+    from datetime import datetime, timezone
+
+    def _parse(dt: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="start_at/end_at must be ISO-8601 timestamps",
+            )
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    start_at = _parse(payload.start_at)
+    end_at = _parse(payload.end_at)
+    if end_at <= start_at:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_at must be after start_at",
+        )
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO appointments (title, description, start_at, end_at, department, staff_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "RETURNING id, title, description, start_at, end_at, department, staff_id, status, created_at",
+                (
+                    payload.title.strip(),
+                    payload.description.strip() if payload.description else None,
+                    start_at,
+                    end_at,
+                    payload.department,
+                    payload.staff_id,
+                ),
+            )
+            row = dict(cur.fetchone())
+        conn.commit()
+    return {"appointment": row}

@@ -33,6 +33,7 @@ class AuditLogEntry:
         response_id: str | None = None,
         outcome: str | None = None,
         latency_ms: float | None = None,
+        audience: str | None = None,
     ) -> None:
         self.user_id = user_id
         self.query = query
@@ -42,6 +43,7 @@ class AuditLogEntry:
         self.response_id = response_id or str(uuid.uuid4())
         self.outcome = outcome
         self.latency_ms = latency_ms
+        self.audience = audience
 
 
 def log_query(entry: AuditLogEntry) -> None:
@@ -58,11 +60,12 @@ def log_query(entry: AuditLogEntry) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO audit_log "
-                    "(user_id, query, sub_queries, retrieved_ids, confidence, "
+                    "(user_id, audience, query, sub_queries, retrieved_ids, confidence, "
                     " response_id, outcome, latency_ms) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         entry.user_id,
+                        entry.audience,
                         entry.query,
                         Json(entry.sub_queries) if entry.sub_queries is not None else None,
                         entry.retrieved_ids,

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from app.config import settings
 from app.ranking.rrf import RRF_K, RankedCandidate
 from app.response.summarizer import SummarySentence, summarize_excerpts
+from app.search.matched_terms import matched_terms
 
 
 def _normalize_rrf_score(rrf_score: float) -> float:
@@ -51,6 +52,7 @@ class Excerpt:
     confidence: float
     bm25_score: float
     vec_score: float
+    matched_terms: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -109,6 +111,7 @@ def build_response_package(
             confidence=round(confidence, 1),
             bm25_score=round(c.bm25_score, 4),
             vec_score=round(c.vec_score, 4),
+            matched_terms=matched_terms(query_text, c.content),
         ))
 
     # Response title from the most relevant document
@@ -118,7 +121,7 @@ def build_response_package(
     top_confidence = excerpts[0].confidence if excerpts else 0.0
 
     # Best-effort extractive summary of the top excerpts (never raises)
-    summary = summarize_excerpts(excerpts)
+    summary = summarize_excerpts(excerpts, query_text=query_text)
 
     # Generate response_id for audit tracing
     response_id = hashlib.sha256(

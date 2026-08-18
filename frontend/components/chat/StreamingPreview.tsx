@@ -7,6 +7,7 @@ import {
   StreamedSentence,
   StructuredFact,
 } from "@/lib/api-client";
+import { HighlightedText } from "@/components/chat/HighlightedText";
 
 interface StreamingPreviewProps {
   stage: SearchStage | null;
@@ -35,6 +36,11 @@ export default function StreamingPreview({
   className,
 }: StreamingPreviewProps) {
   const hasContent = facts.length > 0 || sentences.length > 0;
+  const streamedTerms = Array.from(
+    new Set(
+      sentences.flatMap((s) => s.matched_terms ?? [])
+    )
+  );
 
   return (
     <div className="flex gap-3">
@@ -61,7 +67,10 @@ export default function StreamingPreview({
 
         {sentences.length > 0 && (
           <p className="text-sm leading-relaxed text-foreground">
-            {sentences.map((s) => s.text).filter(Boolean).join(" ")}
+            <HighlightedText
+              text={sentences.map((s) => s.text).filter(Boolean).join(" ")}
+              terms={streamedTerms}
+            />
           </p>
         )}
 

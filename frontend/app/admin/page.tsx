@@ -8,8 +8,10 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  GitCompare,
   History,
   KeyRound,
+  Layers,
   Loader2,
   MessageSquare,
   Pencil,
@@ -27,6 +29,8 @@ import {
 import {
   listPendingDocuments,
   approveDocument,
+  bulkApproveDocuments,
+  bulkRejectDocuments,
   logout,
   logoutAll,
   rejectDocument,
@@ -44,37 +48,45 @@ import {
   listClientSessions,
   revokeClientSessions,
   ActiveSession,
-  getKnowledgeGaps,
-  getAnalyticsSummary,
-  getAdminSummary,
-  getDocumentChunks,
-  listAllSops,
-  getGovernance,
-  updateGovernance,
-  listSopAccessRequests,
-  reviewSopAccessRequest,
-  getAdminAudit,
-  AnalyticsSummary,
-  AdminSummary,
-  DocumentChunk,
-  Sop,
-  GovernanceData,
-  GovernanceUpdateInput,
-  SopAccessRequest,
-  AuditEntry,
-  getDocumentFile,
-  openBlobInNewTab,
-  ApprovalDocument,
-  ApprovalHistoryEntry,
-  AdminDocument,
-  AdminUser,
-  AdminClient,
-  KnowledgeGap,
+   getKnowledgeGaps,
+   getAnalyticsSummary,
+   getDocumentPopularity,
+   DocumentPopularityEntry,
+   getAdminSummary,
+   getDocumentChunks,
+   listAllSops,
+   getGovernance,
+   updateGovernance,
+   listSopAccessRequests,
+   reviewSopAccessRequest,
+   getAdminAudit,
+   AnalyticsSummary,
+   AdminSummary,
+   DocumentChunk,
+   Sop,
+   GovernanceData,
+   GovernanceUpdateInput,
+   SopAccessRequest,
+   AuditEntry,
+   getDocumentFile,
+   getDocumentVersions,
+   updateDocumentTags,
+   getAdminTags,
+   ApprovalDocument,
+   ApprovalHistoryEntry,
+   DocumentVersion,
+   AdminDocument,
+   AdminTag,
+   AdminUser,
+   AdminClient,
+   KnowledgeGap,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import SettingsModal from "@/components/settings/SettingsModal";
+import { FileDropzone } from "@/components/upload/FileDropzone";
+import { DocumentPreviewDialog } from "@/components/documents/DocumentPreviewDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -118,17 +130,6 @@ function formatDate(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-async function handleViewDocument(documentId: number, token: string) {
-  try {
-    const blob = await getDocumentFile(documentId, token);
-    openBlobInNewTab(blob, `document-${documentId}`);
-  } catch (err) {
-    window.alert(
-      err instanceof Error ? err.message : "Failed to load document file"
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Approvals queue tab
 // ---------------------------------------------------------------------------
@@ -141,8 +142,16 @@ function ApprovalsTab({ token }: { token: string }) {
   const [historyDoc, setHistoryDoc] = useState<ApprovalDocument | null>(null);
   const [history, setHistory] = useState<ApprovalHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [versionsDoc, setVersionsDoc] = useState<ApprovalDocument | null>(null);
+  const [versions, setVersions] = useState<DocumentVersion[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [compareIds, setCompareIds] = useState<[number, number] | null>(null);
   const [editDoc, setEditDoc] = useState<ApprovalDocument | null>(null);
   const [rejectDoc, setRejectDoc] = useState<ApprovalDocument | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkBusy, setBulkBusy] = useState<"approve" | "reject" | null>(null);
+  const [bulkReject, setBulkReject] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -165,7 +174,19 @@ function ApprovalsTab({ token }: { token: string }) {
     setBusyId(doc.id);
     setError(null);
     try {
-      await approveDocument(doc.id, token);
+      let publishAnyway = false;
+      if (doc.pii_flagged) {
+        if (
+          !window.confirm(
+            `This document is flagged as containing PII. Approve and publish anyway?`
+          )
+        ) {
+          setBusyId(null);
+          return;
+        }
+        publishAnyway = true;
+      }
+      await approveDocument(doc.id, token, publishAnyway);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Decision failed");
@@ -185,6 +206,61 @@ function ApprovalsTab({ token }: { token: string }) {
       setHistory([]);
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  const openVersions = async (doc: ApprovalDocument) => {
+    setVersionsDoc(doc);
+    setVersionsLoading(true);
+    setVersions([]);
+    setCompareIds(null);
+    try {
+      const res = await getDocumentVersions(doc.id, token);
+      setVersions(res.versions);
+    } catch {
+      setVersions([]);
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const toggleSelected = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAll = () => {
+    setSelectedIds((prev) => (prev.length === documents.length ? [] : documents.map((d) => d.id)));
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedIds.length === 0) return;
+    const flagged = documents.filter(
+      (d) => selectedIds.includes(d.id) && d.pii_flagged
+    );
+    let publishAnyway = false;
+    if (flagged.length > 0) {
+      if (
+        !window.confirm(
+          `${flagged.length} selected document(s) are flagged as containing PII. ` +
+            "Approve and publish them anyway?"
+        )
+      ) {
+        return;
+      }
+      publishAnyway = true;
+    }
+    setBulkBusy("approve");
+    setError(null);
+    try {
+      await bulkApproveDocuments(selectedIds, token, publishAnyway);
+      setSelectedIds([]);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk approval failed");
+    } finally {
+      setBulkBusy(null);
     }
   };
 
@@ -224,15 +300,66 @@ function ApprovalsTab({ token }: { token: string }) {
           </CardContent>
         </Card>
       ) : (
-        documents.map((doc) => (
+        <>
+          <div className="flex items-center justify-between gap-3 border border-border rounded-lg p-3">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={documents.length > 0 && selectedIds.length === documents.length}
+                onChange={toggleAll}
+              />
+              Select all ({documents.length})
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {selectedIds.length} selected
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedIds.length === 0 || bulkBusy != null}
+                onClick={handleBulkApprove}
+              >
+                {bulkBusy === "approve" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Approve selected
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={selectedIds.length === 0 || bulkBusy != null}
+                onClick={() => setBulkReject(true)}
+              >
+                <XCircle className="h-3.5 w-3.5 mr-1.5" />
+                Reject selected
+              </Button>
+            </div>
+          </div>
+
+          {documents.map((doc) => (
           <Card key={doc.id}>
             <CardContent className="p-5">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <Clock className="w-4 h-4 text-yellow-600" />
-                    <p className="font-medium truncate">{doc.title}</p>
-                  </div>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 flex-shrink-0"
+                    checked={selectedIds.includes(doc.id)}
+                    onChange={() => toggleSelected(doc.id)}
+                  />
+                  <Clock className="w-4 h-4 text-yellow-600" />
+                  <p className="font-medium truncate">{doc.title}</p>
+                  {doc.pii_flagged && (
+                    <ShieldAlert className="w-4 h-4 text-amber-600" aria-label="Contains flagged PII" />
+                  )}
+                </div>
                   <p className="text-xs text-muted-foreground mb-2">
                     {doc.doc_type} · {doc.department}
                     {doc.client_id != null && ` · client #${doc.client_id}`} · v{doc.version}
@@ -248,7 +375,7 @@ function ApprovalsTab({ token }: { token: string }) {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleViewDocument(doc.id, token)}
+                    onClick={() => setPreviewId(doc.id)}
                   >
                     <FileText className="h-3.5 w-3.5 mr-1.5" />
                     View
@@ -270,6 +397,15 @@ function ApprovalsTab({ token }: { token: string }) {
                   >
                     <History className="h-3.5 w-3.5 mr-1.5" />
                     History
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openVersions(doc)}
+                  >
+                    <Layers className="h-3.5 w-3.5 mr-1.5" />
+                    Versions
                   </Button>
                   <Button
                     type="button"
@@ -298,7 +434,8 @@ function ApprovalsTab({ token }: { token: string }) {
               </div>
             </CardContent>
           </Card>
-        ))
+          ))}
+        </>
       )}
 
       <Dialog open={historyDoc != null} onOpenChange={(open) => !open && setHistoryDoc(null)}>
@@ -336,6 +473,93 @@ function ApprovalsTab({ token }: { token: string }) {
                 </div>
               ))}
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={versionsDoc != null} onOpenChange={(open) => !open && setVersionsDoc(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Versions</DialogTitle>
+            <DialogDescription>
+              {versionsDoc?.title} — every version of this document family
+            </DialogDescription>
+          </DialogHeader>
+          {versionsLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : versions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No versions found.</p>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {versions.map((v) => (
+                <div key={v.id} className="border border-border rounded-lg p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono text-xs text-muted-foreground">
+                        v{v.version}
+                      </span>
+                      {statusBadge(v.approval_status)}
+                      {v.is_active && (
+                        <Badge variant="outline" className="text-xs">
+                          active
+                        </Badge>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">
+                      {formatDate(v.created_at)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    by {v.uploaded_by_email ?? "unknown"} · {v.doc_type} ·{" "}
+                    {v.department}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        const blob = await getDocumentFile(v.id, token, v.version);
+                        const url = URL.createObjectURL(blob);
+                        window.open(url, "_blank");
+                      }}
+                    >
+                      <FileText className="h-3.5 w-3.5 mr-1.5" />
+                      View v{v.version}
+                    </Button>
+                    {versions.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const other = versions.find(
+                            (x) =>
+                              x.version !== v.version &&
+                              (x.version === v.version - 1 || x.version === v.version + 1)
+                          );
+                          const base = other ?? versions[0];
+                          setCompareIds(v.version < base.version ? [v.id, base.id] : [base.id, v.id]);
+                        }}
+                      >
+                        <GitCompare className="h-3.5 w-3.5 mr-1.5" />
+                        Compare
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {compareIds && (
+            <VersionDiff
+              leftId={compareIds[0]}
+              rightId={compareIds[1]}
+              token={token}
+              onClose={() => setCompareIds(null)}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -379,8 +603,209 @@ function ApprovalsTab({ token }: { token: string }) {
           />}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={bulkReject} onOpenChange={(open) => !open && setBulkReject(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject {selectedIds.length} selected documents</DialogTitle>
+            <DialogDescription>
+              A reason is required and is shared with each uploader.
+            </DialogDescription>
+          </DialogHeader>
+          <BulkRejectForm
+            count={selectedIds.length}
+            onCancel={() => setBulkReject(false)}
+            onDone={async (reason) => {
+              setBulkBusy("reject");
+              setError(null);
+              try {
+                await bulkRejectDocuments(selectedIds, token, reason.trim());
+                setSelectedIds([]);
+                setBulkReject(false);
+                await load();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Bulk rejection failed");
+              } finally {
+                setBulkBusy(null);
+              }
+            }}
+            onError={setError}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <DocumentPreviewDialog
+        open={previewId != null}
+        onOpenChange={(open) => !open && setPreviewId(null)}
+        items={documents.map((d) => ({ id: d.id, title: d.title }))}
+        initialId={previewId ?? documents[0]?.id ?? 0}
+        fetchBlob={(id) => getDocumentFile(id, token)}
+        loadingLabel="Loading pending document…"
+      />
     </div>
   );
+}
+
+function VersionDiff({
+  leftId,
+  rightId,
+  token,
+  onClose,
+}: {
+  leftId: number;
+  rightId: number;
+  token: string;
+  onClose: () => void;
+}) {
+  const [leftLines, setLeftLines] = useState<string[] | null>(null);
+  const [rightLines, setRightLines] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setError(null);
+      try {
+        const [a, b] = await Promise.all([
+          getDocumentChunks(leftId, token),
+          getDocumentChunks(rightId, token),
+        ]);
+        if (cancelled) return;
+        setLeftLines(topChunkLines(a.chunks));
+        setRightLines(topChunkLines(b.chunks));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Compare failed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leftId, rightId, token]);
+
+  if (error) {
+    return (
+      <div className="border border-border rounded-lg p-4 mt-4">
+        <p className="text-sm text-destructive">{error}</p>
+        <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    );
+  }
+
+  if (leftLines == null || rightLines == null) {
+    return (
+      <div className="flex justify-center py-8 mt-4">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const rows = diffLines(leftLines, rightLines);
+
+  return (
+    <div className="mt-4 border border-border rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+        <div className="flex items-center gap-2">
+          <GitCompare className="h-4 w-4 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">Text diff (top chunks)</span>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+      <div className="grid grid-cols-2 divide-x divide-border max-h-96 overflow-auto text-xs font-mono">
+        <div className="min-w-0">
+          <div className="px-3 py-1.5 border-b border-border bg-muted/30 text-muted-foreground">
+            v{leftId}
+          </div>
+          {rows.map((r, i) => (
+            <div
+              key={`l-${i}`}
+              className={cn(
+                "px-3 py-0.5 whitespace-pre-wrap break-words border-b border-border/40",
+                r.status === "del" && "bg-red-50 text-red-800",
+                r.status === "same" && "text-foreground"
+              )}
+            >
+              {r.left ?? "\u00a0"}
+            </div>
+          ))}
+        </div>
+        <div className="min-w-0">
+          <div className="px-3 py-1.5 border-b border-border bg-muted/30 text-muted-foreground">
+            v{rightId}
+          </div>
+          {rows.map((r, i) => (
+            <div
+              key={`r-${i}`}
+              className={cn(
+                "px-3 py-0.5 whitespace-pre-wrap break-words border-b border-border/40",
+                r.status === "ins" && "bg-green-50 text-green-800",
+                r.status === "same" && "text-foreground"
+              )}
+            >
+              {r.right ?? "\u00a0"}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-4 px-3 py-1.5 text-xs text-muted-foreground border-t border-border bg-muted/50">
+        <span className="text-red-700">- {countStatus(rows, "del")} removed</span>
+        <span className="text-green-700">+ {countStatus(rows, "ins")} added</span>
+      </div>
+    </div>
+  );
+}
+
+function topChunkLines(chunks: DocumentChunk[]): string[] {
+  const text = chunks
+    .slice(0, 8)
+    .map((c) => (c.section ? `[${c.section}] ` : "") + c.content)
+    .join("\n");
+  return text.split("\n").map((line) => line.trimEnd());
+}
+
+type DiffRow = { status: "same" | "ins" | "del"; left: string | null; right: string | null };
+
+function diffLines(a: string[], b: string[]): DiffRow[] {
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const rows: DiffRow[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      rows.push({ status: "same", left: a[i], right: b[j] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      rows.push({ status: "del", left: a[i], right: null });
+      i++;
+    } else {
+      rows.push({ status: "ins", left: null, right: b[j] });
+      j++;
+    }
+  }
+  while (i < n) {
+    rows.push({ status: "del", left: a[i], right: null });
+    i++;
+  }
+  while (j < m) {
+    rows.push({ status: "ins", left: null, right: b[j] });
+    j++;
+  }
+  return rows;
+}
+
+function countStatus(rows: DiffRow[], status: DiffRow["status"]): number {
+  return rows.filter((r) => r.status === status).length;
 }
 
 function EditMetadataForm({
@@ -511,51 +936,252 @@ function RejectForm({
   );
 }
 
+function BulkRejectForm({
+  count,
+  onDone,
+  onError,
+  onCancel,
+}: {
+  count: number;
+  onDone: (reason: string) => void;
+  onError: (message: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+
+  const handleReject = async () => {
+    if (rejecting || !reason.trim()) return;
+    setRejecting(true);
+    try {
+      await onDone(reason);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to bulk reject documents");
+    } finally {
+      setRejecting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label htmlFor="br-reason">Reason *</Label>
+        <Input
+          id="br-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Missing client signature"
+        />
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          onClick={handleReject}
+          disabled={rejecting || !reason.trim()}
+        >
+          {rejecting ? <Loader2 className="h-4 w-4 animate-spin" /> : `Reject ${count} documents`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Documents tab
 // ---------------------------------------------------------------------------
+
+function TagEditorDialog({
+  doc,
+  token,
+  onClose,
+  onSaved,
+}: {
+  doc: AdminDocument | null;
+  token: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [tags, setTags] = useState<string[]>([]);
+  const [input, setInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTags(doc?.tags ?? []);
+    setInput("");
+    setError(null);
+  }, [doc]);
+
+  const addTag = () => {
+    const value = input.trim().toLowerCase();
+    if (!value) return;
+    if (tags.includes(value)) {
+      setInput("");
+      return;
+    }
+    setTags((prev) => [...prev, value]);
+    setInput("");
+  };
+
+  const removeTag = (tag: string) => {
+    setTags((prev) => prev.filter((t) => t !== tag));
+  };
+
+  const handleSave = async () => {
+    if (!doc) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateDocumentTags(doc.id, tags, token);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save tags");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={doc != null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit tags</DialogTitle>
+          <DialogDescription>
+            Tags help you filter and group documents. {doc ? `Editing "${doc.title}".` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTag();
+                }
+              }}
+              placeholder="Add a tag and press Enter"
+              disabled={saving}
+            />
+            <Button type="button" variant="outline" size="sm" onClick={addTag} disabled={saving}>
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
+                <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+                  {tag}
+                  <button
+                    type="button"
+                    onClick={() => removeTag(tag)}
+                    className="rounded-sm hover:bg-muted p-0.5"
+                    aria-label={`Remove tag ${tag}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save tags"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function DocumentsTab({ token }: { token: string }) {
   const [documents, setDocuments] = useState<AdminDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [tagOptions, setTagOptions] = useState<AdminTag[]>([]);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [tagEditDoc, setTagEditDoc] = useState<AdminDocument | null>(null);
+
+  const loadTags = useCallback(async () => {
+    try {
+      const res = await getAdminTags(token);
+      setTagOptions(res.tags);
+    } catch {
+      // tag chips are non-critical; keep whatever we have
+    }
+  }, [token]);
 
   const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await listAllDocuments(token);
+      const res = await listAllDocuments(token, activeTag ?? undefined);
       setDocuments(res.documents);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
     } finally {
       setIsLoading(false);
     }
-  }, [token]);
+  }, [token, activeTag]);
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadTags();
+  }, [load, loadTags]);
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     setUploading(true);
     setUploadMessage(null);
     setError(null);
     try {
-      const res = await uploadDocument(file, token);
+      let uploadedCount = 0;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setProgress({ done: i, total: files.length, name: file.name });
+        const res = await uploadDocument(file, token);
+        uploadedCount += 1;
+      }
+      setProgress({ done: files.length, total: files.length, name: "" });
       setUploadMessage(
-        `Uploaded "${res.filename}" (${(res.size_bytes / 1024).toFixed(1)} KB). It is now pending approval and will be indexed by the batch ingestion job.`
+        `Uploaded ${uploadedCount} document${uploadedCount === 1 ? "" : "s"} (${(files
+          .reduce((sum, f) => sum + f.size, 0) / 1024)
+          .toFixed(1)} KB total). They are now pending approval and will be indexed by the batch ingestion job.`
       );
-      setFile(null);
+      setFiles([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      setProgress(null);
     }
+  };
+
+  const handleTagsSaved = async () => {
+    setTagEditDoc(null);
+    await load();
+    await loadTags();
   };
 
   return (
@@ -573,25 +1199,32 @@ function DocumentsTab({ token }: { token: string }) {
             ingestion job indexes them later; they enter the approval queue as
             pending.
           </p>
+          <FileDropzone
+            files={files}
+            onFilesChange={setFiles}
+            disabled={uploading}
+            label="Drag & drop documents here, or click to browse"
+            hint="Multiple files are uploaded one at a time."
+          />
+          {progress && (
+            <p className="text-sm text-muted-foreground">
+              {progress.name
+                ? `Uploading "${progress.name}" (${progress.done + 1} of ${progress.total})…`
+                : `Uploading ${progress.total} file${progress.total === 1 ? "" : "s"}…`}
+            </p>
+          )}
           <div className="flex items-end gap-3">
-            <div className="flex-1">
-              <Input
-                type="file"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="cursor-pointer"
-              />
-            </div>
             <Button
               type="button"
               onClick={handleUpload}
-              disabled={!file || uploading}
+              disabled={files.length === 0 || uploading}
             >
               {uploading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Upload className="h-4 w-4 mr-1.5" />
               )}
-              Upload
+              Upload {files.length > 0 ? `${files.length} file${files.length === 1 ? "" : "s"}` : ""}
             </Button>
           </div>
           {uploadMessage && (
@@ -609,9 +1242,36 @@ function DocumentsTab({ token }: { token: string }) {
         </CardContent>
       </Card>
 
+      {tagOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant={activeTag == null ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTag(null)}
+          >
+            All
+          </Button>
+          {tagOptions.map(({ tag, count }) => (
+            <Button
+              key={tag}
+              type="button"
+              variant={activeTag === tag ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+              className="gap-1.5"
+            >
+              {tag}
+              <span className="text-xs text-muted-foreground">({count})</span>
+            </Button>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-muted-foreground">
-          {documents.length} documents
+          {documents.length} document{documents.length === 1 ? "" : "s"}
+          {activeTag ? ` tagged "${activeTag}"` : ""}
         </h3>
         <Button type="button" variant="outline" size="sm" onClick={load}>
           <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
@@ -638,6 +1298,15 @@ function DocumentsTab({ token }: { token: string }) {
                     {doc.client_id != null && ` · client #${doc.client_id}`} ·{" "}
                     {formatDate(doc.created_at)}
                   </p>
+                  {doc.tags && doc.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {doc.tags.map((tag) => (
+                        <Badge key={tag} variant="secondary" className="text-xs font-normal">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {statusBadge(doc.approval_status)}
@@ -645,7 +1314,17 @@ function DocumentsTab({ token }: { token: string }) {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleViewDocument(doc.id, token)}
+                    onClick={() => setTagEditDoc(doc)}
+                    className="text-xs"
+                  >
+                    <Pencil className="h-3.5 w-3.5 mr-1" />
+                    Tags
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPreviewId(doc.id)}
                     className="text-xs"
                   >
                     <FileText className="h-3.5 w-3.5 mr-1" />
@@ -656,12 +1335,28 @@ function DocumentsTab({ token }: { token: string }) {
             ))}
             {documents.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No documents yet.
+                {activeTag ? "No documents carry this tag yet." : "No documents yet."}
               </p>
             )}
           </CardContent>
         </Card>
       )}
+
+      <DocumentPreviewDialog
+        open={previewId != null}
+        onOpenChange={(open) => !open && setPreviewId(null)}
+        items={documents.map((d) => ({ id: d.id, title: d.title }))}
+        initialId={previewId ?? documents[0]?.id ?? 0}
+        fetchBlob={(id) => getDocumentFile(id, token)}
+        loadingLabel="Loading document…"
+      />
+
+      <TagEditorDialog
+        doc={tagEditDoc}
+        token={token}
+        onClose={() => setTagEditDoc(null)}
+        onSaved={handleTagsSaved}
+      />
     </div>
   );
 }
@@ -1362,6 +2057,8 @@ function BarChart({
 function AnalyticsTab({ token }: { token: string }) {
   const [gaps, setGaps] = useState<KnowledgeGap[]>([]);
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+  const [popularity, setPopularity] =
+    useState<{ top_documents: DocumentPopularityEntry[]; underperforming_documents: DocumentPopularityEntry[] } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1369,12 +2066,14 @@ function AnalyticsTab({ token }: { token: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      const [res, summaryRes] = await Promise.all([
+      const [res, summaryRes, popRes] = await Promise.all([
         getKnowledgeGaps(token),
         getAnalyticsSummary(token),
+        getDocumentPopularity(token),
       ]);
       setGaps(res.knowledge_gaps);
       setSummary(summaryRes.summary);
+      setPopularity(popRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -1501,8 +2200,86 @@ function AnalyticsTab({ token }: { token: string }) {
                   </div>
                 ))}
               </CardContent>
-            </Card>
+             </Card>
           )}
+
+          <div className="mt-6 space-y-3">
+            <h3 className="text-sm font-medium">Document popularity</h3>
+            <p className="text-sm text-muted-foreground">
+              Which documents are being retrieved to answer queries, and how
+              positively the answers they supported were reviewed.
+            </p>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Top documents by answers
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {popularity?.top_documents.length ? (
+                  <BarChart
+                    data={popularity.top_documents.map((d) => ({
+                      label: d.title,
+                      value: d.answer_count,
+                      ratio: d.positive_ratio,
+                      users: d.distinct_users,
+                    }))}
+                    valueKey="value"
+                    labelKey="label"
+                    emptyLabel="No document popularity data yet."
+                  />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No document popularity data yet.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Underperforming documents
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {popularity?.underperforming_documents.length ? (
+                  <div className="space-y-2">
+                    {popularity.underperforming_documents.map((d) => (
+                      <div
+                        key={d.doc_id}
+                        className="grid grid-cols-12 gap-2 text-xs"
+                      >
+                        <span className="col-span-5 truncate text-muted-foreground capitalize">
+                          {d.title}
+                        </span>
+                        <span className="col-span-2">{d.department}</span>
+                        <span className="col-span-2">
+                          answered {d.answer_count} · no-answer {d.no_answer_count}
+                        </span>
+                        <span
+                          className={
+                            d.negative_count > 0
+                              ? "col-span-3 text-destructive"
+                              : "col-span-3"
+                          }
+                        >
+                          {d.negative_count > 0
+                            ? `${d.negative_count} negative review` +
+                              (d.negative_count > 1 ? "s" : "")
+                            : "low signal"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    All documents performing well.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
     </div>

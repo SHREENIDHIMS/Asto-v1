@@ -13,6 +13,96 @@ function apiFetch(url: string, init?: RequestInit): Promise<Response> {
 export interface SearchRequest {
   query: string;
   case_id?: number | null;
+  filters?: SearchFilters | null;
+}
+
+/** J4 — prefix-matched past-query suggestions (scoped to the caller). */
+export interface SuggestResponse {
+  suggestions: string[];
+}
+
+export async function getSearchSuggestions(
+  prefix: string,
+  token?: string
+): Promise<string[]> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const response = await apiFetch(
+    `${API_BASE_URL}/search/suggest?q=${encodeURIComponent(prefix)}`,
+    { headers }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load suggestions');
+  }
+  const data = (await response.json()) as SuggestResponse;
+  return data.suggestions ?? [];
+}
+
+/** J7 — saved searches (staff-only, per-user scoped server-side). */
+export interface SavedSearch {
+  id: number;
+  query: string;
+  filters: SearchFilters | null;
+  created_at?: string | null;
+}
+
+export interface SavedSearchListResponse {
+  saved_searches: SavedSearch[];
+}
+
+export async function listSavedSearches(token: string): Promise<SavedSearch[]> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/saved-searches`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load saved searches');
+  }
+  const data = (await response.json()) as SavedSearchListResponse;
+  return data.saved_searches ?? [];
+}
+
+export async function saveSearch(
+  token: string,
+  query: string,
+  filters: SearchFilters | null
+): Promise<SavedSearch> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/saved-searches`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ query, filters: filters ?? {} }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to save search');
+  }
+  return response.json();
+}
+
+export async function deleteSavedSearch(token: string, id: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/saved-searches/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok && response.status !== 204) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to delete saved search');
+  }
+}
+
+/** J2 faceted filters — folded into the search SQL WHERE server-side. */
+export interface SearchFilters {
+  departments?: string[];
+  doc_types?: string[];
+  date_from?: string; // ISO date
+  date_to?: string; // ISO date (inclusive)
+  client_id?: number | null;
 }
 
 export interface SearchExcerpt {
@@ -23,6 +113,7 @@ export interface SearchExcerpt {
     chunk_type: string;
   };
   confidence: number;
+  matched_terms?: string[];
 }
 
 export interface StructuredFact {
@@ -40,6 +131,7 @@ export interface SearchSummarySentence {
     section: string | null;
     chunk_type: string;
   };
+  matched_terms?: string[];
 }
 
 export interface SearchResponse {
@@ -74,7 +166,8 @@ export interface AuthLoginResponse {
 export async function searchKnowledgeBase(
   query: string,
   token?: string,
-  caseId?: number | null
+  caseId?: number | null,
+  filters?: SearchFilters | null
 ): Promise<SearchResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -86,7 +179,7 @@ export async function searchKnowledgeBase(
   const response = await apiFetch(`${API_BASE_URL}/search/`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ query, case_id: caseId ?? null }),
+    body: JSON.stringify({ query, case_id: caseId ?? null, filters: filters ?? null }),
   });
 
   if (!response.ok) {
@@ -108,6 +201,7 @@ export type SearchStage =
 export interface StreamedSentence {
   text: string;
   source: SearchSummarySentence['source'];
+  matched_terms?: string[];
 }
 
 export interface SearchStreamHandlers {
@@ -128,7 +222,8 @@ export async function searchKnowledgeBaseStream(
   query: string,
   token: string | undefined,
   handlers?: SearchStreamHandlers,
-  caseId?: number | null
+  caseId?: number | null,
+  filters?: SearchFilters | null
 ): Promise<SearchResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -141,7 +236,7 @@ export async function searchKnowledgeBaseStream(
   const response = await apiFetch(`${API_BASE_URL}/search/stream`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ query, case_id: caseId ?? null }),
+    body: JSON.stringify({ query, case_id: caseId ?? null, filters: filters ?? null }),
   });
 
   if (!response.ok) {
@@ -497,6 +592,26 @@ export interface ClientProfile {
   full_name: string | null;
   is_active: boolean;
   created_at: string | null;
+  notification_prefs?: string[] | null;
+}
+
+export async function updateClientProfile(
+  token: string,
+  body: { full_name?: string; notification_prefs?: string[] }
+): Promise<{ client: ClientProfile }> {
+  const response = await apiFetch(`${API_BASE_URL}/client/me`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update profile');
+  }
+  return response.json();
 }
 
 export interface ClientProperty {
@@ -551,6 +666,7 @@ export interface ClientDocument {
   version: number;
   property_id: number | null;
   created_at: string | null;
+  tags?: string[];
 }
 
 export async function getClientMe(token: string): Promise<{ client: ClientProfile }> {
@@ -604,15 +720,100 @@ export async function getClientCaseDetail(
   return response.json();
 }
 
+export interface ChecklistItem {
+  item: string;
+  satisfied: boolean;
+}
+
+export async function getClientCaseChecklist(
+  token: string,
+  caseId: number
+): Promise<{ case_id: number; checklist: ChecklistItem[] }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/client/cases/${caseId}/checklist`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load checklist');
+  }
+  return response.json();
+}
+
 export async function getClientDocuments(
-  token: string
+  token: string,
+  tag?: string
 ): Promise<{ documents: ClientDocument[] }> {
-  const response = await apiFetch(`${API_BASE_URL}/client/documents`, {
+  const query = tag ? `?tag=${encodeURIComponent(tag)}` : '';
+  const response = await apiFetch(`${API_BASE_URL}/client/documents${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to load documents');
+  }
+  return response.json();
+}
+
+export interface ClientRejectedDocument {
+  id: number;
+  title: string;
+  source_path: string;
+  doc_type: string;
+  department: string;
+  version: number;
+  property_id: number | null;
+  created_at: string | null;
+  rejection_reason: string | null;
+  rejected_at: string | null;
+}
+
+export interface RejectionEntry {
+  id: number;
+  reason: string | null;
+  created_at: string | null;
+  reviewed_by_email: string | null;
+}
+
+export async function getClientRejectedDocuments(
+  token: string
+): Promise<{ documents: ClientRejectedDocument[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/client/documents/rejected`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load rejected documents');
+  }
+  return response.json();
+}
+
+export async function getClientDocumentRejections(
+  documentId: number,
+  token: string
+): Promise<{ document_id: number; rejections: RejectionEntry[] }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/client/documents/${documentId}/rejections`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load rejection history');
+  }
+  return response.json();
+}
+
+export async function getStaffDocumentRejections(
+  documentId: number,
+  token: string
+): Promise<{ document_id: number; rejections: RejectionEntry[] }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/documents/${documentId}/rejections`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load rejection history');
   }
   return response.json();
 }
@@ -632,13 +833,69 @@ export async function getClientPropertyDocuments(
   return response.json();
 }
 
+// ---------------------------------------------------------------------------
+// Client e-sign (K5)
+// ---------------------------------------------------------------------------
+
+export interface SignatureRequest {
+  id: number;
+  case_id: number;
+  document_id: number | null;
+  status: 'pending' | 'signed' | 'cancelled';
+  signed_name: string | null;
+  signed_at: string | null;
+  created_at: string | null;
+  document_title: string | null;
+}
+
+export async function getClientSignatureRequests(
+  token: string
+): Promise<{ signature_requests: SignatureRequest[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/client/signature-requests`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load signature requests');
+  }
+  return response.json();
+}
+
+export async function signClientSignatureRequest(
+  token: string,
+  requestId: number,
+  signedName: string,
+  consent: boolean
+): Promise<{ message: string; document_id: number | null; signed_at: string }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/client/signature-requests/${requestId}/sign`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ signed_name: signedName, consent }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to sign document');
+  }
+  return response.json();
+}
+
 export async function clientUploadDocument(
   file: File,
   token: string,
+  docType: string,
+  title: string,
   propertyId?: number | null
 ): Promise<{ message: string; filename: string; stored_as: string; size_bytes: number; property_id: number | null }> {
   const form = new FormData();
   form.append('file', file);
+  form.append('doc_type', docType);
+  form.append('title', title);
   const query = propertyId != null ? `?property_id=${propertyId}` : '';
   const response = await apiFetch(`${API_BASE_URL}/client/documents/upload${query}`, {
     method: 'POST',
@@ -668,6 +925,8 @@ export interface ApprovalDocument {
   created_at: string | null;
   uploaded_by?: number | null;
   uploaded_by_email?: string | null;
+  pii_flagged?: boolean;
+  tags?: string[];
 }
 
 export interface ApprovalHistoryEntry {
@@ -678,6 +937,23 @@ export interface ApprovalHistoryEntry {
   reason: string | null;
   created_at: string | null;
   reviewed_by_email: string | null;
+}
+
+export interface DocumentVersion {
+  id: number;
+  title: string;
+  source_path: string | null;
+  doc_type: string;
+  department: string;
+  client_id: number | null;
+  property_id: number | null;
+  approval_status: string;
+  is_active: boolean;
+  is_approved: boolean;
+  version: number;
+  created_at: string | null;
+  uploaded_by: number | null;
+  uploaded_by_email: string | null;
 }
 
 export async function listPendingDocuments(
@@ -695,15 +971,60 @@ export async function listPendingDocuments(
 
 export async function approveDocument(
   documentId: number,
-  token: string
+  token: string,
+  publishAnyway = false
 ): Promise<{ message: string }> {
   const response = await apiFetch(
     `${API_BASE_URL}/admin/documents/${documentId}/approve`,
-    { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ publish_anyway: publishAnyway }),
+    }
   );
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to approve document');
+  }
+  return response.json();
+}
+
+export async function bulkApproveDocuments(
+  documentIds: number[],
+  token: string,
+  publishAnyway = false
+): Promise<{ message: string }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/documents/bulk-approve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ document_ids: documentIds, publish_anyway: publishAnyway }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to bulk approve documents');
+  }
+  return response.json();
+}
+
+export async function bulkRejectDocuments(
+  documentIds: number[],
+  token: string,
+  reason: string
+): Promise<{ message: string }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/documents/bulk-reject`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ document_ids: documentIds, reason }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to bulk reject documents');
   }
   return response.json();
 }
@@ -743,6 +1064,57 @@ export async function getDocumentHistory(
   return response.json();
 }
 
+export async function getDocumentVersions(
+  documentId: number,
+  token: string
+): Promise<{ document_id: number; versions: DocumentVersion[] }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/documents/${documentId}/versions`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load document versions');
+  }
+  return response.json();
+}
+
+export interface AdminTag {
+  tag: string;
+  count: number;
+}
+
+export async function updateDocumentTags(
+  documentId: number,
+  tags: string[],
+  token: string
+): Promise<{ document_id: number; tags: string[] }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/documents/${documentId}/tags`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ tags }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update document tags');
+  }
+  return response.json();
+}
+
+export async function getAdminTags(token: string): Promise<{ tags: AdminTag[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/tags`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load document tags');
+  }
+  return response.json();
+}
+
 // ---------------------------------------------------------------------------
 // Admin: documents + upload (Phase A)
 // ---------------------------------------------------------------------------
@@ -761,12 +1133,15 @@ export interface AdminDocument {
   is_approved: boolean;
   version: number;
   created_at: string | null;
+  tags?: string[];
 }
 
 export async function listAllDocuments(
-  token: string
+  token: string,
+  tag?: string
 ): Promise<{ documents: AdminDocument[] }> {
-  const response = await apiFetch(`${API_BASE_URL}/documents/`, {
+  const query = tag ? `?tag=${encodeURIComponent(tag)}` : '';
+  const response = await apiFetch(`${API_BASE_URL}/documents/${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -797,9 +1172,11 @@ export async function uploadDocument(
 /** Fetch a document file as a blob (admin endpoint). */
 export async function getDocumentFile(
   documentId: number,
-  token: string
+  token: string,
+  version?: number
 ): Promise<Blob> {
-  const response = await apiFetch(`${API_BASE_URL}/documents/${documentId}/file`, {
+  const query = version != null ? `?version=${version}` : '';
+  const response = await apiFetch(`${API_BASE_URL}/documents/${documentId}/file${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
@@ -885,6 +1262,8 @@ export interface StaffDashboardResponse {
   workflows: StaffWorkflow[];
   sops: StaffSop[];
   sop_access: boolean;
+  overdue_workflows: number;
+  overdue_tasks: number;
 }
 
 export interface CaseNote {
@@ -918,6 +1297,338 @@ export async function getStaffDashboard(token: string): Promise<StaffDashboardRe
     throw new Error(error.detail || 'Failed to load dashboard');
   }
   return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Phase L — Staff & Operations
+// ---------------------------------------------------------------------------
+
+export interface StaffTask {
+  id: number;
+  case_id: number | null;
+  title: string;
+  description: string | null;
+  assignee_id: number | null;
+  due_at: string | null;
+  status: string;
+  created_by: number;
+  created_at: string | null;
+  updated_at: string | null;
+  assignee_email?: string | null;
+  case_number?: string | null;
+}
+
+export async function getStaffTasks(token: string): Promise<{ tasks: StaffTask[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/tasks`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load tasks');
+  }
+  return response.json();
+}
+
+export async function createStaffTask(
+  token: string,
+  payload: {
+    case_id?: number | null;
+    title: string;
+    description?: string | null;
+    assignee_id?: number | null;
+    due_at?: string | null;
+  }
+): Promise<{ task: StaffTask }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/tasks`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create task');
+  }
+  return response.json();
+}
+
+export async function updateStaffTask(
+  token: string,
+  taskId: number,
+  payload: {
+    title?: string;
+    description?: string | null;
+    assignee_id?: number | null;
+    due_at?: string | null;
+    status?: string;
+  }
+): Promise<{ task: StaffTask }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/tasks/${taskId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update task');
+  }
+  return response.json();
+}
+
+export interface Client360 {
+  client: {
+    id: number;
+    email: string;
+    full_name: string | null;
+    is_active: boolean;
+    created_at: string | null;
+  };
+  properties: {
+    id: number;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    postal_code: string | null;
+    property_type: string | null;
+  }[];
+  cases: {
+    id: number;
+    case_number: string;
+    client_id: number;
+    property_id: number | null;
+    loan_amount: number | null;
+    status: string;
+    is_active: boolean;
+    created_at: string | null;
+    timeline: { case_id: number; status: string; note: string | null; created_at: string | null }[];
+  }[];
+  documents: {
+    id: number;
+    title: string;
+    doc_type: string | null;
+    department: string | null;
+    version: number;
+    approval_status: string;
+    property_id: number | null;
+    created_at: string | null;
+  }[];
+  conversations: {
+    id: number;
+    case_id: number | null;
+    subject: string;
+    created_at: string | null;
+    updated_at: string | null;
+  }[];
+}
+
+export async function getStaffClient360(
+  token: string,
+  clientId: number
+): Promise<Client360> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/clients/${clientId}/360`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load client 360 view');
+  }
+  return response.json();
+}
+
+export interface WorkflowDefinition {
+  id: number;
+  name: string;
+  description: string | null;
+  stages: string[];
+  transitions: Record<string, unknown>[];
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export async function getWorkflowDefinitions(
+  token: string
+): Promise<{ workflow_definitions: WorkflowDefinition[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/workflow-definitions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load workflow definitions');
+  }
+  return response.json();
+}
+
+export async function createWorkflowDefinition(
+  token: string,
+  payload: {
+    name: string;
+    description?: string | null;
+    stages: string[];
+    transitions?: Record<string, unknown>[];
+  }
+): Promise<{ workflow_definition: WorkflowDefinition }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/workflow-definitions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create workflow definition');
+  }
+  return response.json();
+}
+
+export async function deleteWorkflowDefinition(
+  token: string,
+  definitionId: number
+): Promise<{ message: string }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/workflow-definitions/${definitionId}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete workflow definition');
+  }
+  return response.json();
+}
+
+export interface MessageTemplate {
+  id: number;
+  name: string;
+  body: string;
+  department: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export async function getMessageTemplates(
+  token: string
+): Promise<{ message_templates: MessageTemplate[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/message-templates`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load message templates');
+  }
+  return response.json();
+}
+
+export async function createMessageTemplate(
+  token: string,
+  payload: { name: string; body: string; department: string }
+): Promise<{ message_template: MessageTemplate }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/message-templates`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create message template');
+  }
+  return response.json();
+}
+
+export async function deleteMessageTemplate(
+  token: string,
+  templateId: number
+): Promise<{ message: string }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/message-templates/${templateId}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete message template');
+  }
+  return response.json();
+}
+
+export interface StaffAppointment {
+  id: number;
+  title: string;
+  description: string | null;
+  start_at: string | null;
+  end_at: string | null;
+  department: string;
+  staff_id: number | null;
+  status: string;
+  created_at: string | null;
+}
+
+export async function getStaffAppointments(
+  token: string
+): Promise<{ appointments: StaffAppointment[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/appointments`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load appointments');
+  }
+  return response.json();
+}
+
+export async function createStaffAppointment(
+  token: string,
+  payload: {
+    title: string;
+    description?: string | null;
+    start_at: string;
+    end_at: string;
+    department: string;
+    staff_id?: number | null;
+  }
+): Promise<{ appointment: StaffAppointment }> {
+  const response = await apiFetch(`${API_BASE_URL}/staff/appointments`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create appointment');
+  }
+  return response.json();
+}
+
+/** Fetch a document file as a blob (staff endpoint, assigned-client scoped). */
+export async function getStaffDocumentFile(
+  documentId: number,
+  token: string
+): Promise<Blob> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/documents/${documentId}/file`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load document file');
+  }
+  return response.blob();
 }
 
 export async function getCaseNotes(token: string, caseId: number): Promise<{ notes: CaseNote[] }> {
@@ -1507,6 +2218,38 @@ export async function getAnalyticsSummary(
   return response.json();
 }
 
+export interface DocumentPopularityEntry {
+  doc_id: number;
+  title: string;
+  department: string;
+  answer_count: number;
+  no_answer_count: number;
+  distinct_users: number;
+  positive_count: number;
+  negative_count: number;
+  positive_ratio: number;
+}
+
+export interface DocumentPopularityResponse {
+  top_documents: DocumentPopularityEntry[];
+  underperforming_documents: DocumentPopularityEntry[];
+}
+
+export async function getDocumentPopularity(
+  token: string,
+  limit: number = 20
+): Promise<DocumentPopularityResponse> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/analytics/document-popularity?limit=${limit}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load document popularity');
+  }
+  return response.json();
+}
+
 // ---------------------------------------------------------------------------
 // Admin: dashboard summary (Phase F2)
 // ---------------------------------------------------------------------------
@@ -1658,6 +2401,8 @@ export interface StaffClientDocument {
   is_approved: boolean;
   version: number;
   created_at: string | null;
+  rejection_reason: string | null;
+  rejected_at: string | null;
 }
 
 export interface StaffClientCase {

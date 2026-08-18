@@ -18,6 +18,7 @@ class RankingWeights:
     bm25_weight: float = 0.2
     vector_weight: float = 0.8
     top_k: int = 25
+    feedback_boost: float = 0.0  # J3: per-doc positive-feedback boost (0 = baseline)
 
 
 DEFAULT_WEIGHTS = RankingWeights()

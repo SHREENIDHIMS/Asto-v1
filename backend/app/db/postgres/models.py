@@ -46,6 +46,7 @@ def client_row_to_dict(row: dict) -> dict:
         "full_name": row["full_name"],
         "is_active": row["is_active"],
         "created_at": row.get("created_at"),
+        "notification_prefs": row.get("notification_prefs"),
     }
 
 

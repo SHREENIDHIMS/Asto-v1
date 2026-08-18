@@ -60,6 +60,7 @@ class TestClientUploadRouteWiring:
             response = client.post(
                 "/api/v1/client/documents/upload",
                 files={"file": ("policy.txt", b"hello", "text/plain")},
+                data={"doc_type": "policy", "title": "Policy document"},
             )
             assert response.status_code == 403
         finally:
@@ -98,9 +99,11 @@ class TestClientUploadBehavior:
             params = {}
             if property_id is not None:
                 params["property_id"] = str(property_id)
+            data = {"doc_type": "policy", "title": "Policy document"}
             return client.post(
                 "/api/v1/client/documents/upload",
                 files=files,
+                data=data,
                 params=params,
             )
         finally:
@@ -118,7 +121,12 @@ class TestClientUploadBehavior:
         meta = [f for f in files if f.name.endswith(".meta.json")]
         assert len(meta) == 1
         payload = json.loads(meta[0].read_text(encoding="utf-8"))
-        assert payload == {"client_id": 7, "property_id": None}
+        assert payload == {
+            "client_id": 7,
+            "property_id": None,
+            "doc_type": "policy",
+            "title": "Policy document",
+        }
 
     def test_upload_rejects_missing_filename(self, pending_dir):
         from app.main import app
@@ -166,7 +174,12 @@ class TestClientUploadBehavior:
         assert response.json()["property_id"] == 3
         meta = [f for f in pending_dir.iterdir() if f.name.endswith(".meta.json")]
         payload = json.loads(meta[0].read_text(encoding="utf-8"))
-        assert payload == {"client_id": 7, "property_id": 3}
+        assert payload == {
+            "client_id": 7,
+            "property_id": 3,
+            "doc_type": "policy",
+            "title": "Policy document",
+        }
 
 
 class TestIngestBatchSidecar:
@@ -193,3 +206,214 @@ class TestIngestBatchSidecar:
         file_path = tmp_path / f"{token}_doc.pdf"
         file_path.write_text("x")
         assert _load_sidecar(file_path) == {}
+
+
+class TestClientProfileUpdate:
+    def test_patch_me_requires_auth(self):
+        from app.main import app
+        client = TestClient(app)
+        response = client.patch("/api/v1/client/me", json={})
+        assert response.status_code == 401
+
+    def test_patch_me_denies_staff_tokens(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        app.dependency_overrides[require_auth] = lambda: STAFF_USER
+        try:
+            client = TestClient(app)
+            response = client.patch(
+                "/api/v1/client/me",
+                json={"full_name": "Sneaky"},
+            )
+            assert response.status_code == 403
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_patch_me_rejects_empty_body(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        app.dependency_overrides[require_auth] = lambda: CLIENT_USER
+        try:
+            client = TestClient(app)
+            response = client.patch("/api/v1/client/me", json={})
+            assert response.status_code == 422
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_patch_me_updates_full_name_and_prefs(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchone.return_value = {
+            "id": 7,
+            "email": "client@asto.local",
+            "full_name": "New Name",
+            "is_active": True,
+            "created_at": None,
+            "notification_prefs": ["info", "error"],
+        }
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+        app.dependency_overrides[require_auth] = lambda: CLIENT_USER
+        try:
+            client = TestClient(app)
+            with patch("app.db.postgres.session.acquire", return_value=conn):
+                response = client.patch(
+                    "/api/v1/client/me",
+                    json={"full_name": "New Name", "notification_prefs": ["info", "error"]},
+                )
+            assert response.status_code == 200
+            data = response.json()["client"]
+            assert data["full_name"] == "New Name"
+            assert data["notification_prefs"] == ["info", "error"]
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_patch_me_filters_invalid_prefs(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchone.return_value = {
+            "id": 7,
+            "email": "client@asto.local",
+            "full_name": None,
+            "is_active": True,
+            "created_at": None,
+            "notification_prefs": ["error"],
+        }
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+        app.dependency_overrides[require_auth] = lambda: CLIENT_USER
+        try:
+            client = TestClient(app)
+            with patch("app.db.postgres.session.acquire", return_value=conn):
+                response = client.patch(
+                    "/api/v1/client/me",
+                    json={"notification_prefs": ["error", "bogus", ""]},
+                )
+            assert response.status_code == 200
+            assert response.json()["client"]["notification_prefs"] == ["error"]
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+
+class TestClientCaseChecklist:
+    def test_checklist_requires_auth(self):
+        from app.main import app
+        client = TestClient(app)
+        response = client.get("/api/v1/client/cases/1/checklist")
+        assert response.status_code == 401
+
+    def test_checklist_denies_staff_tokens(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        app.dependency_overrides[require_auth] = lambda: STAFF_USER
+        try:
+            client = TestClient(app)
+            response = client.get("/api/v1/client/cases/1/checklist")
+            assert response.status_code == 403
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_checklist_missing_case_404(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchone.side_effect = [None]
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+        app.dependency_overrides[require_auth] = lambda: CLIENT_USER
+        try:
+            client = TestClient(app)
+            with patch("app.db.postgres.session.acquire", return_value=conn):
+                response = client.get("/api/v1/client/cases/999/checklist")
+            assert response.status_code == 404
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+
+class TestClientSignatureRequests:
+    def test_list_requires_auth(self):
+        from app.main import app
+        client = TestClient(app)
+        response = client.get("/api/v1/client/signature-requests")
+        assert response.status_code == 401
+
+    def test_list_denies_staff_tokens(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        app.dependency_overrides[require_auth] = lambda: STAFF_USER
+        try:
+            client = TestClient(app)
+            response = client.get("/api/v1/client/signature-requests")
+            assert response.status_code == 403
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_sign_requires_consent(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchone.return_value = {
+            "id": 1,
+            "document_id": 5,
+            "status": "pending",
+        }
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+        app.dependency_overrides[require_auth] = lambda: CLIENT_USER
+        try:
+            client = TestClient(app)
+            with patch("app.db.postgres.session.acquire", return_value=conn):
+                response = client.post(
+                    "/api/v1/client/signature-requests/1/sign",
+                    json={"signed_name": "Client User", "consent": False},
+                )
+            assert response.status_code == 422
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
+
+    def test_sign_pending_request(self):
+        from app.main import app
+        from app.dependencies import require_auth
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchone.return_value = {
+            "id": 1,
+            "document_id": 5,
+            "status": "pending",
+        }
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+        app.dependency_overrides[require_auth] = lambda: CLIENT_USER
+        try:
+            client = TestClient(app)
+            with patch("app.db.postgres.session.acquire", return_value=conn):
+                response = client.post(
+                    "/api/v1/client/signature-requests/1/sign",
+                    json={"signed_name": "Client User", "consent": True},
+                )
+            assert response.status_code == 200
+            assert response.json()["document_id"] == 5
+            assert "signed_at" in response.json()
+        finally:
+            app.dependency_overrides.pop(require_auth, None)
