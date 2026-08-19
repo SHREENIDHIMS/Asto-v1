@@ -5,14 +5,13 @@
 // Skips gracefully (exit 0) if chromium is not installed.
 
 import { createServer } from "http";
-import { readFile, stat, readdir } from "fs/promises";
-import { existsSync } from "fs";
-import { homedir } from "os";
+import { readFileSync, statSync, existsSync } from "fs";
 import { extname, join, normalize } from "path";
+import { fileURLToPath } from "url";
 import { chromium } from "playwright";
 import { AxeBuilder } from "@axe-core/playwright";
 
-const OUT_DIR = new URL("../out/", import.meta.url).pathname;
+const OUT_DIR = fileURLToPath(new URL("../out/", import.meta.url));
 const PORT = 3199;
 const ROUTES = ["/", "/login/", "/admin/"];
 
@@ -27,13 +26,27 @@ const MIME = {
   ".webmanifest": "application/manifest+json",
 };
 
-const server = createServer(async (req, res) => {
+// Synchronous handler: each request is served atomically. An async handler
+// could interleave requests and emit duplicate/wrong bodies on the same
+// response (ERR_HTTP_HEADERS_SENT). Mirrors the production nginx static
+// host: a path that maps to a directory redirects (301) to the trailing-
+// slash form before serving its index.html — without this, the app's own
+// `/` -> `/login` redirect lands on a 404 body and axe flags
+// document-title/html-has-lang spuriously.
+const server = createServer((req, res) => {
   try {
     let urlPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    if (urlPath.endsWith("/")) urlPath += "index.html";
     let filePath = normalize(join(OUT_DIR, urlPath));
     if (!filePath.startsWith(OUT_DIR)) throw new Error("bad path");
-    const body = await readFile(filePath);
+    if (statSync(filePath).isDirectory()) {
+      if (!req.url.endsWith("/")) {
+        res.writeHead(301, { Location: `${req.url}/` });
+        res.end();
+        return;
+      }
+      filePath = normalize(join(filePath, "index.html"));
+    }
+    const body = readFileSync(filePath);
     res.writeHead(200, {
       "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream",
     });
@@ -45,17 +58,22 @@ const server = createServer(async (req, res) => {
 });
 
 async function browserReady() {
-  const cache = join(homedir(), "AppData", "Local", "ms-playwright");
-  if (!existsSync(cache)) return false;
+  // Cross-platform: resolve the executable the installed Playwright browser
+  // actually uses, rather than guessing at an OS-specific cache directory.
   try {
-    return (await readdir(cache)).length > 0;
+    return existsSync(chromium.executablePath());
   } catch {
     return false;
   }
 }
 
 const run = async () => {
-  const outExists = await stat(OUT_DIR).catch(() => null);
+  let outExists = false;
+  try {
+    outExists = statSync(OUT_DIR).isDirectory();
+  } catch {
+    outExists = false;
+  }
   if (!outExists) {
     console.error("Run `npm run build` first so that out/ exists.");
     process.exit(1);
@@ -73,12 +91,13 @@ const run = async () => {
   let failed = false;
   try {
     for (const route of ROUTES) {
-      const page = await browser.newPage();
+      const context = await browser.newContext();
+      const page = await context.newPage();
       await page.goto(`http://localhost:${PORT}${route}`, {
         waitUntil: "networkidle",
       });
       const results = await new AxeBuilder({ page }).analyze();
-      await page.close();
+      await context.close();
       const violations = results.violations.filter(
         (v) => v.impact === "critical" || v.impact === "serious"
       );
