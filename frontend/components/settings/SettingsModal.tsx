@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   Copy,
+  Sun,
 } from "lucide-react";
 import {
   Dialog,
@@ -37,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import {
   changePassword,
   twoFaDisable,
@@ -652,6 +654,22 @@ const identity = user ?? (() => {
               )}
             />
           </label>
+        </CardContent>
+      </Card>
+
+      {/* N1: Appearance — theme toggle */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Sun className="h-4 w-4" />
+            Appearance
+          </CardTitle>
+          <CardDescription>
+            Choose a theme. System follows your device setting.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ThemeToggle />
         </CardContent>
       </Card>
 

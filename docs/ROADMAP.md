@@ -679,11 +679,11 @@ I7, I1, J1, J4, J5, K4, L5, M1, M7, N1, N5, N7.
 
 ## 11. Decisions pending user sign-off (gate before starting those items)
 
-| ID | Item | Blocks |
-|---|---|---|
-| DEC-1 | Optional LLM "cite-with-LLM" mode (yes/no + endpoint/UI) | — |
-| DEC-3 | Email/SMTP provider + which events email | H2, (L7 email notifications) |
-| DEC-4 | Reintroduce Alembic migrations | M2 |
+| ID | Item | Blocks | Status |
+|---|---|---|---|
+| DEC-1 | Optional LLM "cite-with-LLM" mode (yes/no + endpoint/UI) | — | **Closed 2026-08-19: No** (verbatim-only). Hosted-API seam `app/llm/` built and wired into `search.py`, gated OFF by `ASTO_LLM_ENABLED=false` — a future decision just flips the flag |
+| DEC-3 | Email/SMTP provider + which events email | H2, (L7 email notifications) | **Landed 2026-08-19** — generic SMTP + console fallback (`app/email/mailer.py`); reset link + notification emails wired |
+| DEC-4 | Reintroduce Alembic migrations | M2 | **Landed 2026-08-19** — M2 done |
 
 ---
 
@@ -734,25 +734,25 @@ I7, I1, J1, J4, J5, K4, L5, M1, M7, N1, N5, N7.
 - [x] L6 Calendar / appointments (stretch)
 
 **Phase M — System / Admin / Ops**
-- [ ] M1 Audit log export
-- [ ] M2 Alembic migrations (needs DEC-4)
-- [ ] M3 pgvector/index maintenance
-- [ ] M4 Structured logs + tracing
-- [ ] M5 Data retention / GDPR export
-- [ ] M6 Backup/restore automation
-- [ ] M7 Health / system status
-- [ ] M8 Feature flags
+- [x] M1 Audit log export
+- [x] M2 Alembic migrations (DEC-4: landed — `migrations/` baseline `0001_baseline` reuses `schema.py` DDL; entrypoint runs `alembic upgrade head`; `ensure_schema()` stays as dev bootstrap)
+- [x] M3 pgvector/index maintenance
+- [x] M4 Structured logs + tracing
+- [x] M5 Data retention / GDPR export
+- [x] M6 Backup/restore automation
+- [x] M7 Health / system status
+- [x] M8 Feature flags
 
 **Phase N — Polish / DX**
-- [ ] N1 Dark mode
-- [ ] N2 i18n framework
-- [ ] N3 PWA / mobile pass
-- [ ] N4 Accessibility audit
-- [ ] N5 Onboarding tour + empty states
-- [ ] N6 Real-time notification stream
-- [ ] N7 Loading/error state polish
+- [x] N1 Dark mode (Session 38)
+- [x] N2 i18n framework (Session 38 — tiny typed dictionary, English first)
+- [x] N3 PWA / mobile pass (Session 38)
+- [x] N4 Accessibility audit (Session 38 — axe dev script + manual pass)
+- [x] N5 Onboarding tour + empty states (Session 38)
+- [x] N6 Real-time notification stream (Session 38 — SSE)
+- [x] N7 Loading/error state polish (Session 38)
 
 ---
 
-*Last updated: 2026-08-12. Every ticked item in this tracker must have a
+*Last updated: 2026-08-19. Every ticked item in this tracker must have a
 corresponding SESSION.md entry.*

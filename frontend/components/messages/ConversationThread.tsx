@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, MessageSquare, Send } from "lucide-react";
+import { Loader2, MessageSquare, RefreshCw, Send, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { Conversation, Message } from "@/lib/api-client";
 
@@ -79,13 +80,30 @@ export default function ConversationThread({
 
   const handleSend = async () => {
     if (selectedId == null || !draft.trim() || sending) return;
+    const body = draft.trim();
     setSending(true);
     setError(null);
+    // Optimistic send (N7): append the message immediately, then reconcile
+    // with the server. The temp id is negative so it can't collide.
+    const tempId = -Date.now();
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: selectedId,
+      sender_type: selfSenderType,
+      sender_user_id: null,
+      sender_client_id: null,
+      sender_name: null,
+      body,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setDraft("");
     try {
-      await sendMessage(selectedId, draft.trim());
-      setDraft("");
+      await sendMessage(selectedId, body);
       await refresh(selectedId);
     } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setDraft(body);
       setError(err instanceof Error ? err.message : "Failed to send message");
     } finally {
       setSending(false);
@@ -143,7 +161,22 @@ export default function ConversationThread({
 
               <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
                 {error && (
-                  <p className="text-sm text-red-600">{error}</p>
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{error}</AlertDescription>
+                    {selectedId != null && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => refresh(selectedId)}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                        Retry
+                      </Button>
+                    )}
+                  </Alert>
                 )}
                 {loading ? (
                   <div className="flex justify-center py-8">

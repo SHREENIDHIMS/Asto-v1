@@ -1,0 +1,6 @@
+[Unit]
+Description=Run data retention pass (M5)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_retention.sh

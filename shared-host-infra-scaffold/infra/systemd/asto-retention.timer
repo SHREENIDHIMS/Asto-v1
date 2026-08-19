@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily data retention pass (M5)
+
+[Timer]
+OnBootSec=12min
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

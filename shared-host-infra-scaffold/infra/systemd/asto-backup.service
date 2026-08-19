@@ -1,0 +1,6 @@
+[Unit]
+Description=Run rotating Postgres backup (M6)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_backup.sh

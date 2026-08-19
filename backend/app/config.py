@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     password_reset_ttl_hours: int = 1
     # Origin used to build emailed links (reset links today, more mail later).
     frontend_url: str = "http://localhost:3011"
+    # --- Email (DEC-3: generic SMTP + console fallback) ---
+    # Any SMTP relay works (Postfix, SES SMTP, SendGrid, Mailgun, ...).
+    # When smtp_host is empty the mailer falls back to logging messages at
+    # INFO — every delivery seam still works in local dev with no provider.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""  # e.g. "Asto <no-reply@example.com>"; falls back to no-reply@asto.local
+    smtp_use_tls: bool = True   # STARTTLS on 587
+    smtp_use_ssl: bool = False  # implicit TLS on 465
     # --- Login throttle (H3, brute-force protection) ---
     # A login attempt that fails when >=max_failures failures are recorded for
     # the email (or >=max_ip_failures for the client IP) inside the lockout
@@ -88,6 +99,13 @@ class Settings(BaseSettings):
     storage_processed_dir: str = "storage/processed"
     max_upload_bytes: int = 20 * 1024 * 1024
 
+    # --- Backups (M6) ---
+    # Rotating pg_dump destination + how many dumps to keep. Set
+    # ASTO_PGDUMP_COMMAND / ASTO_PGRESTORE_COMMAND if pg_dump/pg_restore
+    # aren't on PATH (e.g. docker compose exec -T postgres pg_dump).
+    backup_dir: str = "storage/backups"
+    backup_keep: int = 7
+
     # --- Search ---
     bm25_limit: int = 25
     vector_limit: int = 25
@@ -104,6 +122,21 @@ class Settings(BaseSettings):
     # --- Optional reranker (P2; OFF by default on the micro tier) ---
     rerank_enabled: bool = False
     rerank_model_dir: str = "nlp_models/reranker"
+
+    # --- Hosted LLM seam (DEC-1; OFF by default) ---
+    # DEC-1 is closed as "No" today: the request-serving path never calls an
+    # LLM and every answer stays verbatim from a source. This block makes the
+    # hosted-API path *ready* so a future flip of ``llm_enabled`` activates
+    # it (see app/llm/). The provider URL is OpenAI-compatible
+    # (/chat/completions): OpenAI, Anthropic-via-gateway, Azure, a self-hosted
+    # vLLM, etc. all speak it.
+    llm_enabled: bool = False  # master switch — must stay false until DEC-1 is revisited
+    llm_provider_url: str = ""  # e.g. https://api.openai.com/v1
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+    llm_timeout_s: float = 30
+    llm_max_tokens: int = 500
+    llm_temperature: float = 0.2
 
     @model_validator(mode="after")
     def _check_jwt_secret(self) -> "Settings":

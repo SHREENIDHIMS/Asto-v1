@@ -181,6 +181,12 @@ export default function AppShell({
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:rounded-md focus:bg-background focus:border focus:border-border focus:text-sm"
+      >
+        Skip to main content
+      </a>
       {/* Desktop sidebar (all roles on md+). Client swaps to bottom tabs below md. */}
       <aside
         className={cn(
@@ -232,7 +238,7 @@ export default function AppShell({
       {/* Mobile drawer (staff/admin on small screens) */}
       {!isBottomTabs && drawerOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setDrawerOpen(false)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
           <aside className="absolute inset-y-0 left-0 w-64 bg-background border-r border-border flex flex-col">
             <div className="h-16 flex items-center border-b border-border px-3">
               <p className="text-sm font-bold truncate">{brandTitle}</p>
@@ -331,7 +337,7 @@ export default function AppShell({
         </header>
 
         {/* Content */}
-        <main className="flex-1 min-h-0 flex flex-col">{children}</main>
+        <main id="main-content" className="flex-1 min-h-0 flex flex-col">{children}</main>
 
         {/* Mobile bottom tab bar (client portal) */}
         {isBottomTabs && bottomTabs.length > 0 && (

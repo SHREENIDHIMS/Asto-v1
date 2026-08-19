@@ -10,6 +10,10 @@
 # a trusted cache, so the long-running server reuses it without re-downloading.
 set -e
 
+echo "asto-backend: applying database migrations (alembic upgrade head)..."
+alembic upgrade head
+echo "asto-backend: migrations up to date."
+
 echo "asto-backend: pre-warming embedding model..."
 if python -c "from app.search.pgvector_search import _get_embedding_model; _get_embedding_model()" 2>&1; then
   echo "asto-backend: embedding model ready."

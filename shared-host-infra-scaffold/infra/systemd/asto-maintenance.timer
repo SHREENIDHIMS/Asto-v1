@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly DB maintenance pass (M3)
+
+[Timer]
+OnBootSec=15min
+OnCalendar=Sun 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

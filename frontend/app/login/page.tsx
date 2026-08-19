@@ -14,12 +14,14 @@ import {
   twoFactorLogin,
 } from "@/lib/api-client";
 import { decodeToken, isAdminRole, storeToken } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 type Mode = "login" | "forgot" | "reset" | "2fa";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [mode, setMode] = useState<Mode>("login");
   const [resetToken, setResetToken] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -70,18 +72,16 @@ export default function LoginPage() {
         // yet — hold the short-lived token and ask for the app code.
         setTwoFaToken(result.two_fa_token ?? null);
         setMode("2fa");
-        setNotice(
-          "Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app."
-        );
+        setNotice(t("login.twoFactorEnabled"));
         return;
       }
       if (!result.access_token) {
-        throw new Error("Sign-in did not return a token");
+        throw new Error(t("login.noToken"));
       }
       storeToken(result.access_token, rememberMe);
       routeByToken(result.access_token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(err instanceof Error ? err.message : t("login.signInFailed"));
     } finally {
       setIsLoading(false);
     }
@@ -97,12 +97,12 @@ export default function LoginPage() {
     try {
       const result = await twoFactorLogin(twoFaToken, twoFaCode.trim());
       if (!result.access_token) {
-        throw new Error("Sign-in did not return a token");
+        throw new Error(t("login.noToken"));
       }
       storeToken(result.access_token, rememberMe);
       routeByToken(result.access_token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Verification failed");
+      setError(err instanceof Error ? err.message : t("login.verificationFailed"));
     } finally {
       setIsLoading(false);
     }
@@ -121,7 +121,7 @@ export default function LoginPage() {
       );
       setEmail("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      setError(err instanceof Error ? err.message : t("login.requestFailed"));
     } finally {
       setIsLoading(false);
     }
@@ -130,7 +130,7 @@ export default function LoginPage() {
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
+      setError(t("login.passwordMismatch"));
       return;
     }
     setIsLoading(true);
@@ -188,21 +188,21 @@ export default function LoginPage() {
           <div className="space-y-1.5">
             {mode === "login" && (
               <>
-                <h1 className="text-lg font-semibold tracking-tight">Welcome back</h1>
+                <h1 className="text-lg font-semibold tracking-tight">{t("login.welcomeBack")}</h1>
                 <p className="text-sm text-muted-foreground">
-                  Enter your credentials to login to your account.
+                  {t("login.subtitle")}
                 </p>
               </>
             )}
         {mode === "2fa" && (
           <form className="mt-6 space-y-5" onSubmit={handleTwoFactor}>
             <div className="space-y-2">
-              <Label htmlFor="twofa-code">6-digit code</Label>
+              <Label htmlFor="twofa-code">{t("login.twoFaCode")}</Label>
               <Input
                 id="twofa-code"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                placeholder="000000"
+                placeholder={t("login.twoFaCodePlaceholder")}
                 maxLength={6}
                 className="text-center text-lg tracking-widest"
                 value={twoFaCode}
@@ -215,7 +215,7 @@ export default function LoginPage() {
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Verification failed</AlertTitle>
+                <AlertTitle>{t("login.verificationFailed")}</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
@@ -226,7 +226,7 @@ export default function LoginPage() {
               ) : (
                 <ShieldCheck className="h-4 w-4" />
               )}
-              {isLoading ? "Verifying…" : "Verify & sign in"}
+              {isLoading ? t("login.verifying") : t("login.verifyAndSignIn")}
             </Button>
 
             <Button
@@ -236,32 +236,32 @@ export default function LoginPage() {
               onClick={backToLogin}
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to login
+              {t("login.backToLogin")}
             </Button>
           </form>
         )}
 
         {mode === "forgot" && (
               <>
-                <h1 className="text-lg font-semibold tracking-tight">Reset your password</h1>
+                <h1 className="text-lg font-semibold tracking-tight">{t("login.resetYourPassword")}</h1>
                 <p className="text-sm text-muted-foreground">
-                  Enter your account email and we&apos;ll send you a one-time reset link.
+                  {t("login.resetHint")}
                 </p>
               </>
             )}
             {mode === "reset" && (
               <>
-                <h1 className="text-lg font-semibold tracking-tight">Choose a new password</h1>
+                <h1 className="text-lg font-semibold tracking-tight">{t("login.chooseNewPassword")}</h1>
                 <p className="text-sm text-muted-foreground">
-                  Use at least 8 characters. All other sessions will be signed out.
+                  {t("login.resetNewPasswordHint")}
                 </p>
               </>
             )}
             {mode === "2fa" && (
               <>
-                <h1 className="text-lg font-semibold tracking-tight">Two-factor verification</h1>
+                <h1 className="text-lg font-semibold tracking-tight">{t("login.twoFactorVerification")}</h1>
                 <p className="text-sm text-muted-foreground">
-                  Enter the 6-digit code from your authenticator app.
+                  {t("login.twoFactorCodeHint")}
                 </p>
               </>
             )}
@@ -272,10 +272,10 @@ export default function LoginPage() {
           <form className="mt-6 space-y-5" onSubmit={handleLogin}>
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="login-email">Email</Label>
+                <Label htmlFor="login-email">{t("login.email")}</Label>
                 <Input
                   id="login-email"
-                  placeholder="you@company.com"
+                  placeholder={t("login.emailPlaceholder")}
                   type="email"
                   autoComplete="email"
                   value={email}
@@ -284,11 +284,11 @@ export default function LoginPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="login-password">Password</Label>
+                <Label htmlFor="login-password">{t("login.password")}</Label>
                 <div className="relative">
                   <Input
                     id="login-password"
-                    placeholder="Enter your password"
+                    placeholder={t("login.passwordPlaceholder")}
                     type={showPassword ? "text" : "password"}
                     autoComplete="current-password"
                     className="pr-10"
@@ -299,7 +299,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-label={showPassword ? t("login.hidePassword") : t("login.showPassword")}
                     className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
                   >
                     {showPassword ? (
@@ -320,7 +320,7 @@ export default function LoginPage() {
                   onCheckedChange={(checked) => setRememberMe(checked === true)}
                 />
                 <Label htmlFor="login-remember" className="font-normal text-muted-foreground">
-                  Remember me
+                  {t("login.rememberMe")}
                 </Label>
               </div>
               <button
@@ -328,7 +328,7 @@ export default function LoginPage() {
                 onClick={() => setMode("forgot")}
                 className="text-sm underline hover:no-underline"
               >
-                Forgot password?
+                {t("login.forgotPassword")}
               </button>
             </div>
 
@@ -341,14 +341,14 @@ export default function LoginPage() {
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Login failed</AlertTitle>
+                <AlertTitle>{t("login.signInFailed")}</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isLoading ? "Signing in…" : "Sign in"}
+              {isLoading ? t("login.signingIn") : t("login.signIn")}
             </Button>
           </form>
         )}
@@ -356,10 +356,10 @@ export default function LoginPage() {
         {mode === "forgot" && (
           <form className="mt-6 space-y-5" onSubmit={handleForgot}>
             <div className="space-y-2">
-              <Label htmlFor="forgot-email">Email</Label>
+              <Label htmlFor="forgot-email">{t("login.email")}</Label>
               <Input
                 id="forgot-email"
-                placeholder="you@company.com"
+                placeholder={t("login.emailPlaceholder")}
                 type="email"
                 autoComplete="email"
                 value={email}
@@ -377,14 +377,14 @@ export default function LoginPage() {
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Request failed</AlertTitle>
+                <AlertTitle>{t("login.requestFailed")}</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isLoading ? "Sending…" : "Send reset link"}
+              {isLoading ? t("login.sending") : t("login.sendResetLink")}
             </Button>
 
             <Button
@@ -394,7 +394,7 @@ export default function LoginPage() {
               onClick={backToLogin}
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to login
+              {t("login.backToLogin")}
             </Button>
           </form>
         )}
@@ -403,7 +403,7 @@ export default function LoginPage() {
           <form className="mt-6 space-y-5" onSubmit={handleReset}>
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="reset-password">New password</Label>
+                <Label htmlFor="reset-password">{t("login.newPassword")}</Label>
                 <div className="relative">
                   <Input
                     id="reset-password"
@@ -418,7 +418,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-label={showPassword ? t("login.hidePassword") : t("login.showPassword")}
                     className="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md"
                   >
                     {showPassword ? (
@@ -430,7 +430,7 @@ export default function LoginPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reset-confirm">Confirm new password</Label>
+                <Label htmlFor="reset-confirm">{t("login.confirmNewPassword")}</Label>
                 <Input
                   id="reset-confirm"
                   type="password"
@@ -446,14 +446,14 @@ export default function LoginPage() {
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Password reset failed</AlertTitle>
+                <AlertTitle>{t("login.passwordResetFailed")}</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isLoading ? "Updating…" : "Update password"}
+              {isLoading ? t("login.updating") : t("login.updatePassword")}
             </Button>
 
             <Button
@@ -463,7 +463,7 @@ export default function LoginPage() {
               onClick={backToLogin}
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to login
+              {t("login.backToLogin")}
             </Button>
           </form>
         )}

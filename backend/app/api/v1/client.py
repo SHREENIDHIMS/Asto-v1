@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
@@ -90,6 +90,36 @@ async def client_me(user: dict = Depends(require_auth)) -> dict:
             detail="Client not found",
         )
     return {"client": client_row_to_dict(dict(row))}
+
+
+@router.get("/me/export")
+async def client_me_export(user: dict = Depends(require_auth)) -> JSONResponse:
+    """GDPR-style export of the authenticated client's personal data (M5).
+
+    Returns their profile, properties, cases, documents (with content),
+    conversations and their own messages, feedback, and query audit
+    history as a downloadable JSON document. Access is audit-logged.
+    """
+    _require_client(user)
+    from app.audit.audit_logger import AuditLogEntry, log_query
+    from app.clients.export import build_client_export, json_safe
+
+    payload = json_safe(build_client_export(int(user["client_id"])))
+
+    log_query(
+        AuditLogEntry(
+            user_id=int(user["client_id"]),
+            query="client data export",
+            outcome="self-serve GDPR export",
+        )
+    )
+    return JSONResponse(
+        payload,
+        headers={
+            "Content-Disposition": 'attachment; filename="my-data.json"',
+            "Content-Type": "application/json",
+        },
+    )
 
 
 @router.get("/properties")

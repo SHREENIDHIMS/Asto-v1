@@ -73,3 +73,72 @@ Each new project gets:
 - Its own `run_ingestion.sh`-style batch script if it needs NLP/document processing
 
 No project should ever run its own Postgres, Redis, or vector DB container.
+
+---
+
+## M6 — Backup / restore runbook
+
+### Nightly backup (automated)
+
+```bash
+# Install the timer once
+sudo cp infra/systemd/asto-backup.service infra/systemd/asto-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now asto-backup.timer
+```
+
+The `asto-backup.timer` fires at 03:00 daily and runs `run_backup.sh`,
+which writes a custom-format `pg_dump` into
+`backend/storage/backups/` and keeps the newest `ASTO_BACKUP_KEEP` (default 7).
+
+**If pg_dump isn't on the host PATH** (Postgres runs in Docker):
+set in the backend's environment:
+```bash
+ASTO_PGDUMP_COMMAND="docker compose -f /opt/projects/asto/docker-compose.yml exec -T postgres pg_dump"
+```
+(pg_dump's stdout is piped back to the host, so the `.dump` file still lands
+in `storage/backups/` on the host.)
+
+Manual run: `./infra/scripts/run_backup.sh`.
+
+### Restore (on-demand, NOT scheduled)
+
+```bash
+./infra/scripts/run_restore.sh /opt/projects/asto/backend/storage/backups/asto_20260818_120000.dump
+```
+If `pg_restore` isn't on PATH, set `ASTO_PGRESTORE_COMMAND` to the
+`docker compose ... exec -T postgres pg_restore` wrapper and make the dump
+reachable inside that context. **Restore overwrites the target DB** — always
+restore to a scratch/empty database first, then verify, before touching prod.
+
+## M3 — Maintenance runbook (VACUUM/REINDEX)
+
+```bash
+sudo cp infra/systemd/asto-maintenance.service infra/systemd/asto-maintenance.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now asto-maintenance.timer
+```
+
+The `asto-maintenance.timer` fires Sunday 04:00 and runs `run_maintenance.sh`,
+which `VACUUM (ANALYZE)`s `documents`/`document_chunks` and `REINDEX INDEX
+CONCURRENTLY`s the pgvector HNSW + FTS GIN indexes when dead-tuple bloat
+exceeds 0.2 (override with `--reindex-threshold`).
+
+Manual: `./infra/scripts/run_maintenance.sh --dry-run` (report only), or run
+it for real. Safe to run any time — CONCURRENTLY keeps the table available.
+
+## M5 — Retention runbook (GDPR/privacy)
+
+```bash
+sudo cp infra/systemd/asto-retention.service infra/systemd/asto-retention.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now asto-retention.timer
+```
+
+The `asto-retention.timer` fires at 02:30 daily and runs `run_retention.sh`,
+which deletes rows older than the per-table policy in `scripts/retention.py`
+(audit_log 730d, login_attempts 90d, knowledge_gaps 365d, feedback 730d,
+notifications 365d). Each run is itself audit-logged before any deletion.
+
+Manual: `./infra/scripts/run_retention.sh --dry-run` to preview counts, then
+run it for real.

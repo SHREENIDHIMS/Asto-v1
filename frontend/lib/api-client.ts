@@ -1963,6 +1963,32 @@ export async function getAdminAudit(
   return jsonOrThrow(response, 'Failed to load audit log');
 }
 
+/**
+ * M1 — Stream the filtered audit log to a CSV download. Reuses the same
+ * filters as getAdminAudit (q/actor/outcome/from/to) but exports every match.
+ */
+export async function exportAuditLogCsv(
+  token: string,
+  filters: Omit<AuditFilters, 'limit' | 'offset'> = {}
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (filters.q) params.set('q', filters.q);
+  if (filters.actor) params.set('actor', filters.actor);
+  if (filters.outcome) params.set('outcome', filters.outcome);
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  params.set('format', 'csv');
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch(`${API_BASE_URL}/admin/audit/export${qs}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error('Failed to export audit log');
+  }
+  const blob = await response.blob();
+  openBlobInNewTab(blob, `audit_log_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`);
+}
+
 // ---------------------------------------------------------------------------
 // Staff client onboarding (Session 9, decision #2 — manual today, CRM hook later)
 // ---------------------------------------------------------------------------
@@ -2279,6 +2305,77 @@ export async function getAdminSummary(
 }
 
 // ---------------------------------------------------------------------------
+// Health / system status (Phase M7)
+// ---------------------------------------------------------------------------
+
+export interface StorageHealth {
+  writable: boolean;
+  error?: string;
+}
+
+export interface SystemHealth {
+  status: string;
+  database: string;
+  storage: { pending: StorageHealth; processed: StorageHealth };
+  last_ingest: string | null;
+  version: string;
+  timestamp: number;
+}
+
+export async function getSystemHealth(token: string): Promise<SystemHealth> {
+  const response = await apiFetch(`${API_BASE_URL}/health`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load system health');
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Feature flags (Phase M8)
+// ---------------------------------------------------------------------------
+
+export interface FeatureFlag {
+  name: string;
+  enabled: boolean;
+  source: string;
+}
+
+export async function getFeatureFlags(token: string): Promise<FeatureFlag[]> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/flags`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to load feature flags');
+  }
+  const data = await response.json();
+  return data.flags as FeatureFlag[];
+}
+
+export async function setFeatureFlag(
+  token: string,
+  name: string,
+  enabled: boolean
+): Promise<{ name: string; enabled: boolean }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/flags`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name, enabled }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update feature flag');
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
 // Admin: knowledge base browse, SOP management, governance (Phase F3)
 // ---------------------------------------------------------------------------
 
@@ -2529,6 +2626,111 @@ export async function markAllNotificationsRead(
     throw new Error(error.detail || 'Failed to update notifications');
   }
   return response.json();
+}
+
+export interface NotificationStreamHandlers {
+  /** Current unread count + server max id, sent once on connect. */
+  onHello?: (unreadCount: number, latestId: number) => void;
+  /** A new (or previously unseen) notification arrived. */
+  onNotification?: (notification: StaffNotification) => void;
+  /** The stream dropped (network/proxy). Reconnect as desired. */
+  onClose?: (err?: unknown) => void;
+}
+
+/**
+ * Live notification stream over SSE (Phase N6). Returns an abort function.
+ * The stream resumes from `sinceId` (the highest notification id already
+ * rendered) so reconnects never duplicate or skip rows.
+ */
+export function openNotificationStream(
+  token: string,
+  handlers: NotificationStreamHandlers,
+  sinceId = 0
+): () => void {
+  const controller = new AbortController();
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const connect = () => {
+    fetch(`${API_BASE_URL}/staff/notifications/stream?since_id=${sinceId}`, {
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Notification stream failed (${response.status})`);
+        }
+        if (!response.body) {
+          throw new Error('Streaming not supported by this browser');
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const handleEvent = (event: string, data: string) => {
+          if (event === 'hello') {
+            const parsed = JSON.parse(data) as {
+              unread_count?: number;
+              latest_id?: number;
+            };
+            if (typeof parsed.unread_count === 'number') {
+              handlers.onHello?.(parsed.unread_count, parsed.latest_id ?? 0);
+            }
+          } else if (event === 'notification') {
+            const notification = JSON.parse(data) as StaffNotification;
+            sinceId = Math.max(sinceId, notification.id);
+            handlers.onNotification?.(notification);
+          }
+        };
+
+        const pump = () => {
+          reader.read().then(
+            ({ done, value }) => {
+              if (done) {
+                handlers.onClose?.();
+                return;
+              }
+              buffer += decoder.decode(value, { stream: true });
+              const frames = buffer.split('\n\n');
+              buffer = frames.pop() ?? '';
+              for (const frame of frames) {
+                let event = 'message';
+                const dataLines: string[] = [];
+                for (const line of frame.split('\n')) {
+                  if (line.startsWith('event:')) {
+                    event = line.slice(6).trim();
+                  } else if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trim());
+                  }
+                }
+                if (dataLines.length > 0) {
+                  handleEvent(event, dataLines.join('\n'));
+                }
+              }
+              pump();
+            },
+            (err) => {
+              if (err?.name === 'AbortError') return;
+              handlers.onClose?.(err);
+            }
+          );
+        };
+
+        pump();
+      })
+      .catch((err) => {
+        if (err?.name === 'AbortError') return;
+        handlers.onClose?.(err);
+      });
+  };
+
+  connect();
+  return () => controller.abort();
 }
 
 export async function updateDocumentMetadata(

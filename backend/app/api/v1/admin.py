@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
+import csv
+import io
+import json as jsonlib
+from datetime import datetime, timezone
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
+from fastapi.responses import JSONResponse, StreamingResponse
 from passlib.hash import bcrypt
 from pydantic import BaseModel
 
@@ -496,6 +510,39 @@ async def revoke_client_sessions(
     return {"client_id": client_id, "revoked_sessions": revoked}
 
 
+@router.get("/clients/{client_id}/export")
+async def admin_client_export(
+    client_id: int,
+    user: dict = Depends(require_auth),
+) -> JSONResponse:
+    """Admin GDPR-style export of a client's personal data (M5).
+
+    Same shape as the client self-serve export. Admin-only and audit-logged.
+    """
+    require_role(user, "admin")
+    from app.audit.audit_logger import AuditLogEntry, log_query
+    from app.clients.export import build_client_export, json_safe
+
+    payload = json_safe(build_client_export(client_id))
+    if not payload["exists"]:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    log_query(
+        AuditLogEntry(
+            user_id=int(user["id"]),
+            query="admin client data export",
+            outcome=f"client_id={client_id}",
+        )
+    )
+    return JSONResponse(
+        payload,
+        headers={
+            "Content-Disposition": f'attachment; filename="client_{client_id}_data.json"',
+            "Content-Type": "application/json",
+        },
+    )
+
+
 class ReviewSopAccessRequest(BaseModel):
     decision: str
     reason: str | None = None
@@ -932,9 +979,54 @@ async def update_governance(
     }
 
 
-@router.get("/audit")
-async def get_audit_log(
+# ---------------------------------------------------------------------------
+# Feature flags (M8: ship half-built features safely)
+# ---------------------------------------------------------------------------
+
+
+class FeatureFlagSetRequest(BaseModel):
+    name: str
+    enabled: bool
+
+
+@router.get("/flags")
+async def list_feature_flags(user: dict = Depends(require_auth)) -> dict:
+    """List all known feature flags with their effective value and source.
+
+    ``source`` is ``table`` when a DB row overrides the compiled-in default,
+    ``default`` otherwise. Admin-only.
+    """
+    require_role(user, "admin")
+    from app import feature_flags
+
+    return {"flags": feature_flags.get_all_flags()}
+
+
+@router.post("/flags")
+async def set_feature_flag(
+    body: FeatureFlagSetRequest,
     user: dict = Depends(require_auth),
+) -> dict:
+    """Toggle a feature flag (upsert). The change is audit-logged. Admin-only."""
+    require_role(user, "admin")
+    from app import feature_flags
+
+    result = feature_flags.set_flag(body.name, body.enabled)
+
+    from app.audit.audit_logger import AuditLogEntry, log_query
+
+    log_query(
+        AuditLogEntry(
+            user_id=int(user["id"]),
+            query=f"feature flag {body.name}",
+            outcome=f"enabled={body.enabled}",
+        )
+    )
+    return result
+
+
+@router.get("/audit")
+async def get_audit_log(    user: dict = Depends(require_auth),
     q: str | None = Query(default=None, max_length=200),
     actor: str | None = Query(default=None, max_length=200),
     outcome: str | None = Query(default=None, max_length=50),
@@ -958,29 +1050,7 @@ async def get_audit_log(
     """
     require_role(user, "admin")
 
-    where: list[str] = []
-    params: list = []
-
-    if q:
-        where.append("a.query ILIKE %s")
-        params.append(f"%{q}%")
-    if actor:
-        where.append(
-            "(u.email ILIKE %s OR u.full_name ILIKE %s OR c.email ILIKE %s OR c.full_name ILIKE %s)"
-        )
-        like = f"%{actor}%"
-        params.extend([like, like, like, like])
-    if outcome:
-        where.append("a.outcome = %s")
-        params.append(outcome)
-    if date_from:
-        where.append("a.created_at >= %s")
-        params.append(date_from)
-    if date_to:
-        where.append("a.created_at <= %s")
-        params.append(date_to)
-
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    where_sql, params = _audit_filter_clause(q, actor, outcome, date_from, date_to)
 
     with session.acquire() as conn:
         with conn.cursor() as cur:
@@ -1014,6 +1084,149 @@ async def get_audit_log(
         "offset": offset,
         "entries": [audit_row_to_dict(r) for r in rows],
     }
+
+
+def _audit_filter_clause(
+    q: str | None,
+    actor: str | None,
+    outcome: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> tuple[str, list]:
+    """Build the shared audit-log WHERE clause (used by /audit and /audit/export).
+
+    Returns ``(where_sql, params)``. All filters optional and ANDed.
+    """
+    where: list[str] = []
+    params: list = []
+
+    if q:
+        where.append("a.query ILIKE %s")
+        params.append(f"%{q}%")
+    if actor:
+        where.append(
+            "(u.email ILIKE %s OR u.full_name ILIKE %s OR c.email ILIKE %s OR c.full_name ILIKE %s)"
+        )
+        like = f"%{actor}%"
+        params.extend([like, like, like, like])
+    if outcome:
+        where.append("a.outcome = %s")
+        params.append(outcome)
+    if date_from:
+        where.append("a.created_at >= %s")
+        params.append(date_from)
+    if date_to:
+        where.append("a.created_at <= %s")
+        params.append(date_to)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    return where_sql, params
+
+
+AUDIT_EXPORT_COLUMNS = [
+    "id",
+    "user_id",
+    "actor",
+    "actor_email",
+    "query",
+    "sub_queries",
+    "retrieved_ids",
+    "confidence",
+    "response_id",
+    "outcome",
+    "latency_ms",
+    "created_at",
+]
+
+
+def _audit_export_row(row: dict) -> dict:
+    """Serialize a raw audit row for CSV/JSON export.
+
+    Array/JSONB columns become JSON strings for CSV round-tripping.
+    """
+    out = {key: row.get(key) for key in AUDIT_EXPORT_COLUMNS}
+    if out["sub_queries"] is not None:
+        out["sub_queries"] = jsonlib.dumps(out["sub_queries"])
+    if out["retrieved_ids"] is not None:
+        out["retrieved_ids"] = jsonlib.dumps(out["retrieved_ids"])
+    return out
+
+
+@router.get("/audit/export")
+async def export_audit_log(
+    user: dict = Depends(require_auth),
+    q: str | None = Query(default=None, max_length=200),
+    actor: str | None = Query(default=None, max_length=200),
+    outcome: str | None = Query(default=None, max_length=50),
+    date_from: str | None = Query(default=None, alias="from", max_length=30),
+    date_to: str | None = Query(default=None, alias="to", max_length=30),
+    format: str = Query(default="csv", pattern="^(csv|json)$"),
+) -> Response:
+    """Stream the filtered audit log as CSV (default) or JSON (Phase M1).
+
+    Applies exactly the same filters as ``GET /admin/audit`` but exports
+    every matching row (no pagination). Admin-only and itself audit-logged.
+    Gated behind the ``audit_export`` feature flag (M8).
+    """
+    require_role(user, "admin")
+    from app import feature_flags
+
+    if not feature_flags.is_enabled("audit_export"):
+        raise HTTPException(status_code=403, detail="Feature disabled")
+    where_sql, params = _audit_filter_clause(q, actor, outcome, date_from, date_to)
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT a.id, a.user_id, a.query, a.sub_queries, a.retrieved_ids, "
+                "a.confidence, a.response_id, a.outcome, a.latency_ms, a.created_at, "
+                "COALESCE(u.full_name, c.full_name) AS actor, "
+                "COALESCE(u.email, c.email) AS actor_email "
+                "FROM audit_log a "
+                "LEFT JOIN users u ON u.id = a.user_id "
+                "LEFT JOIN clients c ON c.id = a.user_id "
+                f"{where_sql} "
+                "ORDER BY a.created_at DESC, a.id DESC",
+                params,
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+    from app.audit.audit_logger import AuditLogEntry, log_query
+
+    log_query(
+        AuditLogEntry(
+            user_id=int(user["id"]),
+            query="audit export",
+            outcome=f"format={format}",
+        )
+    )
+
+    if format == "json":
+        return JSONResponse(
+            content={"entries": [dict(r) for r in rows], "count": len(rows)}
+        )
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    def _stream_csv():
+        buf = io.StringIO()
+        buf.write("\ufeff")  # UTF-8 BOM so Excel detects the encoding
+        writer = csv.DictWriter(buf, fieldnames=AUDIT_EXPORT_COLUMNS)
+        writer.writeheader()
+        yield buf.getvalue()
+        for r in rows:
+            buf.seek(0)
+            buf.truncate(0)
+            writer.writerow(_audit_export_row(r))
+            yield buf.getvalue()
+
+    return StreamingResponse(
+        _stream_csv(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="audit_log_{stamp}.csv"'
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

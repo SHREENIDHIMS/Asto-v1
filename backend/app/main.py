@@ -13,6 +13,7 @@ import logging
 import time
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.config import settings
 from app.db.postgres.schema import ensure_schema
+
+__version__ = "1.1.0"
 
 # uvicorn's default config attaches handlers to its own loggers but not the
 # root, so application-level logs (search, audit, and the password-reset
@@ -71,6 +74,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.logging.middleware import RequestLoggingMiddleware
+
+app.add_middleware(RequestLoggingMiddleware)
+
 
 @app.get("/health")
 async def health() -> dict:
@@ -80,15 +87,56 @@ async def health() -> dict:
 
 @app.get(f"{settings.api_prefix}/health")
 async def api_health() -> dict:
-    """API-level health check with DB connectivity."""
-    from app.db.postgres.session import ping
+    """API-level health check with DB, storage, and ingest signal (M7).
+
+    ``status`` is ``healthy`` when the DB responds, else ``degraded``.
+    Storage-writability and last-ingest-time are reported for the admin
+    system-status card; storage details are informational and do not by
+    themselves flip the overall status.
+    """
+    from app.db.postgres.session import ping, acquire
 
     db_ok = ping()
+    storage = _storage_health()
+    last_ingest = None
+    if db_ok:
+        try:
+            with acquire() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT MAX(created_at) AS t FROM documents")
+                    row = cur.fetchone()
+                    last_ingest = row["t"] if row and row["t"] is not None else None
+        except Exception:  # noqa: BLE001 - informational, never fail the check
+            last_ingest = None
+
     return {
         "status": "healthy" if db_ok else "degraded",
         "database": "connected" if db_ok else "disconnected",
+        "storage": storage,
+        "last_ingest": last_ingest,
+        "version": __version__,
         "timestamp": time.time(),
     }
+
+
+def _storage_health() -> dict:
+    """Report whether the configured storage directories are writable."""
+    dirs = {
+        "pending": settings.storage_pending_dir,
+        "processed": settings.storage_processed_dir,
+    }
+    result: dict[str, dict] = {}
+    for key, rel in dirs.items():
+        path = Path(rel)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".health_probe"
+            probe.write_bytes(b"ok")
+            probe.unlink()
+            result[key] = {"writable": True}
+        except Exception as exc:  # noqa: BLE001
+            result[key] = {"writable": False, "error": str(exc)}
+    return result
 
 
 app.include_router(api_router, prefix=settings.api_prefix)

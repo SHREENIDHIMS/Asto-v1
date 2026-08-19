@@ -7,6 +7,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Download,
   FileText,
   GitCompare,
   History,
@@ -53,6 +54,11 @@ import {
    getDocumentPopularity,
    DocumentPopularityEntry,
    getAdminSummary,
+   getSystemHealth,
+   SystemHealth,
+   getFeatureFlags,
+   setFeatureFlag,
+   FeatureFlag,
    getDocumentChunks,
    listAllSops,
    getGovernance,
@@ -60,6 +66,7 @@ import {
    listSopAccessRequests,
    reviewSopAccessRequest,
    getAdminAudit,
+   exportAuditLogCsv,
    AnalyticsSummary,
    AdminSummary,
    DocumentChunk,
@@ -85,6 +92,7 @@ import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import SettingsModal from "@/components/settings/SettingsModal";
+import { OnboardingTour } from "@/components/onboarding/OnboardingTour";
 import { FileDropzone } from "@/components/upload/FileDropzone";
 import { DocumentPreviewDialog } from "@/components/documents/DocumentPreviewDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -94,6 +102,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DashboardSkeleton } from "@/components/ui/dashboard-skeleton";
 import {
   Select,
   SelectContent,
@@ -173,22 +182,27 @@ function ApprovalsTab({ token }: { token: string }) {
   const handleApprove = async (doc: ApprovalDocument) => {
     setBusyId(doc.id);
     setError(null);
-    try {
-      let publishAnyway = false;
-      if (doc.pii_flagged) {
-        if (
-          !window.confirm(
-            `This document is flagged as containing PII. Approve and publish anyway?`
-          )
-        ) {
-          setBusyId(null);
-          return;
-        }
-        publishAnyway = true;
+    let publishAnyway = false;
+    if (doc.pii_flagged) {
+      if (
+        !window.confirm(
+          `This document is flagged as containing PII. Approve and publish anyway?`
+        )
+      ) {
+        setBusyId(null);
+        return;
       }
+      publishAnyway = true;
+    }
+    // Optimistic update (N7): remove the doc from the pending queue
+    // immediately, then reconcile with the server.
+    const previous = documents;
+    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    try {
       await approveDocument(doc.id, token, publishAnyway);
       await load();
     } catch (err) {
+      setDocuments(previous);
       setError(err instanceof Error ? err.message : "Decision failed");
     } finally {
       setBusyId(null);
@@ -282,6 +296,12 @@ function ApprovalsTab({ token }: { token: string }) {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Action failed</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+          <div className="mt-2 flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Retry
+            </Button>
+          </div>
         </Alert>
       )}
 
@@ -1334,9 +1354,16 @@ function DocumentsTab({ token }: { token: string }) {
               </div>
             ))}
             {documents.length === 0 && (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {activeTag ? "No documents carry this tag yet." : "No documents yet."}
-              </p>
+              <div className="py-10 text-center">
+                <Upload className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                <p className="text-sm font-medium">
+                  {activeTag ? "No documents carry this tag yet." : "Your knowledge base is empty."}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Upload documents above to get started. They are validated, then processed by
+                  the batch ingestion pipeline.
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -2968,6 +2995,7 @@ function GovernanceTab({ token }: { token: string }) {
 
 function DashboardTab({ token }: { token: string }) {
   const [summary, setSummary] = useState<AdminSummary | null>(null);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2975,7 +3003,12 @@ function DashboardTab({ token }: { token: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      setSummary(await getAdminSummary(token));
+      const [summaryRes, healthRes] = await Promise.all([
+        getAdminSummary(token),
+        getSystemHealth(token),
+      ]);
+      setSummary(summaryRes);
+      setHealth(healthRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load summary");
     } finally {
@@ -3053,33 +3086,94 @@ function DashboardTab({ token }: { token: string }) {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+          <div className="mt-2 flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Retry
+            </Button>
+          </div>
         </Alert>
       )}
 
       {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
+        <DashboardSkeleton statCards={statCards.length} />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {statCards.map((s) => (
-            <Card
-              key={s.label}
-              className={s.alert ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : undefined}
-            >
-              <CardHeader className="pb-1">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {s.label}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className={"text-2xl font-bold" + (s.alert ? " text-amber-600 dark:text-amber-400" : "")}>
-                  {s.value}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {statCards.map((s) => (
+              <Card
+                key={s.label}
+                className={s.alert ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : undefined}
+              >
+                <CardHeader className="pb-1">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    {s.label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className={"text-2xl font-bold" + (s.alert ? " text-amber-600 dark:text-amber-400" : "")}>
+                    {s.value}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">{s.hint}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">System status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className={
+                    "inline-flex h-2 w-2 rounded-full " +
+                    (health?.status === "healthy"
+                      ? "bg-green-500"
+                      : health?.status === "degraded"
+                        ? "bg-amber-500"
+                        : "bg-gray-400")
+                  }
+                />
+                <span className="text-sm font-medium capitalize">
+                  {health ? health.status : "unknown"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  API {health?.version ?? "—"} · database{" "}
+                  {health ? health.database : "unknown"}
+                </span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Storage pending</p>
+                  <p className="text-sm font-medium">
+                    {health?.storage.pending.writable ? "writable" : "not writable"}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Storage processed</p>
+                  <p className="text-sm font-medium">
+                    {health?.storage.processed.writable ? "writable" : "not writable"}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Last ingest</p>
+                  <p className="text-sm font-medium">
+                    {health?.last_ingest
+                      ? new Date(health.last_ingest).toLocaleString()
+                      : "never"}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Checked at</p>
+                  <p className="text-sm font-medium">
+                    {health ? new Date(health.timestamp * 1000).toLocaleString() : "—"}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
@@ -3108,16 +3202,56 @@ function loadSettings(): AdminSettings {
   return { showAuditBanner: true, defaultTab: "dashboard" };
 }
 
-function SettingsTab({ onDefaultTabChange }: { onDefaultTabChange: (tab: string) => void }) {
+function SettingsTab({
+  token,
+  onDefaultTabChange,
+}: {
+  token: string;
+  onDefaultTabChange: (tab: string) => void;
+}) {
   const [settings, setSettings] = useState<AdminSettings>({
     showAuditBanner: true,
     defaultTab: "dashboard",
   });
   const [saved, setSaved] = useState(false);
+  const [flags, setFlags] = useState<FeatureFlag[]>([]);
+  const [flagsLoading, setFlagsLoading] = useState(true);
+  const [flagsError, setFlagsError] = useState<string | null>(null);
 
   useEffect(() => {
     setSettings(loadSettings());
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getFeatureFlags(token)
+      .then((data) => {
+        if (!cancelled) setFlags(data);
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setFlagsError(err instanceof Error ? err.message : "Failed to load flags");
+      })
+      .finally(() => {
+        if (!cancelled) setFlagsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const toggleFlag = async (name: string, enabled: boolean) => {
+    try {
+      await setFeatureFlag(token, name, enabled);
+      setFlags((prev) =>
+        prev.map((f) => (f.name === name ? { ...f, enabled, source: "table" } : f))
+      );
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setFlagsError(err instanceof Error ? err.message : "Failed to update flag");
+    }
+  };
 
   const persist = (next: AdminSettings) => {
     setSettings(next);
@@ -3191,6 +3325,53 @@ function SettingsTab({ onDefaultTabChange }: { onDefaultTabChange: (tab: string)
           </Label>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Feature flags</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Server-side gates for risky endpoints. Changes are audit-logged and
+            apply within seconds.
+          </p>
+          {flagsLoading ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          ) : flagsError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{flagsError}</AlertDescription>
+            </Alert>
+          ) : flags.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No flags defined.</p>
+          ) : (
+            <div className="space-y-2">
+              {flags.map((flag) => (
+                <Label
+                  key={flag.name}
+                  className="flex items-center justify-between gap-4 rounded-md border p-3"
+                >
+                  <span className="flex flex-col">
+                    <span className="font-medium text-sm">{flag.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      source: {flag.source}
+                    </span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={flag.enabled}
+                    onChange={(e) => toggleFlag(flag.name, e.target.checked)}
+                    className="h-5 w-5 rounded border-border accent-primary"
+                  />
+                </Label>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -3218,6 +3399,7 @@ function AuditLogTab({ token }: { token: string }) {
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 25;
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -3245,6 +3427,24 @@ function AuditLogTab({ token }: { token: string }) {
     load();
   }, [load]);
 
+  const handleExport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      await exportAuditLogCsv(token, {
+        q: q || undefined,
+        actor: actor || undefined,
+        outcome: outcome || undefined,
+        from: from || undefined,
+        to: to || undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export audit log");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -3256,6 +3456,16 @@ function AuditLogTab({ token }: { token: string }) {
         <Button type="button" variant="outline" size="sm" onClick={load} disabled={loading}>
           <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
           Refresh
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleExport}
+          disabled={exporting}
+        >
+          <Download className="h-3.5 w-3.5 mr-1.5" />
+          {exporting ? "Exporting…" : "Export CSV"}
         </Button>
       </div>
 
@@ -3573,7 +3783,7 @@ export default function AdminPage() {
             <AuditLogTab token={token} />
           </TabsContent>
           <TabsContent value="settings">
-            <SettingsTab onDefaultTabChange={setActiveNavId} />
+            <SettingsTab token={token} onDefaultTabChange={setActiveNavId} />
           </TabsContent>
         </Tabs>
 
@@ -3593,6 +3803,7 @@ export default function AdminPage() {
       onSignOut={handleLogout}
       onSignOutAll={handleLogoutAll}
     />
+    <OnboardingTour role="admin" />
     </>
   );
 }

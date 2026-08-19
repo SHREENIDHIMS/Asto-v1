@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
@@ -52,6 +52,7 @@ import {
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  openNotificationStream,
   StaffClient,
   StaffNotification,
   StaffDashboardCase,
@@ -72,12 +73,14 @@ import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ConversationThread from "@/components/messages/ConversationThread";
 import SettingsModal from "@/components/settings/SettingsModal";
+import { OnboardingTour } from "@/components/onboarding/OnboardingTour";
 import { FileDropzone } from "@/components/upload/FileDropzone";
 import { DocumentPreviewDialog } from "@/components/documents/DocumentPreviewDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DashboardSkeleton } from "@/components/ui/dashboard-skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -132,11 +135,7 @@ function StaffDashboardTab({
   onRefresh: () => void;
 }) {
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <DashboardSkeleton statCards={5} />;
   }
 
   const statCards = [
@@ -2398,11 +2397,13 @@ function NotificationsDialog({
   onOpenChange,
   token,
   onCountChange,
+  refreshKey,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   token: string;
   onCountChange: (count: number) => void;
+  refreshKey: number;
 }) {
   const [notifications, setNotifications] = useState<StaffNotification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -2424,7 +2425,7 @@ function NotificationsDialog({
 
   useEffect(() => {
     if (open) load();
-  }, [open, load]);
+  }, [open, load, refreshKey]);
 
   const handleMarkRead = async (id: number) => {
     try {
@@ -2521,6 +2522,7 @@ export default function StaffPage() {
   const [userRole, setUserRole] = useState<string | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsRefreshKey, setNotificationsRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refreshNotifications = useCallback(async () => {
@@ -2533,11 +2535,59 @@ export default function StaffPage() {
     }
   }, [token]);
 
+  // Live bell via SSE (Phase N6): updates the badge instantly on new
+  // notifications and refreshes the dialog if it is open. Reconnects with
+  // backoff on stream drop, resuming from the last rendered id.
+  const latestNotificationIdRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let aborted = false;
+    let stopStream: (() => void) | null = null;
+    let baselineId = 0;
+
+    const start = () => {
+      if (aborted) return;
+      stopStream = openNotificationStream(
+        token,
+        {
+          onHello: (count, latestId) => {
+            if (aborted) return;
+            setUnreadCount(count);
+            baselineId = latestId;
+          },
+          onNotification: (n) => {
+            if (aborted) return;
+            latestNotificationIdRef.current = Math.max(
+              latestNotificationIdRef.current,
+              n.id
+            );
+            if (n.id > baselineId) {
+              setUnreadCount((prev) => prev + 1);
+            }
+            setNotificationsRefreshKey((k) => k + 1);
+          },
+          onClose: () => {
+            if (aborted) return;
+            reconnectTimerRef.current = setTimeout(start, 5000);
+          },
+        },
+        latestNotificationIdRef.current
+      );
+    };
+
+    start();
+    return () => {
+      aborted = true;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      stopStream?.();
+    };
+  }, [token]);
+
   useEffect(() => {
     if (token) {
       refreshNotifications();
-      const interval = setInterval(refreshNotifications, 60000);
-      return () => clearInterval(interval);
     }
   }, [token, refreshNotifications]);
 
@@ -2722,6 +2772,7 @@ export default function StaffPage() {
       onOpenChange={setNotificationsOpen}
       token={token}
       onCountChange={setUnreadCount}
+      refreshKey={notificationsRefreshKey}
     />
 
     <SettingsModal
@@ -2731,6 +2782,7 @@ export default function StaffPage() {
       onSignOut={handleLogout}
       onSignOutAll={handleLogoutAll}
     />
+    <OnboardingTour role="staff" />
     </>
   );
 }

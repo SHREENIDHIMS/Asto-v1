@@ -150,7 +150,7 @@ export default function SearchBar({
           maxLength={500}
           autoComplete="off"
           className={cn(
-            "pl-12 pr-28 text-lg rounded-xl shadow-sm transition-colors",
+            "pl-12 pr-36 text-lg rounded-xl shadow-sm transition-colors",
             showUrgency && urgency && "border-destructive/50 focus:border-destructive"
           )}
         />
@@ -162,7 +162,7 @@ export default function SearchBar({
             variant={urgency ? "default" : "outline"}
             size="sm"
             className={cn(
-              "absolute right-16 top-1/2 -translate-y-1/2 h-8",
+              "absolute right-20 top-1/2 -translate-y-1/2 h-9",
               "gap-1.5 text-xs",
               urgency
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
@@ -183,7 +183,7 @@ export default function SearchBar({
           type="submit"
           size="icon"
           disabled={isLoading || !query.trim()}
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg w-10 h-10"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg w-11 h-11"
           aria-label="Send"
         >
           {isLoading ? (

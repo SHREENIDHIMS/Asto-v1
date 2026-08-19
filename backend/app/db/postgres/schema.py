@@ -3,12 +3,12 @@
 Runs `CREATE TABLE IF NOT EXISTS` statements. Safe to run on every
 startup (dev default) or via `scripts/migrate_db.sh` in production.
 
-NOTE: this is a deliberate simplification of the originally-documented
-Alembic migration approach: for a knowledge assistant with one small
-Postgres schema, an idempotent DDL script is lighter than a full
-migration framework and keeps the shared host's dependency footprint
-small. If the schema ever grows to need multi-step data migrations,
-introduce Alembic then â€” not before.
+NOTE: with DEC-4 landed (Alembic, M2), this module is the BASELINE source
+of truth, not the migration tool. Migration `0001_baseline` re-runs these
+exact statement lists so `alembic upgrade head` can build a fresh database
+or no-op on an existing one; `ensure_schema()` remains as the dev-only
+bootstrap (`ASTO_AUTO_CREATE_SCHEMA`). Every future schema change ships a
+migration under `migrations/versions/` — this DDL list is frozen.
 """
 
 from __future__ import annotations
@@ -147,6 +147,25 @@ DDL_STATEMENTS: list[str] = [
         rating      SMALLINT NOT NULL CHECK (rating IN (-1, 1)),
         comment     TEXT,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Feature flags (M8: ship half-built features safely) ---
+    """
+    CREATE TABLE IF NOT EXISTS feature_flags (
+        name       TEXT PRIMARY KEY,
+        enabled    BOOLEAN NOT NULL DEFAULT true,
+        department TEXT NOT NULL DEFAULT 'general',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    # --- Query synonyms (J8: pre-query expansion, admin-managed) ---
+    """
+    CREATE TABLE IF NOT EXISTS synonyms (
+        id        BIGSERIAL PRIMARY KEY,
+        canonical TEXT NOT NULL,
+        alias     TEXT NOT NULL,
+        UNIQUE (canonical, alias)
     )
     """,
     # --- Knowledge gaps (low-confidence / no-answer signals) ---

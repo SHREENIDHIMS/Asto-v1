@@ -46,6 +46,7 @@ from app.query_processing.pipeline import process_query
 from app.ranking.reranker import rerank
 from app.ranking.rrf import rank_fusion
 from app.ranking.scoring import apply_linear_reorder
+from app.llm.citations import maybe_apply_citation_mode
 from app.response.confidence_thresholds import route_by_confidence
 from app.response.package_builder import build_response_package
 from app.response.validation import validate_package
@@ -96,6 +97,7 @@ class SearchResponse(BaseModel):
     facts: list[dict] = []
     retrieval_path: str = "document"
     no_answer_reason: str | None = None
+    citations: list[dict] = []
 
 
 def _serialize(package) -> dict:
@@ -144,6 +146,7 @@ def _serialize(package) -> dict:
         ],
         "retrieval_path": package.retrieval_path,
         "no_answer_reason": package.no_answer_reason,
+        "citations": package.citations,
     }
     return payload
 
@@ -354,6 +357,11 @@ def _run_pipeline(
     ).strip()
 
     package.routing = route_by_confidence(package.confidence)
+
+    # DEC-1 cite-with-LLM hook: a strict no-op while settings.llm_enabled is
+    # false (the default) — the package comes back unchanged and no LLM is
+    # ever called. A future DEC-1 flip activates synthesis with citations.
+    package = maybe_apply_citation_mode(package, query_text=query)
 
     intent = plan.sub_queries[0].intent if plan.sub_queries else "general"
     if package.routing in ("no_answer", "partial"):

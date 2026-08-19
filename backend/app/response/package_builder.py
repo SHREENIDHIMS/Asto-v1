@@ -69,6 +69,7 @@ class ResponsePackage:
     facts: list = field(default_factory=list)          # list[FactRecord]
     retrieval_path: str = "document"                   # "document" | "structured_fact"
     no_answer_reason: str | None = None
+    citations: list = field(default_factory=list)      # DEC-1 cite-with-LLM overlay (empty while OFF)
 
 
 def _truncate(text: str, max_chars: int) -> str:

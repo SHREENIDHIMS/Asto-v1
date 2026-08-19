@@ -1,0 +1,6 @@
+[Unit]
+Description=Run DB maintenance pass (VACUUM/REINDEX) (M3)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_maintenance.sh
