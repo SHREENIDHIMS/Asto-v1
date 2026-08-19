@@ -128,6 +128,7 @@ DDL_STATEMENTS: list[str] = [
     CREATE TABLE IF NOT EXISTS audit_log (
         id            BIGSERIAL PRIMARY KEY,
         user_id       BIGINT,
+        audience      TEXT,
         query         TEXT NOT NULL,
         sub_queries   JSONB,
         retrieved_ids BIGINT[],
@@ -471,6 +472,10 @@ ALTER_STATEMENTS: list[str] = [
     "ALTER TABLE clients ADD COLUMN IF NOT EXISTS notification_prefs JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ",
     "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS metadata JSONB",
+    # audit_log.audience: added alongside the dual-audience scoping feature.
+    # Fresh databases get it via the CREATE TABLE above; databases that
+    # already ran an earlier ensure_schema()/baseline without it need this.
+    "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS audience TEXT",
 ]
 
 # CHECK constraints added via ALTER (no IF NOT EXISTS for constraints in PG,

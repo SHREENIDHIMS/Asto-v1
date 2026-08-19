@@ -122,9 +122,27 @@ def test_upgrade_head_stamps_alembic_version(migrated_db):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT version_num FROM alembic_version")
-            assert cur.fetchone() == ("0001_baseline",)
+            assert cur.fetchone() == ("0002_audit_audience",)
     finally:
         conn.close()
+
+
+def test_audit_log_has_audience_column(migrated_db):
+    """Regression guard (CLAUDE.md rule #8): audit_log.audit_log.write inserts
+    the caller audience, so a fresh ``alembic upgrade head`` deploy must expose
+    that column -- otherwise every audit write silently fails and the
+    compliance trail is dead."""
+    conn = psycopg.connect(migrated_db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'audit_log'"
+            )
+            cols = {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+    assert "audience" in cols
 
 
 def test_upgrade_head_is_idempotent(migrated_db):
