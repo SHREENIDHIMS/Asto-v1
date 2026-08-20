@@ -28,6 +28,7 @@ from app.db.postgres.models import (
     sop_row_to_dict,
 )
 from app.db.postgres import session
+from app.search.hybrid_orchestrator import invalidate_synonyms_cache
 
 router = APIRouter()
 
@@ -659,6 +660,7 @@ async def create_synonym(
             )
             new_row = cur.fetchone()
         conn.commit()
+    invalidate_synonyms_cache()
     return SynonymEntry(canonical=new_row["canonical"], alias=new_row["alias"])
 
 
@@ -682,6 +684,7 @@ async def delete_synonym(
                     detail="Synonym not found",
                 )
         conn.commit()
+    invalidate_synonyms_cache()
     return None
 
 
@@ -701,7 +704,8 @@ async def expand_query_synonyms(text: str, user: dict = Depends(require_auth)) -
             matches = cur.fetchall()
     expanded_parts: list[str] = [text]
     seen: set[str] = set()
-    for canonical, alias in matches:
+    for row in matches:
+        canonical, alias = row["canonical"], row["alias"]
         if alias.lower() in text.lower() and canonical not in seen:
             seen.add(canonical)
             expanded_parts.append(canonical)

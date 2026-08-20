@@ -15,6 +15,8 @@ BM25 tsquery and the embedding query, improving recall without retraining.
 from __future__ import annotations
 
 import logging
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -26,6 +28,48 @@ from app.search.metadata_filters import get_search_filter
 from app.search.pgvector_search import embed_query
 
 logger = logging.getLogger(__name__)
+
+# The full synonyms table was fetched on every request. Cache it with a short
+# TTL (bounded staleness for out-of-band writes) and invalidate inline when the
+# admin synonym endpoints write (audit finding #23).
+_SYNONYMS_CACHE_TTL_SECONDS = 60.0
+
+
+@dataclass(frozen=True)
+class _SynonymCacheEntry:
+    rows: tuple[tuple[str, str], ...]
+    fetched_at: float
+
+
+_synonyms_cache: _SynonymCacheEntry | None = None
+
+
+def invalidate_synonyms_cache() -> None:
+    """Drop the cached synonyms so the next request reloads them.
+
+    Called by the admin synonym create/delete endpoints after a write.
+    """
+    global _synonyms_cache
+    _synonyms_cache = None
+
+
+def _load_synonyms(conn: Connection) -> tuple[tuple[str, str], ...]:
+    """Return all canonical/alias pairs, cached for ``_SYNONYMS_CACHE_TTL_SECONDS``."""
+    global _synonyms_cache
+    now = time.monotonic()
+    if (
+        _synonyms_cache is not None
+        and now - _synonyms_cache.fetched_at < _SYNONYMS_CACHE_TTL_SECONDS
+    ):
+        return _synonyms_cache.rows
+    with conn.cursor() as cur:
+        cur.execute("SELECT canonical, alias FROM synonyms")
+        rows = cur.fetchall()
+    _synonyms_cache = _SynonymCacheEntry(
+        rows=tuple((row["canonical"], row["alias"]) for row in rows),
+        fetched_at=now,
+    )
+    return _synonyms_cache.rows
 
 
 @dataclass
@@ -107,29 +151,15 @@ def _expand_query_with_synonyms(query: str, conn: Connection) -> str:
     Example: "max ltv" -> "max ltv loan to value" if "ltv" is an alias
     for "loan to value" in the synonyms table.
     """
-    import re
-
-    # Normalize: lowercase, strip for matching
     normalized = query.lower()
 
     expanded_terms: set[str] = set()
-    with conn.cursor() as cur:
-        # Find aliases that appear in the query (case-insensitive)
-        cur.execute(
-            "SELECT canonical, alias FROM synonyms"
-        )
-        all_synonyms = cur.fetchall()
-
-    for canonical, alias in all_synonyms:
-        # Check if the alias appears as a word in the query
-        # Use word boundary: the alias as a standalone word
+    for canonical, alias in _load_synonyms(conn):
         if re.search(r"\b" + re.escape(alias.lower()) + r"\b", normalized):
             if canonical.lower() not in expanded_terms:
                 expanded_terms.add(canonical.lower())
 
-    # Append the canonical phrases to the original query
     if expanded_terms:
-        # Deduplicate: keep original text + new terms
         extra_phrases = " ".join(sorted(expanded_terms))
         return f"{query} {extra_phrases}"
     return query
@@ -163,10 +193,12 @@ def search_knowledge_base(
 
     primary_query = sub_queries[0]
 
-    # J8: expand query using database synonyms
+    # J8: expand the primary query using database synonyms, then build the
+    # combined text from the EXPANDED query so the BM25 tsquery gets the
+    # expansion too — not just the embedding (audit finding #23).
     primary_query = _expand_query_with_synonyms(primary_query, conn)
 
-    combined_text = " ".join(sub_queries)
+    combined_text = " ".join([primary_query, *sub_queries[1:]])
 
     # A query with no ASCII-alphanumeric tokens (e.g. a non-Latin script)
     # cannot form a tsquery — `to_tsquery('english', "''::tsquery")` is a

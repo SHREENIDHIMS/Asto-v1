@@ -340,7 +340,7 @@ passed** (unit + integration) after this session's changes.
 - **#1 Confidence model overconfidence** (fix 3.2) — routing `partial` band still unreachable; needs score-magnitude redesign + benchmark before/after.
 - **#13 watermark bypass** (2.8) — audit trail added (S1-S7), but pypdf/PIL still run in the always-on request path; move to batch or harden.
 - **#17 governance editor false control** — `PUT /admin/governance` rewrites `roles_config.py`, but `permissions.require_role` uses a hardcoded hierarchy; `rbac.py` never reads `ROLE_DEPARTMENTS`.
-- **#23 synonym expansion** (3.3) — `build_tsquery(combined_text)` uses the unexpanded text; `synonyms` table fetched uncached every request.
+- **#23 synonym expansion** (3.3) — **done (2026-08-21)**: dict-row access fixed (expansion never matched before), expanded text now feeds the BM25 tsquery too, and the `synonyms` table is cached with inline admin invalidation. Benchmark note in `evaluation/reports/` (empty synonyms table → no-op; re-benchmark when populated).
 - **3.2 confidence model**, **3.5 frontend hardening** (mostly done), **3.6 design-doc freeze**.
 
 ### Constraint-compliance map — updated rows
