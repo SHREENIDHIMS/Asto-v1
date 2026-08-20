@@ -99,6 +99,7 @@ DDL_STATEMENTS: list[str] = [
         is_active       BOOLEAN NOT NULL DEFAULT true,
         is_approved     BOOLEAN NOT NULL DEFAULT true,
         version         INTEGER NOT NULL DEFAULT 1,
+        pii_flagged     BOOLEAN NOT NULL DEFAULT false,
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
@@ -119,6 +120,7 @@ DDL_STATEMENTS: list[str] = [
         approved_at     TIMESTAMPTZ,
         is_active       BOOLEAN NOT NULL DEFAULT true,
         is_approved     BOOLEAN NOT NULL DEFAULT true,
+        pii_flagged     BOOLEAN NOT NULL DEFAULT false,
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
         fts             tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
     )
@@ -467,6 +469,8 @@ ALTER_STATEMENTS: list[str] = [
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'approved'",
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES users(id)",
     "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS pii_flagged BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS pii_flagged BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE clients ADD COLUMN IF NOT EXISTS notification_prefs JSONB NOT NULL DEFAULT '[]'::jsonb",

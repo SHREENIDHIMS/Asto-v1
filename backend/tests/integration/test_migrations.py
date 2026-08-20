@@ -145,6 +145,26 @@ def test_audit_log_has_audience_column(migrated_db):
     assert "audience" in cols
 
 
+def test_documents_and_chunks_have_pii_flagged_column(migrated_db):
+    """Regression guard (schema-drift): ``index_document`` INSERTs
+    ``pii_flagged`` on both documents and document_chunks, and the approvals
+    API SELECTs it. A fresh deploy must expose it on both tables or every
+    document write/approval fails with UndefinedColumn (hit on a fresh CI
+    database; the dev DB had the column only via manual drift)."""
+    conn = psycopg.connect(migrated_db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = ANY(%s)",
+                (["documents", "document_chunks"],),
+            )
+            cols = {row[0] for row in cur.fetchall()}
+    finally:
+        conn.close()
+    assert "pii_flagged" in cols
+
+
 def test_upgrade_head_is_idempotent(migrated_db):
     """Running upgrade head again on the stamped DB must be a clean no-op."""
     from alembic import command
