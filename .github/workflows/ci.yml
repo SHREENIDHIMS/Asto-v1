@@ -54,6 +54,20 @@ jobs:
         run: |
           psql -h 127.0.0.1 -U admin -d asto_assistant -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
+      - name: Pre-download embedding model
+        working-directory: backend
+        run: |
+          python -c "
+          from app.config import settings
+          from fastembed import TextEmbedding
+          model = TextEmbedding(
+              model_name=settings.embedding_model,
+              cache_dir=settings.embedding_cache_dir,
+          )
+          list(model.embed(['ci warmup']))
+          print('embedding model cached at', settings.embedding_cache_dir)
+          "
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: |
