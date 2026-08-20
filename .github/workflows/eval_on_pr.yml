@@ -51,9 +51,31 @@ jobs:
           cd backend
           python -c "from app.db.postgres.schema import ensure_schema; ensure_schema()"
 
+      - name: Pre-download embedding model
+        working-directory: backend
+        env:
+          ASTO_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/backend/nlp_models/embeddings
+        run: |
+          python -c "
+          from app.config import settings
+          from fastembed import TextEmbedding
+          cache_dir = settings.embedding_cache_dir
+          TextEmbedding(
+              model_name=settings.embedding_model,
+              cache_dir=cache_dir,
+          ).embed(['ci warmup'])
+          list(TextEmbedding(
+              model_name=settings.embedding_model,
+              cache_dir=cache_dir,
+              local_files_only=True,
+          ).embed(['ci warmup']))
+          print('embedding model cached and loadable via local_files_only at', cache_dir)
+          "
+
       - name: Seed benchmark data
         env:
           ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+          ASTO_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/backend/nlp_models/embeddings
           PYTHONPATH: ${{ github.workspace }}
         run: |
           cd backend
@@ -67,8 +89,9 @@ jobs:
       - name: Run benchmark
         env:
           ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+          ASTO_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/backend/nlp_models/embeddings
           ASTO_JWT_SECRET: test-secret-0123456789-0123456789-0123456789
-          PYTHONPATH: ${{ github.workspace }}/backend
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python -m evaluation.run_benchmark --output-dir evaluation/reports
 

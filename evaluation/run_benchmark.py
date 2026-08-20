@@ -28,7 +28,12 @@ from evaluation.metrics.precision_recall import precision_at_k, recall_at_k
 from evaluation.metrics.mrr import mean_reciprocal_rank
 from evaluation.metrics.ndcg import ndcg_at_k
 from evaluation.metrics.hit_rate import hit_rate
-from evaluation.metrics.latency_benchmark import measure_latency, percentile_latencies
+from evaluation.metrics.latency_benchmark import (
+    check_cold_start_budget,
+    check_reranker_budget,
+    measure_latency,
+    percentile_latencies,
+)
 
 
 def _try_retrieval_phase(dataset: list[dict]) -> tuple[dict, bool]:
@@ -311,7 +316,7 @@ def run_benchmark(output_dir: str = "evaluation/reports") -> dict:
 
                     if rerank_latencies:
                         r_p = percentile_latencies(rerank_latencies, [50, 95, 99])
-                        budget_ok = r_p[95] < 200.0
+                        budget_ok = check_reranker_budget(rerank_latencies)
                         latency_metrics["reranker"] = {
                             "count": len(rerank_latencies),
                             "p50_ms": round(r_p[50], 2),
@@ -334,7 +339,7 @@ def run_benchmark(output_dir: str = "evaluation/reports") -> dict:
                 )
                 latency_metrics["cold_start"] = {
                     "first_query_ms": round(cold_lat, 2),
-                    "budget_ok": cold_lat < 10000.0,
+                    "budget_ok": check_cold_start_budget([cold_lat]),
                 }
                 print(f"    Cold start: {cold_lat:.1f}ms  (budget <10s: {'PASS' if cold_lat < 10000 else 'FAIL'})")
             except Exception:
