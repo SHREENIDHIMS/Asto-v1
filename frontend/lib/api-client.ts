@@ -5,9 +5,43 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8011/api/v1';
 
+/** True when the request carries a Bearer token (i.e. it is authenticated). */
+function hasAuthHeader(init?: RequestInit): boolean {
+  if (!init?.headers) return false;
+  try {
+    return new Headers(init.headers).has('Authorization');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Re-issue an authenticated request with a fresh access token after a 401.
+ * The 8h access JWT can expire mid-session (it lives in memory only); the
+ * HttpOnly refresh cookie lets us transparently re-authenticate instead of
+ * dead-ending the UI until a manual reload.
+ */
+async function refreshAndRetry(url: string, init?: RequestInit): Promise<Response | null> {
+  try {
+    const session = await refreshSession();
+    const headers = new Headers(init?.headers);
+    if (headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${session.access_token}`);
+    }
+    return await fetch(url, { ...init, headers, credentials: 'include' });
+  } catch {
+    return null;
+  }
+}
+
 /** fetch wrapper that always sends cookies for the refresh session. */
-function apiFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, credentials: 'include' });
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(url, { ...init, credentials: 'include' });
+  if (response.status === 401 && hasAuthHeader(init)) {
+    const retried = await refreshAndRetry(url, init);
+    if (retried) return retried;
+  }
+  return response;
 }
 
 export interface SearchRequest {

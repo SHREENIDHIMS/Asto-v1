@@ -61,6 +61,7 @@ import {
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, restoreSession } from "@/lib/auth";
 import { useChatSessions, ChatSession } from "@/hooks/use-chat-sessions";
+import { clearClientLocalState } from "@/lib/session-cleanup";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ChatMessage from "@/components/chat/ChatMessage";
@@ -1586,6 +1587,7 @@ export default function ClientPage() {
   const handleLogout = useCallback(() => {
     logout();
     clearToken();
+    clearClientLocalState();
     router.push("/login");
   }, [router]);
 
@@ -1599,6 +1601,7 @@ export default function ClientPage() {
       }
     }
     clearToken();
+    clearClientLocalState();
     router.push("/login");
   }, [router]);
 

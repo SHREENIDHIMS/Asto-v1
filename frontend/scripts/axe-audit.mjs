@@ -2,7 +2,8 @@
 // Automated a11y audit: serves the static export and runs axe-core over the
 // key routes. Requires a Playwright chromium browser:
 //   npx playwright install chromium
-// Skips gracefully (exit 0) if chromium is not installed.
+// Fails (exit 1) if chromium is not installed so a CI gate cannot silently
+// pass without actually auditing anything.
 
 import { createServer } from "http";
 import { readFileSync, statSync, existsSync } from "fs";
@@ -13,7 +14,9 @@ import { AxeBuilder } from "@axe-core/playwright";
 
 const OUT_DIR = fileURLToPath(new URL("../out/", import.meta.url));
 const PORT = 3199;
-const ROUTES = ["/", "/login/", "/admin/"];
+// Every app route that a user lands on. Auth-gated pages render their
+// loading/redirect shell when unauthenticated; axe still audits that DOM.
+const ROUTES = ["/", "/login/", "/admin/", "/client/", "/staff/"];
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -79,11 +82,11 @@ const run = async () => {
     process.exit(1);
   }
   if (!(await browserReady())) {
-    console.warn(
-      "Playwright chromium not installed; skipping axe audit.\n" +
+    console.error(
+      "Playwright chromium is not installed; the a11y audit would be a no-op.\n" +
         "  Run: npx playwright install chromium"
     );
-    process.exit(0);
+    process.exit(1);
   }
 
   await new Promise((resolve) => server.listen(PORT, resolve));

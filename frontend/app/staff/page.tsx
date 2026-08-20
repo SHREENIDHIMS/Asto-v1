@@ -69,6 +69,7 @@ import {
   Conversation,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
+import { clearClientLocalState } from "@/lib/session-cleanup";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import ConversationThread from "@/components/messages/ConversationThread";
@@ -2634,6 +2635,7 @@ export default function StaffPage() {
   const handleLogout = useCallback(() => {
     logout();
     clearToken();
+    clearClientLocalState();
     router.push("/login");
   }, [router]);
 
@@ -2647,6 +2649,7 @@ export default function StaffPage() {
       }
     }
     clearToken();
+    clearClientLocalState();
     router.push("/login");
   }, [router]);
 

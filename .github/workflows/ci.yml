@@ -83,6 +83,31 @@ jobs:
         run: |
           npm run build
 
+      - name: Lint frontend
+        working-directory: frontend
+        run: |
+          npm run lint
+
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: |
+          npm run typecheck
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: |
+          npm test
+
+      - name: Install Playwright chromium
+        working-directory: frontend
+        run: |
+          npx playwright install --with-deps chromium
+
+      - name: Run frontend a11y audit
+        working-directory: frontend
+        run: |
+          npm run a11y
+
       - name: Run unit tests
         env:
           ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant

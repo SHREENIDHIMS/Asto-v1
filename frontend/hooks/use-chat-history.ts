@@ -11,7 +11,7 @@ export interface ChatTurn {
   urgency?: boolean;
 }
 
-const HISTORY_KEY = "asto_chat_history";
+export const HISTORY_KEY = "asto_chat_history";
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function loadHistory(): ChatTurn[] {

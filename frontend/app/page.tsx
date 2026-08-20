@@ -26,6 +26,7 @@ import {
   StructuredFact,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
+import { clearClientLocalState } from "@/lib/session-cleanup";
 import { useChatHistory } from "@/hooks/use-chat-history";
 import ChatMessage from "@/components/chat/ChatMessage";
 import StreamingPreview from "@/components/chat/StreamingPreview";
@@ -149,6 +150,7 @@ export default function ChatPage() {
   const handleLogout = useCallback(() => {
     logout();
     clearToken();
+    clearClientLocalState();
     setRole(null);
     router.push("/login");
   }, [router]);
@@ -163,6 +165,7 @@ export default function ChatPage() {
       }
     }
     clearToken();
+    clearClientLocalState();
     setRole(null);
     router.push("/login");
   }, [router]);

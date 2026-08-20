@@ -89,6 +89,7 @@ import {
    KnowledgeGap,
 } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
+import { clearClientLocalState } from "@/lib/session-cleanup";
 import AppShell from "@/components/layout/AppShell";
 import { NAV_GROUPS } from "@/config/navigation";
 import SettingsModal from "@/components/settings/SettingsModal";
@@ -3687,6 +3688,7 @@ export default function AdminPage() {
   const handleLogout = useCallback(() => {
     logout();
     clearToken();
+    clearClientLocalState();
     router.push("/login");
   }, [router]);
 
@@ -3700,6 +3702,7 @@ export default function AdminPage() {
       }
     }
     clearToken();
+    clearClientLocalState();
     router.push("/login");
   }, [router]);
 

@@ -21,8 +21,10 @@ export interface ChatSession {
 
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+export const SESSIONS_PREFIX = "asto_chat_sessions:";
+
 function storageKey(scope: string): string {
-  return `asto_chat_sessions:${scope}`;
+  return `${SESSIONS_PREFIX}${scope}`;
 }
 
 function loadSessions(scope: string): ChatSession[] {
