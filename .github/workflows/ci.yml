@@ -60,12 +60,17 @@ jobs:
           python -c "
           from app.config import settings
           from fastembed import TextEmbedding
-          model = TextEmbedding(
+          cache_dir = settings.embedding_cache_dir
+          TextEmbedding(
               model_name=settings.embedding_model,
-              cache_dir=settings.embedding_cache_dir,
-          )
-          list(model.embed(['ci warmup']))
-          print('embedding model cached at', settings.embedding_cache_dir)
+              cache_dir=cache_dir,
+          ).embed(['ci warmup'])
+          list(TextEmbedding(
+              model_name=settings.embedding_model,
+              cache_dir=cache_dir,
+              local_files_only=True,
+          ).embed(['ci warmup']))
+          print('embedding model cached and loadable via local_files_only at', cache_dir)
           "
 
       - name: Install frontend dependencies
@@ -142,12 +147,17 @@ jobs:
           python -c "
           from app.config import settings
           from fastembed import TextEmbedding
-          model = TextEmbedding(
+          cache_dir = settings.embedding_cache_dir
+          TextEmbedding(
               model_name=settings.embedding_model,
-              cache_dir=settings.embedding_cache_dir,
-          )
-          list(model.embed(['ci warmup']))
-          print('embedding model cached at', settings.embedding_cache_dir)
+              cache_dir=cache_dir,
+          ).embed(['ci warmup'])
+          list(TextEmbedding(
+              model_name=settings.embedding_model,
+              cache_dir=cache_dir,
+              local_files_only=True,
+          ).embed(['ci warmup']))
+          print('embedding model cached and loadable via local_files_only at', cache_dir)
           "
       - name: Ensure database schema
         working-directory: backend

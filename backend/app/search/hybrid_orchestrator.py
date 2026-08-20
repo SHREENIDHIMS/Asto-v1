@@ -166,17 +166,18 @@ def search_knowledge_base(
     # J8: expand query using database synonyms
     primary_query = _expand_query_with_synonyms(primary_query, conn)
 
-    query_vector = embed_query(primary_query)
-
     combined_text = " ".join(sub_queries)
 
     # A query with no ASCII-alphanumeric tokens (e.g. a non-Latin script)
     # cannot form a tsquery — `to_tsquery('english', "''::tsquery")` is a
     # SQL syntax error. Return no candidates so the pipeline emits a
-    # graceful no_answer instead of an HTTP 500.
+    # graceful no_answer instead of an HTTP 500. This guard runs BEFORE the
+    # embedding so a non-Latin query never loads the embedding model at all.
     if not has_lexical_terms(combined_text):
         logger.info("Hybrid search skipped: no ASCII lexical terms in sub-queries")
         return SearchResult()
+
+    query_vector = embed_query(primary_query)
 
     tsquery = build_tsquery(combined_text)
 
