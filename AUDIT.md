@@ -346,3 +346,81 @@ passed** (unit + integration) after this session's changes.
 | Every query audit-logged | ✅ Column exists, write verified by `test_audit_log_column.py` |
 | Weights/thresholds = config, benchmark-driven | ✅ Retrieval reads `weights_config` (0.2/0.8) |
 | RBAC/version filter in SQL WHERE | ✅ Verified live (`test_rbac_prefilter.py`) |
+
+---
+
+## Overall audit 2026-08-20 — consolidated findings + next-session fix plan
+
+Full report: `AUDIT_overall_2026-08-20.md` (five read-only streams; key claims
+re-verified against the tree at `cca9468`; suite 789 passed). This section is
+the condensed state + fix checklist to resume from in the next session.
+
+### Constraint map (CLAUDE.md rules 0-10): 9/11 compliant
+- **Rule 6 (PARTIAL)** — reranker <200ms p95 budget enforced nowhere in CI
+  (`check_reranker_budget` unused by `run_benchmark`); `reranker.py:44-48`
+  reloads the model per request (no cache); `transformers` NOT in
+  `requirements.txt` so `ASTO_RERANK_ENABLED` silently no-ops.
+- **Rule 10 (PARTIAL)** — systemd `MemoryMax=200M`
+  (`shared-host-infra-scaffold/infra/systemd/asto-backend.service:19`) vs
+  compose `384m` (`docker-compose.yml:67`, evidence comment: ~300MB peak).
+  Reconcile the systemd cap.
+- Rules 0-5, 7, 8, 9 compliant (RBAC/version in SQL; batch-only ingestion;
+  no LLM in serving path; no Redis/Qdrant/MinIO; `--workers 1` socket-activated;
+  weights/thresholds config-driven).
+
+### CRITICAL — S1: deploy can ship with a forgeable JWT secret
+- `docker-compose.yml:4` ships known fallback
+  `dev-only-secret-change-me-in-production-32chars`; `:5` defaults
+  `ASTO_ENVIRONMENT=development`; `deploy.yml:70-72` passes `ASTO_JWT_SECRET`
+  but never sets `ASTO_ENVIRONMENT=production` → the guard at
+  `config.py:143-151` is inert, and an unset GH secret silently falls back to
+  the public key. Also `totp.py:29` Fernet fallback to `"asto-dev-2fa-key"`.
+- **Fix:** remove compose fallback; require `len(jwt_secret) >= 32` in all
+  environments; set `ASTO_ENVIRONMENT=production` in `deploy.yml`; drop TOTP
+  fallback.
+
+### HIGH — for the next session
+- **S2** `X-Forwarded-For` first element trusted (`auth.py:58-63`) → throttle
+  bypass + lockout-DoS. Use last hop / `X-Real-IP` / nginx overwrite.
+- **S3** reset tokens logged in plaintext (`password_reset_email.py:38`,
+  `mailer.py:49,82`). Log hash only.
+- **S4** `/search/suggest` (`search.py:436-449`) and document file-serving
+  (`client.py:461`, `staff.py:1291`, `documents.py:58`) not audit-logged.
+- **S5** watermark bypass serves raw bytes with no audit
+  (`watermark.py:44-56`, `client.py:505-509`).
+- **eval_on_pr.yml is broken as a gate** — no embedding-model pre-download
+  step; will fail like the pre-`028ccf6` CI benchmark. Add the pre-download +
+  wire `check_reranker_budget` (rule 6).
+- **Frontend** — chat history persists after logout
+  (`frontend/app/page.tsx:149-173`, `client/page.tsx:1586-1603`,
+  `hooks/use-chat-history.ts:14`); a11y gate exits 0 without Chromium
+  (`axe-audit.mjs:81-87`); no frontend tests / no `tsc --noEmit`; CI runs no
+  lint/a11y.
+- **S6/S7** magic-byte upload validation (`validation.py:89-127`); CORS `*` +
+  credentials (`main.py:64-75`).
+
+### MEDIUM/LOW hygiene backlog
+- Dead code to delete: `backend/app/audit/models.py`, debug files
+  (`backend/debug_imports.py`, `backend/check_psycopg.py`,
+  `test_local_pipeline.py`), dead frontend hooks
+  (`use-browser-extension.ts`, `use-mobile-app.ts`, `use-platform.ts`,
+  `hooks/index.ts`); orphaned scripts + `eval_20_questions.jsonl`.
+- `transformers` absent vs rerank config seam (see rule 6).
+- RBAC governance triple-source-of-truth: `auth/rbac.py` vs
+  `auth/roles_config.py` vs hardcoded hierarchy in `permissions.py`.
+- `analytics.py:34-39` unreachable; `validation.py:23` dead `min_confidence`
+  param; `hybrid_orchestrator.py:10-12` false synonym-expansion docstring.
+- Docs drift: `Final_System_Design.md:54` stale weights table; reranker shown
+  always-on; dual-path assistant missing; `weights_config.py:4-8` docstring
+  stale. Add a fresh benchmark report with before/after delta.
+- `admin.py:1342` TODO — unimplemented G3 client notification.
+- Low: `framer-motion` unused; `numpy` redundant pin; `rememberMe` decorative;
+  `api-client.ts:6` localhost fallback; `/auth/reset-password` unthrottled;
+  account enumeration via bcrypt timing; signature-request tokens stored raw;
+  SSE error leaks; docs always exposed; `audit_enabled=false` silent.
+
+### Verified clean (re-confirmed 2026-08-20)
+- RBAC/version/approval in SQL WHERE; pgvector+BM25 single statement; batch-only
+  ingestion; no LLM in serving path (doctrine holds: extractive verbatim
+  summarizer + fact templates); no committed secrets; `.gitignore` solid; no
+  tracked file >10MB; 789 tests pass; CI unit/integration/benchmark steps green.
