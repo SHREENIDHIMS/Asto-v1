@@ -11,6 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      ASTO_JWT_SECRET: dev-only-secret-change-me-in-production-32chars
+      ASTO_ENVIRONMENT: test
+
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -133,6 +137,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 30
+
+    env:
+      ASTO_JWT_SECRET: dev-only-secret-change-me-in-production-32chars
+      ASTO_ENVIRONMENT: test
 
     services:
       postgres:

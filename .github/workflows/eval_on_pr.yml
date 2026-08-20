@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      ASTO_JWT_SECRET: test-secret-0123456789-0123456789-0123456789
+      ASTO_ENVIRONMENT: test
+
     services:
       postgres:
         image: pgvector/pgvector:pg16
