@@ -103,10 +103,21 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: .
-        shell: bash
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: adminpass
+          POSTGRES_DB: asto_assistant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin"
+          --health-interval "10s"
+          --health-timeout "5s"
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4
@@ -118,7 +129,37 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install pytest
+      - name: Install pgvector extension
+        env:
+          PGPASSWORD: adminpass
+        run: |
+          psql -h 127.0.0.1 -U admin -d asto_assistant -c "CREATE EXTENSION IF NOT EXISTS vector;"
+      - name: Pre-download embedding model
+        working-directory: backend
+        env:
+          ASTO_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/backend/nlp_models/embeddings
+        run: |
+          python -c "
+          from app.config import settings
+          from fastembed import TextEmbedding
+          model = TextEmbedding(
+              model_name=settings.embedding_model,
+              cache_dir=settings.embedding_cache_dir,
+          )
+          list(model.embed(['ci warmup']))
+          print('embedding model cached at', settings.embedding_cache_dir)
+          "
+      - name: Ensure database schema
+        working-directory: backend
+        env:
+          ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+        run: |
+          python -c "from app.db.postgres.schema import ensure_schema; ensure_schema()"
       - name: Run evaluation benchmark
+        env:
+          ASTO_DATABASE_URL: postgresql://admin:adminpass@127.0.0.1:5432/asto_assistant
+          ASTO_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/backend/nlp_models/embeddings
+          PGPASSWORD: adminpass
         run: |
           python -m evaluation.run_benchmark --output-dir evaluation/reports
       - name: Upload benchmark report
