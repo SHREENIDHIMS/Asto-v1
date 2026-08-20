@@ -303,3 +303,46 @@ Condensed, highest-signal findings by severity:
 ---
 
 Re-audit performed 2026-08-19 over the tree at `073b164` (354 tracked files). Full per-function reports: `audit_api_core.md`, `audit_search_ranking_response.md`, `docs/frontend_audit_report.md`, plus module-level summaries for `backend/app/documents/` (ingestion) and `backend/app/auth/` (auth/audit/db/llm/email). No files were modified during this audit pass.
+
+---
+
+## Remediation 2026-08-20 — verified fixes applied (this session)
+
+Status for the highest-signal findings after the remediation pass. Every fix
+is covered by a test (rule: "done = has a test"); full backend suite: **783
+passed** (unit + integration) after this session's changes.
+
+### P0
+- **#1 Audit trail dead on fresh deploy — FALSE POSITIVE, now proven by test.** The `audience` column *does* exist in `schema.py` DDL (lines 128-133) and as an idempotent ALTER (`ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS audience TEXT`); the 2026-08-19 read of the schema predated the dual-audience change. Added `tests/integration/test_audit_log_column.py` proving client + staff audit rows persist `audience` end-to-end on the live DB. Constraint map row "Every query audit-logged" → ✅.
+- **#3 Non-ASCII/empty-term query 500** — guarded (see P0-2 in fix plan): `build_tsquery` returns `"''::tsquery"` only when the text has no ASCII tokens, and `search.py` now rejects `""` via `has_lexical_terms` + `max_length` on `SearchRequest`.
+- **#4 Path-traversal write in upload endpoints** — `sanitize_filename()` in `documents/validation.py` (rejects empty, `/`, `\`, `.`, `..`, PurePath mismatches); all 3 endpoints write `result.filename`.
+- **#2 Shared-host nginx 404** — `proxy_pass http://127.0.0.1:8011;` (trailing slash removed).
+- **#5 Zero-vector embeddings → NaN rank** — `is_broken_vector()` guards store/query/scoring; NaN coerced to 0.
+
+### P1
+- **#6 `staff.advance_workflow` NameError/KeyError** — `now()` removed, overdue moved into SQL, dict access fixed.
+- **#7 Logout-all access-token kill** — `get_current_user` rejects `revoked_jtis` (EXISTS subquery) for both client and staff branches.
+- **#8/#9 content_hash dedup** — scoped to `(document_id, content_hash)` via migration `0003_scoped_chunk_dedup` (applied to live DB); cross-client merge + zero-chunk re-upload resolved.
+- **#10 `requirements._infer_case_type`** — `case_number` now selected; dead `dict_row_to_case` import removed.
+- **#11 Batch ingestion not failure-isolated** — `process_file` wraps all downstream stages; `main` loop continues past a poisoned file.
+- **#14 `/auth/2fa` + forgot-password unthrottled** — per-IP throttle added; reset path uses a sentinel email to avoid lockout-DoS.
+- **#16 Refresh-token rotation race** — single-transaction revoke+insert with `rowcount` guard.
+- **#21 `validation.py` asymmetric / client-`None` 500** — client branch now allows company-wide docs (`client_id IS NULL`); staff branch re-checks the client-assignment leg via `assigned_client_ids`.
+- **#25/#26 `test_rbac_prefilter.py` vacuous** — rewritten as a true integration test: seeds forbidden department + unassigned-client + company-wide docs with real embeddings, runs `search_knowledge_base`, asserts forbidden chunk_ids never reach `candidates`.
+
+### P2
+- **#24/#3.1 Weights hardcoded in SQL** — `hybrid_orchestrator` now binds `weights.bm25_weight`/`vector_weight` from `weights_config` (benchmark-verified 0.2/0.8).
+- **#22 `feedback_weighting.py` dead code — claim corrected.** It is **not** dead: `evaluation/compare_rankings.py:26` imports `apply_feedback_weighted_reorder` / `compute_doc_feedback_ratios` for the J3 feedback-boost sweep. Kept.
+- **#33 dead code removed** — `recursive_chunker.py` deleted; `_TITLE_PATTERNS` + unused `re` import removed from `metadata_extraction.py`; `decode_for_audit` removed from `jwt_handler.py`.
+- **P0-3 upload body unbounded buffering** — `read_upload()` aborts at `max_upload_bytes` (413).
+
+### Remaining (not yet addressed)
+- **#1 Confidence model overconfidence** (fix 3.2) — routing `partial` band still unreachable; needs score-magnitude redesign + benchmark before/after.
+- **#12 OCR/zip-bomb OOM** (2.7), **#13 watermark bypass audit trail** (2.8), **#15 login timing** (2.3, partially — 2FA/reset throttled but bcrypt timing not), **#17 governance editor false control**, **#18 PII narrow**, **#20 reranker budget unenforceable**, **#23 synonym expansion**, **#19 `document_popularity` chunk-vs-doc keying**, plus frontend hardening (3.5) and design-doc freeze (3.6).
+
+### Constraint-compliance map — updated rows
+| CLAUDE.md rule | Status |
+|---|---|
+| Every query audit-logged | ✅ Column exists, write verified by `test_audit_log_column.py` |
+| Weights/thresholds = config, benchmark-driven | ✅ Retrieval reads `weights_config` (0.2/0.8) |
+| RBAC/version filter in SQL WHERE | ✅ Verified live (`test_rbac_prefilter.py`) |

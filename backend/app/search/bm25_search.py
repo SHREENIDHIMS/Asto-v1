@@ -11,6 +11,18 @@ from typing import Sequence
 
 # Strip punctuation and normalize for tsquery
 _TSQUERY_CLEAN_RE = re.compile(r"[^a-zA-Z0-9\s]")
+_ASCII_ALNUM_RE = re.compile(r"[a-zA-Z0-9]")
+
+
+def has_lexical_terms(text: str) -> bool:
+    """True when ``text`` contains at least one ASCII alphanumeric token.
+
+    Postgres ``to_tsquery('english', ...)`` operates on ASCII tokens. A
+    query in a non-Latin script (e.g. Devanagari, Han, Cyrillic) cleans to
+    an empty tsquery and raises a ``SyntaxError`` inside the DB — so callers
+    must check this before building the tsquery to avoid a 500.
+    """
+    return bool(_ASCII_ALNUM_RE.search(text or ""))
 
 
 def build_tsquery(text: str) -> str:

@@ -65,14 +65,16 @@ async def get_current_user(
         )
 
     audience = payload.get("audience", "staff")
+    jti = payload.get("jti")
 
     if audience == "client":
         with session.acquire() as conn:
             with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
                 cur.execute(
-                    "SELECT id, email, full_name, is_active FROM clients "
-                    "WHERE id = %s AND is_active = true",
-                    (subject,),
+                    "SELECT id, email, full_name, is_active, "
+                    "       (EXISTS (SELECT 1 FROM revoked_jtis WHERE jti = %s)) AS token_revoked "
+                    "FROM clients WHERE id = %s AND is_active = true",
+                    (jti, subject),
                 )
                 row = cur.fetchone()
 
@@ -83,6 +85,13 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        if row["token_revoked"]:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
         return {
             **dict(row),
             "audience": "client",
@@ -90,15 +99,16 @@ async def get_current_user(
             "role": "client",
             "department": None,
             "allowed_departments": [],
-            "jti": payload.get("jti"),
+            "jti": jti,
         }
 
     with session.acquire() as conn:
         with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
             cur.execute(
-                "SELECT id, email, full_name, role, department, allowed_departments, is_active "
+                "SELECT id, email, full_name, role, department, allowed_departments, is_active, "
+                "       (EXISTS (SELECT 1 FROM revoked_jtis WHERE jti = %s)) AS token_revoked "
                 "FROM users WHERE id = %s AND is_active = true",
-                (subject,),
+                (jti, subject),
             )
             row = cur.fetchone()
 
@@ -109,7 +119,14 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return {**dict(row), "audience": "staff", "jti": payload.get("jti")}
+    if row["token_revoked"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return {**dict(row), "audience": "staff", "jti": jti}
 
 
 async def require_auth(

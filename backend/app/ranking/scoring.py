@@ -27,9 +27,17 @@ def compute_scores(
     scored: list[tuple[int, float]] = []
 
     for c in candidates:
+        bm25 = float(c.get("bm25_score", 0.0) or 0.0)
+        vec = float(c.get("vec_score", 0.0) or 0.0)
+        # NaN safety: a NaN vector score would make the weighted sum NaN and
+        # sort NaN above every real candidate. Coerce to 0.
+        if bm25 != bm25:
+            bm25 = 0.0
+        if vec != vec:
+            vec = 0.0
         score = (
-            weights.bm25_weight * float(c.get("bm25_score", 0.0))
-            + weights.vector_weight * float(c.get("vec_score", 0.0))
+            weights.bm25_weight * bm25
+            + weights.vector_weight * vec
         )
         scored.append((c["chunk_id"], score))
 

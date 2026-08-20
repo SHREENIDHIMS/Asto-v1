@@ -125,6 +125,7 @@ class TestRefreshCookie:
 
         conn = _conn()
         cur = conn.cursor.return_value
+        cur.rowcount = 1  # rotation UPDATE matched the unrevoked row
         cur.fetchone.side_effect = [
             {"id": 10, "user_id": 2, "client_id": None, "audience": "staff",
              "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
@@ -163,6 +164,29 @@ class TestRefreshCookie:
             client.cookies.set("asto_refresh", "revoked-refresh-token")
             response = client.post("/api/v1/auth/refresh", headers={"X-Asto-CSRF": "1"})
         assert response.status_code == 401
+
+    def test_refresh_rejects_replay_when_rotation_lost(self):
+        """Two concurrent uses of one token: the loser's rotation UPDATE
+        matches 0 rows (rowcount guard) and must be rejected, so a stolen
+        token cannot be replayed to mint more than one new token."""
+        from datetime import datetime, timedelta, timezone
+
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.rowcount = 0  # another request already rotated this token
+        cur.fetchone.return_value = {
+            "id": 10, "user_id": 2, "client_id": None, "audience": "staff",
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+            "revoked_at": None,
+        }
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            from app.main import app
+            client = TestClient(app)
+            client.cookies.set("asto_refresh", "replayed-token-xxx")
+            response = client.post("/api/v1/auth/refresh", headers={"X-Asto-CSRF": "1"})
+        assert response.status_code == 401
+        calls = [a.args[0] for a in cur.execute.call_args_list]
+        assert any("revoked_at IS NULL" in c for c in calls)
 
     def test_logout_revokes_and_clears_cookie(self):
         conn = _conn()

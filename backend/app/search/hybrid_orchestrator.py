@@ -20,7 +20,8 @@ from typing import Sequence
 
 from psycopg import Connection
 
-from app.search.bm25_search import build_tsquery
+from app.ranking.weights_config import DEFAULT_WEIGHTS, RankingWeights
+from app.search.bm25_search import build_tsquery, has_lexical_terms
 from app.search.metadata_filters import get_search_filter
 from app.search.pgvector_search import embed_query
 
@@ -142,6 +143,7 @@ def search_knowledge_base(
     bm25_limit: int = 25,
     vector_limit: int = 25,
     max_results: int = 100,
+    weights: RankingWeights = DEFAULT_WEIGHTS,
 ) -> SearchResult:
     """Run hybrid search for a set of sub-queries.
 
@@ -167,6 +169,15 @@ def search_knowledge_base(
     query_vector = embed_query(primary_query)
 
     combined_text = " ".join(sub_queries)
+
+    # A query with no ASCII-alphanumeric tokens (e.g. a non-Latin script)
+    # cannot form a tsquery — `to_tsquery('english', "''::tsquery")` is a
+    # SQL syntax error. Return no candidates so the pipeline emits a
+    # graceful no_answer instead of an HTTP 500.
+    if not has_lexical_terms(combined_text):
+        logger.info("Hybrid search skipped: no ASCII lexical terms in sub-queries")
+        return SearchResult()
+
     tsquery = build_tsquery(combined_text)
 
     # RBAC filter — applied in WHERE clause
@@ -205,8 +216,8 @@ def search_knowledge_base(
     JOIN documents d ON d.id = c.document_id
     WHERE {where_clause}
     ORDER BY (
-        ts_rank_cd(c.fts, to_tsquery('english', %s)) * 0.3 +
-        (1 - (c.embedding <=> %s)) * 0.7
+        ts_rank_cd(c.fts, to_tsquery('english', %s)) * %s +
+        (1 - (c.embedding <=> %s)) * %s
     ) DESC
     LIMIT %s
     """
@@ -217,7 +228,7 @@ def search_knowledge_base(
         tsquery,
     ]
     params.extend(where_params[1:])
-    params.extend([tsquery, query_vector, max_results])
+    params.extend([tsquery, weights.bm25_weight, query_vector, weights.vector_weight, max_results])
 
     with conn.cursor() as cur:
         cur.execute(query, params)

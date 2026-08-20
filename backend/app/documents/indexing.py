@@ -15,6 +15,7 @@ from psycopg import Connection
 
 from app.db.postgres.models import content_hash
 from app.documents.chunking.structural_chunker import Chunk
+from app.documents.embedding import is_broken_vector
 from app.documents.pii_check import has_pii
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,16 @@ def index_document(
             embedding = (
                 embeddings[i] if embeddings else None
             )
+            # Never store a zero/NaN/missing vector — it would poison the
+            # pgvector distance and the weighted ORDER BY. NULL keeps the
+            # chunk searchable lexically (the query WHERE requires
+            # ``embedding IS NOT NULL`` to reach the semantic branch).
+            if embedding is not None and is_broken_vector(embedding):
+                logger.warning(
+                    "Document %d chunk %d has a broken embedding; storing NULL",
+                    document_id, i,
+                )
+                embedding = None
 
             cur.execute(
                 """
@@ -132,7 +143,7 @@ def index_document(
                      section, chunk_type, department,
                      approval_status, is_approved, pii_flagged)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (content_hash) DO NOTHING
+                ON CONFLICT (document_id, content_hash) DO NOTHING
                 """,
                 (
                     document_id,

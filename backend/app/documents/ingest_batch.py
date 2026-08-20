@@ -109,7 +109,12 @@ def _try_ocr_fallback(file_path: Path, extracted: ExtractedText) -> ExtractedTex
 
 
 def process_file(file_path: Path) -> bool:
-    """Process a single document file through the full pipeline."""
+    """Process a single document file through the full pipeline.
+
+    Failure isolation: any exception in any stage (extraction, OCR,
+    metadata, chunking, embedding, indexing) is contained here so the
+    caller's batch loop can move on to the next file.
+    """
     logger.info("Processing: %s", file_path.name)
 
     try:
@@ -117,6 +122,16 @@ def process_file(file_path: Path) -> bool:
     except Exception as e:
         logger.error("Text extraction failed for %s: %s", file_path.name, e)
         return False
+
+    try:
+        return _run_pipeline(file_path, extracted)
+    except Exception as e:
+        logger.error("Failed to process %s: %s", file_path.name, e)
+        return False
+
+
+def _run_pipeline(file_path: Path, extracted: ExtractedText) -> bool:
+    """Run the stages after text extraction; raises propagate to process_file."""
 
     # Optional OCR fallback for scanned PDFs with low text extraction
     if file_path.suffix.lower() == ".pdf":

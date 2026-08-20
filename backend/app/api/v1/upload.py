@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from app.auth.permissions import require_role
 from app.config import settings
 from app.dependencies import require_auth
-from app.documents.validation import validate_upload
+from app.documents.validation import read_upload, validate_upload
 
 router = APIRouter()
 
@@ -37,11 +37,7 @@ async def upload_document(
             detail="No filename provided",
         )
 
-    file_size = 0
-    content = b""
-    while chunk := await file.read(8192):
-        file_size += len(chunk)
-        content += chunk
+    file_size, content = await read_upload(file)
 
     result = validate_upload(file.filename, file_size)
     if not result.valid:
@@ -53,13 +49,13 @@ async def upload_document(
     pending_dir = Path(settings.storage_pending_dir)
     pending_dir.mkdir(parents=True, exist_ok=True)
 
-    unique_name = f"{uuid.uuid4().hex}_{file.filename}"
+    unique_name = f"{uuid.uuid4().hex}_{result.filename}"
     dest = pending_dir / unique_name
     dest.write_bytes(content)
 
     return {
         "message": "File uploaded successfully",
-        "filename": file.filename,
+        "filename": result.filename,
         "stored_as": str(dest),
         "size_bytes": file_size,
     }

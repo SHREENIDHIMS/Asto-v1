@@ -21,11 +21,18 @@ def validate_package(
     package: ResponsePackage,
     user: dict | None,
     min_confidence: float = 50.0,
+    assigned_client_ids: list[int] | None = None,
     ) -> tuple[bool, str]:
     """Validate a response package against RBAC and version rules.
 
     Returns (valid, reason). If invalid, the package should not be returned
     to the user.
+
+    ``assigned_client_ids`` (optional, staff only) is the set of clients
+    assigned to the user — used to re-check the client-assignment leg of
+    the SQL scope as a safety net. When omitted, the staff leg only
+    re-checks the department clause (defense-in-depth incompleteness, but
+    the SQL WHERE clause remains the primary enforcement).
 
     Confidence is **not** checked here — that is the job of
     ``route_by_confidence``, which decides ``package.routing``.
@@ -37,16 +44,31 @@ def validate_package(
         if user.get("audience") == "client":
             client_id = user.get("client_id")
             for excerpt in package.excerpts:
-                if excerpt.source.client_id != client_id:
+                scoped = excerpt.source.client_id
+                # A company-wide document (client_id IS NULL) is visible to
+                # every client. Only a doc scoped to a *different* client is
+                # a violation — treating NULL as one would turn a harmless
+                # company-wide doc into a 500.
+                if scoped is not None and scoped != client_id:
                     return False, (
                         f"RBAC violation: chunk {excerpt.source.chunk_id} belongs to "
-                        f"client {excerpt.source.client_id}, not {client_id}"
+                        f"client {scoped}, not {client_id}"
                     )
         else:
             user_depts = set(resolve_user_departments(user))
             for excerpt in package.excerpts:
                 if excerpt.source.department and excerpt.source.department not in user_depts:
                     return False, f"RBAC violation: chunk from department '{excerpt.source.department}' not visible to user"
+                scoped = excerpt.source.client_id
+                if (
+                    scoped is not None
+                    and assigned_client_ids is not None
+                    and scoped not in assigned_client_ids
+                ):
+                    return False, (
+                        f"RBAC violation: chunk {excerpt.source.chunk_id} belongs to "
+                        f"client {scoped}, not assigned to user"
+                    )
 
     # Version and approval check — safety net
     for excerpt in package.excerpts:

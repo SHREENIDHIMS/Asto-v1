@@ -6,7 +6,6 @@ department from file name, content headers, and structural patterns.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,11 +19,6 @@ class DocumentMetadata:
     department: str = "general"
     source_path: str | None = None
 
-
-_TITLE_PATTERNS = [
-    re.compile(r"^(.*?)\s*—\s*", re.MULTILINE),
-    re.compile(r"^#\s+(.+)$", re.MULTILINE),
-]
 
 _DOC_TYPE_KEYWORDS = {
     "underwriting": "underwriting",

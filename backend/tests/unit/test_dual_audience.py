@@ -123,6 +123,51 @@ class TestValidationClientScope:
         assert valid is False
         assert "not" in reason
 
+    def test_client_company_wide_doc_passes(self):
+        """Regression (P1-16): a company-wide doc (client_id IS NULL) must
+        never be treated as an RBAC violation → 500. It is visible to every
+        client; only a doc scoped to a *different* client is a violation."""
+        user = {"audience": "client", "client_id": 42}
+        valid, reason = validate_package(self._package_with_client(None), user)
+        assert valid is True
+        assert reason == "OK"
+
+    def test_staff_company_wide_doc_passes(self):
+        user = {
+            "role": "loan_officer",
+            "department": "general",
+            "allowed_departments": [],
+        }
+        valid, _ = validate_package(self._package_with_client(None), user)
+        assert valid is True
+
+    def test_staff_unassigned_scoped_doc_fails_when_assignment_known(self):
+        user = {
+            "role": "loan_officer",
+            "department": "general",
+            "allowed_departments": [],
+        }
+        valid, reason = validate_package(
+            self._package_with_client(8),
+            user,
+            assigned_client_ids=[5],
+        )
+        assert valid is False
+        assert "not assigned" in reason
+
+    def test_staff_assigned_scoped_doc_passes(self):
+        user = {
+            "role": "loan_officer",
+            "department": "general",
+            "allowed_departments": [],
+        }
+        valid, _ = validate_package(
+            self._package_with_client(8),
+            user,
+            assigned_client_ids=[5, 8],
+        )
+        assert valid is True
+
     def test_staff_department_safety_net_uses_source_department(self):
         """Regression: Source must carry department for the validation net."""
         user = {

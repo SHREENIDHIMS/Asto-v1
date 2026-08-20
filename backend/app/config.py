@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     bm25_limit: int = 25
     vector_limit: int = 25
     max_sub_queries: int = 4
+    max_query_length: int = 1000  # reject oversized search payloads (DoS guard)
 
     # --- Response ---
     max_excerpt_chars: int = 600

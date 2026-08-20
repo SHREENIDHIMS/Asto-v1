@@ -104,6 +104,48 @@ def _reset_attempts(cur, email: str) -> None:
     cur.execute("DELETE FROM login_attempts WHERE email = %s", (email,))
 
 
+# Password-reset requests are throttled per source IP only, using a sentinel
+# email so they can never count toward a real account's login lockout — an
+# attacker must not be able to lock a victim out of /login by spamming the
+# reset endpoint (lockout-DoS).
+_RESET_SENTINEL_EMAIL = "__password_reset__"
+
+
+def _check_reset_throttle(cur, ip: str) -> None:
+    """Prune stale attempts and raise 429 when this IP has spammed resets."""
+    if not ip:
+        return
+    cur.execute(
+        "DELETE FROM login_attempts "
+        "WHERE attempted_at < now() - make_interval(hours => %s)",
+        (settings.login_attempt_prune_hours,),
+    )
+    cur.execute(
+        "SELECT count(*) AS ip_fails FROM login_attempts WHERE success = false "
+        "AND ip = %s AND attempted_at >= now() - make_interval(mins => %s)",
+        (ip, settings.login_lockout_minutes),
+    )
+    row = cur.fetchone()
+    ip_fails = row["ip_fails"] if row else 0
+    if ip_fails >= settings.login_max_ip_failures:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Try again later.",
+            headers={"Retry-After": str(settings.login_lockout_minutes * 60)},
+        )
+
+
+def _record_reset_attempt(cur, ip: str) -> None:
+    """Record one reset request so per-IP floods are pruned and counted."""
+    if not ip:
+        return
+    cur.execute(
+        "INSERT INTO login_attempts (email, ip, success) "
+        "VALUES (%s, %s, false)",
+        (_RESET_SENTINEL_EMAIL, ip),
+    )
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
@@ -425,6 +467,10 @@ async def two_factor_login(
                     detail="2FA not enabled for this account",
                 )
 
+            # TOTP brute-force guard: 6-digit codes are guessable, so run the
+            # same H3 throttle here (failures are already recorded below).
+            _check_login_throttle(cur, row["email"], ip)
+
             from app.auth.totp import decrypt_secret, verify_code
 
             secret = decrypt_secret(row["totp_secret"])
@@ -538,30 +584,38 @@ async def refresh(request: Request, response: Response, _: None = Depends(requir
             )
             row = cur.fetchone()
 
-    if row is None or row["revoked_at"] is not None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-        )
-    if row["expires_at"] is None or row["expires_at"] < now:
-        with session.acquire() as conn:
-            with conn.cursor() as cur:
+            if row is None or row["revoked_at"] is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid refresh token",
+                )
+            if row["expires_at"] is None or row["expires_at"] < now:
                 cur.execute(
                     "UPDATE refresh_tokens SET revoked_at = now() WHERE id = %s",
                     (row["id"],),
                 )
-            conn.commit()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token expired",
-        )
+                conn.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Refresh token expired",
+                )
 
-    with session.acquire() as conn:
-        with conn.cursor() as cur:
+            # Rotate in the SAME transaction as the lookup, and only when the
+            # presented token is still unrevoked. The rowcount guard closes
+            # the replay race: two concurrent uses of one token can no longer
+            # both pass the "not revoked" check before either revokes —
+            # the loser's UPDATE matches 0 rows and is rejected.
             cur.execute(
-                "UPDATE refresh_tokens SET revoked_at = now() WHERE id = %s",
+                "UPDATE refresh_tokens SET revoked_at = now() "
+                "WHERE id = %s AND revoked_at IS NULL",
                 (row["id"],),
             )
+            if cur.rowcount != 1:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid refresh token",
+                )
+
             new_token = _issue_refresh(
                 cur,
                 row["audience"],
@@ -633,7 +687,10 @@ async def logout_all(user: dict = Depends(require_auth), response: Response = No
 
 
 @router.post("/forgot-password")
-async def forgot_password(request: ForgotPasswordRequest) -> dict:
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    http_request: Request,
+) -> dict:
     """Start a password reset for a staff user or client email (H2).
 
     Returns the same generic body whether or not the email exists,
@@ -644,12 +701,15 @@ async def forgot_password(request: ForgotPasswordRequest) -> dict:
     transport pending).
 
     The reset token's brute-force space is 32 random bytes and the link is
-    single-use, so no separate rate limit is needed here today (H3 adds
-    login-attempt limiting).
+    single-use; the endpoint is throttled per source IP so it can't be used
+    to flood a mailbox with reset mail.
     """
     email = request.email.strip().lower()
+    ip = _client_ip(http_request)
     with session.acquire() as conn:
         with conn.cursor() as cur:
+            _check_reset_throttle(cur, ip)
+            _record_reset_attempt(cur, ip)
             cur.execute(
                 "SELECT id, email FROM users "
                 "WHERE email = %s AND is_active = true",

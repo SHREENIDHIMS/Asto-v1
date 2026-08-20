@@ -48,7 +48,7 @@ from app.api.v1.messaging import (
 )
 from app.db.postgres import session
 from app.dependencies import require_auth
-from app.documents.validation import validate_upload
+from app.documents.validation import read_upload, validate_upload
 from app.documents.file_serve import resolve_stored_file
 from app.api.v1.notifications import notify_admins, notify_user
 
@@ -529,13 +529,16 @@ async def advance_workflow(
                 (next_status, workflow_id),
             )
 
-            # Check if workflow is now overdue (due_at has passed)
+            # Check if workflow is now overdue (due_at has passed). The
+            # comparison runs in Postgres (now()) so Python never needs a
+            # clock and tz handling can't drift.
             cur.execute(
-                "SELECT due_at FROM workflows WHERE id = %s",
+                "SELECT due_at, (due_at IS NOT NULL AND due_at < now()) AS overdue "
+                "FROM workflows WHERE id = %s",
                 (workflow_id,),
             )
             due_row = cur.fetchone()
-            if due_row and due_row["due_at"] and due_row["due_at"] < now():
+            if due_row and due_row["overdue"]:
                 cur.execute(
                     "UPDATE workflows SET status = 'overdue' WHERE id = %s",
                     (workflow_id,),
@@ -551,7 +554,7 @@ async def advance_workflow(
                         user["id"],
                         "Overdue Workflow",
                         notify_msg,
-                        json.dumps({"workflow_id": workflow_id, "due_at": str(due_row[0])}),
+                        json.dumps({"workflow_id": workflow_id, "due_at": str(due_row["due_at"])}),
                     ),
                 )
 
@@ -1230,11 +1233,7 @@ async def staff_upload_document(
                 detail="Property not found or not owned by this client",
             )
 
-    file_size = 0
-    content = b""
-    while chunk := await file.read(8192):
-        file_size += len(chunk)
-        content += chunk
+    file_size, content = await read_upload(file)
 
     result = validate_upload(file.filename, file_size)
     if not result.valid:
@@ -1247,7 +1246,7 @@ async def staff_upload_document(
     pending_dir.mkdir(parents=True, exist_ok=True)
 
     token = uuid.uuid4().hex
-    unique_name = f"{token}_{file.filename}"
+    unique_name = f"{token}_{result.filename}"
     dest = pending_dir / unique_name
     dest.write_bytes(content)
 
@@ -1275,7 +1274,7 @@ async def staff_upload_document(
 
     return {
         "message": "File uploaded successfully and queued for indexing",
-        "filename": file.filename,
+        "filename": result.filename,
         "stored_as": str(dest),
         "size_bytes": file_size,
         "client_id": client_id,

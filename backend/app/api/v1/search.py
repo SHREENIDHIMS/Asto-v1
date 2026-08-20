@@ -33,10 +33,10 @@ from typing import Annotated, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.audit.audit_logger import AuditLogEntry, log_query
-from app.auth.rbac import resolve_user_departments
+from app.auth.rbac import is_admin, resolve_user_departments
 from app.config import settings
 from app.db.postgres import session
 from app.dependencies import require_auth
@@ -51,6 +51,7 @@ from app.response.confidence_thresholds import route_by_confidence
 from app.response.package_builder import build_response_package
 from app.response.validation import validate_package
 from app.search.hybrid_orchestrator import search_knowledge_base
+from app.search.metadata_filters import _assigned_client_ids
 from app.search.suggest import suggest_queries
 
 router = APIRouter()
@@ -76,7 +77,7 @@ class SearchFilters(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=settings.max_query_length)
     case_id: int | None = None
     filters: SearchFilters | None = None
 
@@ -371,7 +372,14 @@ def _run_pipeline(
             confidence=package.confidence,
         )
 
-    valid, reason = validate_package(package, user)
+    # Re-check the staff client-assignment leg of the SQL scope as a safety
+    # net (rule #1 re-check). Clients and admins need no assignment list.
+    assigned_client_ids = None
+    if user.get("audience") != "client" and not is_admin(user):
+        with session.acquire() as conn:
+            assigned_client_ids = _assigned_client_ids(conn, int(user["id"]))
+
+    valid, reason = validate_package(package, user, assigned_client_ids=assigned_client_ids)
     if not valid:
         log_query(AuditLogEntry(
             user_id=user["id"],

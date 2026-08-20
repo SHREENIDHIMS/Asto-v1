@@ -88,16 +88,6 @@ def create_2fa_token(subject: str, ttl_minutes: int) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_for_audit(token: str) -> dict | None:
-    """Decode a JWT without verification (for audit logging of failed tokens)."""
-    try:
-        # Decode without verification to extract the subject for auditing
-        # even if the token is expired/invalid.
-        return jwt.decode(token, options={"verify_signature": False})
-    except Exception:
-        return None
-
-
 def new_refresh_token() -> str:
     """Generate an opaque, unguessable refresh token (never a JWT)."""
     return secrets.token_urlsafe(48)

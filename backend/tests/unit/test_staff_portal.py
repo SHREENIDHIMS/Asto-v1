@@ -233,7 +233,7 @@ class TestWorkflowAdvance:
         cur = conn.cursor.return_value
         cur.fetchone.side_effect = [
             {"id": 3, "status": "in_progress"},
-            {"due_at": None},
+            {"due_at": None, "overdue": False},
         ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             try:
@@ -276,6 +276,28 @@ class TestWorkflowAdvance:
                 from app.dependencies import require_auth
                 app.dependency_overrides.pop(require_auth, None)
         assert response.status_code == 404
+
+    def test_overdue_marks_overdue_and_notifies(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 3, "status": "in_progress"},
+            {"due_at": "2026-01-01T00:00:00+00:00", "overdue": True},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(STAFF_USER).post(
+                    "/api/v1/staff/workflows/3/advance"
+                )
+            finally:
+                from app.main import app
+                from app.dependencies import require_auth
+                app.dependency_overrides.pop(require_auth, None)
+        assert response.status_code == 200
+        updates = [c.args for c in cur.execute.call_args_list if "UPDATE workflows" in c.args[0]]
+        assert any("'overdue'" in u[0] for u in updates)
+        inserts = [c.args for c in cur.execute.call_args_list if "INSERT INTO notifications" in c.args[0]]
+        assert inserts and "Overdue Workflow" in inserts[0][1][1]
 
 
 class TestSopAuthoring:

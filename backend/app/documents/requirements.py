@@ -13,8 +13,6 @@ from typing import Sequence
 
 from psycopg import Connection
 
-from app.db.postgres.models import dict_row_to_case  # we'll reference models
-
 
 # ---- Default requirement sets per case type ----
 
@@ -81,7 +79,8 @@ def derive_case_checklist(
     # We need to look up the case to find its type
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, client_id, property_id, status FROM cases WHERE id = %s",
+            "SELECT id, client_id, property_id, status, case_number "
+            "FROM cases WHERE id = %s",
             (case_id,),
         )
         case_row = cur.fetchone()

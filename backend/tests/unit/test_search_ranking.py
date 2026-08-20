@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.ranking.rrf import rank_fusion
 from app.ranking.scoring import apply_linear_reorder, compute_scores
 from app.ranking.weights_config import DEFAULT_WEIGHTS, RankingWeights
-from app.search.bm25_search import build_tsquery
+from app.search.bm25_search import build_tsquery, has_lexical_terms
 from app.search.metadata_filters import get_search_filter, get_version_filter
 
 
@@ -25,6 +25,28 @@ class TestBM25Search:
     def test_build_tsquery_empty(self):
         q = build_tsquery("")
         assert q == "''::tsquery"
+
+    def test_has_lexical_terms_ascii(self):
+        assert has_lexical_terms("credit score")
+        assert has_lexical_terms("  FHA 30% loan  ")
+
+    def test_has_lexical_terms_rejects_non_ascii(self):
+        assert not has_lexical_terms("")
+        assert not has_lexical_terms("??? !!! ---")
+        assert not has_lexical_terms("मोर्टगेज दर")  # Devanagari only
+        assert not has_lexical_terms("貸款 利率")      # Han only
+        assert not has_lexical_terms("ипотека")       # Cyrillic only
+
+    def test_search_skips_non_ascii_query(self):
+        """A non-Latin query must return no candidates (graceful no_answer)
+        instead of feeding an empty tsquery into to_tsquery (SQL error -> 500)."""
+        from unittest.mock import MagicMock
+
+        from app.search.hybrid_orchestrator import search_knowledge_base
+
+        result = search_knowledge_base(MagicMock(), ["मोर्टगेज दर"], user=None)
+        assert result.candidates == []
+        assert result.query_embedding == []
 
 
 class TestMetadataFilters:
@@ -110,6 +132,16 @@ class TestScoring:
         scored = compute_scores(candidates)
         # Default: bm25 0.2, vector 0.8 → vec wins
         assert scored[0][0] == 2
+
+    def test_compute_scores_coerces_nan_to_zero(self):
+        candidates = [
+            {"chunk_id": 1, "bm25_score": 0.9, "vec_score": float("nan")},
+            {"chunk_id": 2, "bm25_score": 0.5, "vec_score": 0.6},
+        ]
+        scored = compute_scores(candidates, RankingWeights(bm25_weight=0.5, vector_weight=0.5))
+        # NaN coerced to 0: 0.45 vs 0.55 → candidate 2 wins, never NaN.
+        assert scored[0][0] == 2
+        assert scored[0][1] == scored[0][1]  # not NaN
 
 
 class TestLinearReorder:

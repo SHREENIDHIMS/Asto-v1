@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+from fastapi import HTTPException
+
 from app.documents.entity_extraction import extract_entities
-from app.documents.validation import validate_upload
+from app.documents.embedding import is_broken_vector
+from app.documents.validation import read_upload, sanitize_filename, validate_upload
 from app.documents.chunking.structural_chunker import StructuralChunker
 from app.documents.text_extraction import ExtractedText, extract_text
 from app.documents.metadata_extraction import extract_metadata
@@ -32,6 +38,79 @@ class TestValidation:
     def test_case_insensitive_extension(self):
         result = validate_upload("DOC.PDF", 1024)
         assert result.valid is True
+
+
+class TestSanitizeFilename:
+    def test_plain_name_passes(self):
+        assert sanitize_filename("loan-letter.pdf") == "loan-letter.pdf"
+        assert sanitize_filename("my doc (2).PDF") == "my doc (2).PDF"
+
+    def test_rejects_empty_and_dots(self):
+        assert sanitize_filename("") is None
+        assert sanitize_filename(".") is None
+        assert sanitize_filename("..") is None
+
+    def test_rejects_forward_slash_traversal(self):
+        assert sanitize_filename("../../../evil.pdf") is None
+        assert sanitize_filename("a/b.pdf") is None
+
+    def test_rejects_backslash_traversal(self):
+        assert sanitize_filename("..\\..\\evil.pdf") is None
+        assert sanitize_filename("sub\\b.pdf") is None
+
+    def test_traversal_name_fails_validation(self):
+        result = validate_upload("../../../evil.pdf", 100)
+        assert result.valid is False
+        assert "unsafe" in result.error
+
+    def test_traversal_name_fails_validation_windows(self):
+        result = validate_upload("..\\..\\evil.pdf", 100)
+        assert result.valid is False
+
+
+class TestReadUpload:
+    class _FakeUpload:
+        def __init__(self, chunks: list[bytes]):
+            self._chunks = iter(chunks)
+
+        async def read(self, size: int):
+            try:
+                return next(self._chunks)
+            except StopIteration:
+                return b""
+
+    def test_reads_full_body(self):
+        upload = self._FakeUpload([b"a" * 8192, b"b" * 8192, b"c"])
+        total, content = asyncio.run(read_upload(upload, max_bytes=10_000_000))
+        assert total == 8192 * 2 + 1
+        assert content == b"a" * 8192 + b"b" * 8192 + b"c"
+
+    def test_aborts_413_when_body_exceeds_cap(self):
+        upload = self._FakeUpload([b"x" * 8192] * 5)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(read_upload(upload, max_bytes=20_000))
+        assert exc.value.status_code == 413
+
+    def test_cap_defaults_to_settings(self):
+        upload = self._FakeUpload([b"x" * 8192] * 5)
+        # 5 * 8192 = 40 KB > default 20 MB? No — below it, so it must succeed.
+        total, _ = asyncio.run(read_upload(upload))
+        assert total == 8192 * 5
+
+
+class TestBrokenVector:
+    def test_missing_vector_is_broken(self):
+        assert is_broken_vector(None) is True
+        assert is_broken_vector([]) is True
+
+    def test_zero_vector_is_broken(self):
+        assert is_broken_vector([0.0] * 384) is True
+
+    def test_nan_vector_is_broken(self):
+        assert is_broken_vector([0.1, float("nan"), 0.2]) is True
+
+    def test_normal_vector_is_fine(self):
+        assert is_broken_vector([0.0, 0.3, -0.7, 1e-5]) is False
 
 
 class TestStructuralChunker:

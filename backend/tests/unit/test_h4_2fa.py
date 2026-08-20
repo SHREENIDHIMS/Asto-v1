@@ -292,6 +292,7 @@ class TestTwoFaLoginFlow:
                 "totp_secret": encrypt_secret(secret),
                 "totp_enabled": True,
             },
+            {"email_fails": 0, "ip_fails": 0},  # 2FA throttle row (allowed)
         ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             response = TestClient(app).post(
@@ -328,6 +329,7 @@ class TestTwoFaLoginFlow:
                 "totp_secret": encrypt_secret(secret),
                 "totp_enabled": True,
             },
+            {"email_fails": 0, "ip_fails": 0},  # 2FA throttle row (allowed)
         ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             response = TestClient(app).post(
@@ -357,6 +359,7 @@ class TestTwoFaLoginFlow:
                 "totp_secret": encrypt_secret(secret),
                 "totp_enabled": True,
             },
+            {"email_fails": 0, "ip_fails": 0},  # 2FA throttle row (allowed)
         ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             first = TestClient(app).post(

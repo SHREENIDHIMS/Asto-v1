@@ -39,7 +39,7 @@ from app.api.v1.messaging import (
     _touch_conversation,
 )
 from app.documents.file_serve import resolve_stored_file
-from app.documents.validation import validate_upload
+from app.documents.validation import read_upload, validate_upload
 from app.documents.watermark import watermark_bytes
 
 router = APIRouter()
@@ -417,11 +417,7 @@ async def client_upload_document(
             detail="title is required and must not be empty",
         )
 
-    file_size = 0
-    content = b""
-    while chunk := await file.read(8192):
-        file_size += len(chunk)
-        content += chunk
+    file_size, content = await read_upload(file)
 
     result = validate_upload(file.filename, file_size)
     if not result.valid:
@@ -434,7 +430,7 @@ async def client_upload_document(
     pending_dir.mkdir(parents=True, exist_ok=True)
 
     token = uuid.uuid4().hex
-    unique_name = f"{token}_{file.filename}"
+    unique_name = f"{token}_{result.filename}"
     dest = pending_dir / unique_name
     dest.write_bytes(content)
 
@@ -453,7 +449,7 @@ async def client_upload_document(
 
     return {
         "message": "File uploaded successfully and queued for indexing",
-        "filename": file.filename,
+        "filename": result.filename,
         "stored_as": str(dest),
         "size_bytes": file_size,
         "doc_type": doc_type.strip(),

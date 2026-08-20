@@ -10,6 +10,7 @@ process — never imported by app.main.py or any request handler.
 from __future__ import annotations
 
 import logging
+import math
 from functools import lru_cache
 from typing import Sequence
 
@@ -41,10 +42,38 @@ def _get_model() -> TextEmbedding:
 
 def generate_embeddings(texts: Sequence[str]) -> list[list[float]]:
     """Generate embeddings for a batch of text chunks."""
-    if not _HAS_FASTEMBED:
+    if not _model_available():
         raise RuntimeError("fastembed is not installed")
 
     model = _get_model()
     embeddings = list(model.embed(texts, batch_size=16))
     logger.info("Generated %d embeddings", len(embeddings))
     return embeddings
+
+
+def is_broken_vector(vector: Sequence[float] | None, eps: float = 1e-9) -> bool:
+    """True when a vector must not enter the index / ranking.
+
+    Covers the three failure modes that would otherwise poison pgvector
+    cosine distance and the weighted rank: a missing vector, an all-zero
+    vector (pgvector treats ``zero <=> x`` as distance 1, so the chunk is
+    permanently unreachable and HNSW carries dead weight), and any NaN/Inf
+    component (NaN propagates through ``<=>`` and the weighted ORDER BY).
+
+    Tolerant of numpy components (model output): each element is coerced
+    with ``float()``; any non-scalar/undecipherable element is treated as
+    broken.
+    """
+    if vector is None or len(vector) == 0:
+        return True
+    try:
+        any_magnitude = False
+        for x in vector:
+            fx = float(x)
+            if not math.isfinite(fx):
+                return True
+            if abs(fx) > eps:
+                any_magnitude = True
+        return not any_magnitude
+    except (TypeError, ValueError, OverflowError):
+        return True

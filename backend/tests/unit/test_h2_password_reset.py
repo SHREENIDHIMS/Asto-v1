@@ -44,6 +44,7 @@ class TestForgotPassword:
         conn = _conn()
         cur = conn.cursor.return_value
         cur.fetchone.side_effect = [
+            {"ip_fails": 0},                          # reset throttle row
             {"id": 2, "email": "staff@asto.local"},  # users lookup hit
             None,                                    # clients lookup miss
         ]
@@ -76,6 +77,7 @@ class TestForgotPassword:
         conn = _conn()
         cur = conn.cursor.return_value
         cur.fetchone.side_effect = [
+            {"ip_fails": 0},                          # reset throttle row
             None,                                    # users lookup miss
             {"id": 7, "email": "client@asto.local"}, # clients lookup hit
         ]
@@ -112,6 +114,7 @@ class TestForgotPassword:
         conn = _conn()
         cur = conn.cursor.return_value
         cur.fetchone.side_effect = [
+            {"ip_fails": 0},                          # reset throttle row
             {"id": 2, "email": "Staff@Asto.Local"},
             None,
         ]

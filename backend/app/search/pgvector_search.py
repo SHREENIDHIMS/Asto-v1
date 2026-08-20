@@ -12,6 +12,7 @@ from functools import lru_cache
 from fastembed import TextEmbedding
 
 from app.config import settings
+from app.documents.embedding import is_broken_vector
 
 logger = logging.getLogger(__name__)
 
@@ -40,4 +41,15 @@ def embed_query(text: str) -> list[float]:
     """Generate a 384-dim embedding for a query string."""
     model = _get_embedding_model()
     embeddings = list(model.embed([text]))
-    return embeddings[0]
+    vector = embeddings[0]
+    if is_broken_vector(vector):
+        logger.warning(
+            "Query embedding is zero/NaN for %r; vector branch will score 0 "
+            "(lexical-only ranking)",
+            text[:80],
+        )
+        # Fall back to an explicit zero vector: pgvector defines the cosine
+        # distance to any zero vector as 1, so every vec_score becomes 0 —
+        # graceful lexical-only ranking instead of NaN in the ORDER BY.
+        return [0.0] * len(vector)
+    return vector
