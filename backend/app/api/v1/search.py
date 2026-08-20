@@ -402,7 +402,7 @@ def _run_pipeline(
         user_id=user["id"],
         query=query,
         sub_query_displays=[sq.display for sq in plan.sub_queries],
-        retrieved_ids=[c.chunk_id for c in ranked[:25]],
+        retrieved_ids=[c.document_id for c in ranked[:25]],
         confidence=round(package.confidence, 1),
         response_id=package.response_id,
         outcome=package.routing,

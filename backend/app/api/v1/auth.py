@@ -28,6 +28,12 @@ from app.config import settings
 from app.db.postgres import session
 from app.dependencies import require_auth
 
+# Real bcrypt hash of a sentinel string. When the submitted email has no
+# account, we still pay one bcrypt.verify so that a wrong-password attempt on
+# a real account and an attempt on an unknown account take the same time —
+# otherwise login timing leaks which emails exist (account enumeration).
+_DUMMY_BCRYPT_HASH = "$2b$12$uNyIa5XiTx962SSR.iYDueKFtoyonhYy0ZO2HGW6Z17SK.0NAmjh."
+
 router = APIRouter()
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -364,7 +370,17 @@ async def login(
             row = cur.fetchone()
 
             token = None
-            if row is not None and bcrypt.verify(request.password, row["password_hash"]):
+            if row is not None:
+                staff_password_ok = bcrypt.verify(
+                    request.password, row["password_hash"]
+                )
+            else:
+                # No staff account: still burn one bcrypt verify so timing
+                # cannot distinguish "no account" from "wrong password".
+                bcrypt.verify(request.password, _DUMMY_BCRYPT_HASH)
+                staff_password_ok = False
+
+            if staff_password_ok:
                 if row["totp_enabled"]:
                     # Correct password but 2FA is on: no credentials yet.
                     requires_2fa = True
@@ -391,7 +407,14 @@ async def login(
                     (request.email,),
                 )
                 row = cur.fetchone()
-                if row is not None and bcrypt.verify(request.password, row["password_hash"]):
+                if row is not None:
+                    client_password_ok = bcrypt.verify(
+                        request.password, row["password_hash"]
+                    )
+                else:
+                    bcrypt.verify(request.password, _DUMMY_BCRYPT_HASH)
+                    client_password_ok = False
+                if client_password_ok:
                     token = create_token(
                         subject=str(row["id"]),
                         role="client",
@@ -544,7 +567,15 @@ async def client_login(
             )
             row = cur.fetchone()
 
-            if row is None or not bcrypt.verify(request.password, row["password_hash"]):
+            if row is not None:
+                password_ok = bcrypt.verify(request.password, row["password_hash"])
+            else:
+                # Unknown account: burn the same bcrypt cost so timing does
+                # not reveal whether the email exists.
+                bcrypt.verify(request.password, _DUMMY_BCRYPT_HASH)
+                password_ok = False
+
+            if not password_ok:
                 _record_failed_attempt(cur, request.email, ip)
                 conn.commit()
                 raise HTTPException(
