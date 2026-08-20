@@ -1,7 +1,7 @@
 x-backend-env: &backend-env
   ASTO_DATABASE_URL: "${ASTO_DATABASE_URL:-postgresql://asto_app:devpass@postgres:5432/asto_assistant}"
   ASTO_TEST_DATABASE_URL: "${ASTO_TEST_DATABASE_URL:-postgresql://asto_app:devpass@postgres:5432/asto_test}"
-  ASTO_JWT_SECRET: "${ASTO_JWT_SECRET:-dev-only-secret-change-me-in-production-32chars}"
+  ASTO_JWT_SECRET: "${ASTO_JWT_SECRET:?ASTO_JWT_SECRET must be set (root .env or environment) — no default for safety}"
   ASTO_ENVIRONMENT: "${ASTO_ENVIRONMENT:-development}"
   ASTO_MAX_EVIDENCE_DOCS: "${ASTO_MAX_EVIDENCE_DOCS:-5}"
   ASTO_RERANK_ENABLED: "${ASTO_RERANK_ENABLED:-false}"

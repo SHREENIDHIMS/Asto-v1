@@ -39,7 +39,11 @@ from app.api.v1.messaging import (
     _touch_conversation,
 )
 from app.documents.file_serve import resolve_stored_file
-from app.documents.validation import read_upload, validate_upload
+from app.documents.validation import (
+    read_upload,
+    validate_content_magic,
+    validate_upload,
+)
 from app.documents.watermark import watermark_bytes
 
 router = APIRouter()
@@ -426,6 +430,13 @@ async def client_upload_document(
             detail=result.error,
         )
 
+    content_error = validate_content_magic(result.filename, content)
+    if content_error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=content_error,
+        )
+
     pending_dir = Path(settings.storage_pending_dir)
     pending_dir.mkdir(parents=True, exist_ok=True)
 
@@ -502,10 +513,28 @@ async def client_document_file(
     raw = file_path.read_bytes()
     watermarked = watermark_bytes(raw, file_path.name, viewer_name)
 
-    if watermarked == raw:
+    # Rule #8: document access is audit-logged. A raw-bytes pass-through
+    # (unsupported type or a watermarking failure) is recorded explicitly so
+    # the compliance bypass is never invisible.
+    from app.audit.audit_logger import AuditLogEntry, log_query
+
+    bypassed = watermarked == raw
+    log_query(AuditLogEntry(
+        user_id=int(user["client_id"]),
+        query=f"document file: {document_id}",
+        retrieved_ids=[document_id],
+        outcome="document_view_unwatermarked" if bypassed else "document_view",
+        audience="client",
+    ))
+
+    if bypassed:
+        # No watermark could be applied (unsupported type or failure): serve
+        # as an explicit attachment download rather than silently presenting
+        # raw bytes inline as if watermarked. The bypass is audit-logged above.
         return FileResponse(
             file_path,
             filename=row["title"] or file_path.name,
+            content_disposition_type="attachment",
         )
 
     media_type = "application/pdf" if file_path.name.lower().endswith(".pdf") else None

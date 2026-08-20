@@ -241,7 +241,7 @@ class TestHashTokenShared:
 
 
 class TestResetLinkDelivery:
-    def test_delivery_logs_link_with_token(self):
+    def test_delivery_logs_greppable_line_without_token(self):
         from app.auth import password_reset_email
 
         with patch.object(password_reset_email.logger, "info") as mock_info:
@@ -250,6 +250,6 @@ class TestResetLinkDelivery:
             )
         mock_info.assert_called_once()
         args, _ = mock_info.call_args
-        assert args[0] == "PASSWORD_RESET for %s: %s"
+        assert args[0] == "PASSWORD_RESET issued for %s (ttl %s hour(s))"
         assert args[1] == "staff@asto.local"
-        assert "reset=thetoken123" in args[2]
+        assert "reset=thetoken123" not in str(args)

@@ -42,7 +42,7 @@ jobs:
 
       - name: Run unit tests
         env:
-          ASTO_JWT_SECRET: test-secret
+          ASTO_JWT_SECRET: test-secret-0123456789-0123456789-0123456789
           ASTO_ENVIRONMENT: test
         run: |
           cd backend
@@ -70,6 +70,7 @@ jobs:
           envs: |
             ASTO_JWT_SECRET=${{ secrets.ASTO_JWT_SECRET }}
             ASTO_DATABASE_URL=${{ secrets.ASTO_DATABASE_URL }}
+            ASTO_ENVIRONMENT=production
           script: |
             set -e
 

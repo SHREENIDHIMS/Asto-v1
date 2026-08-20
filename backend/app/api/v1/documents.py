@@ -109,6 +109,16 @@ async def get_document_file(
                     )
 
     file_path = resolve_stored_file(row["source_path"])
+    # Rule #8: document access is audit-logged.
+    from app.audit.audit_logger import AuditLogEntry, log_query
+
+    log_query(AuditLogEntry(
+        user_id=int(user["id"]),
+        query=f"document file: {document_id}",
+        retrieved_ids=[document_id],
+        outcome="document_view",
+        audience=user.get("audience"),
+    ))
     return FileResponse(
         file_path,
         filename=row["title"] or file_path.name,

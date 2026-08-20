@@ -34,5 +34,8 @@ def deliver_reset_link(email: str, link: str) -> None:
         "<p>If you didn't request this, ignore it.</p>"
     )
     send_email(email, _SUBJECT, html, text)
-    # Keep the greppable line the flow has relied on for local verification.
-    logger.info("PASSWORD_RESET for %s: %s", email, link)
+    # Keep a greppable line for local verification WITHOUT the raw link —
+    # the one-time reset token must never reach INFO logs/journald (anyone
+    # with log access could otherwise reset any account). The link itself is
+    # visible via the mailer's console fallback, which redacts the token.
+    logger.info("PASSWORD_RESET issued for %s (ttl %s hour(s))", email, ttl_hours)

@@ -15,7 +15,11 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from app.auth.permissions import require_role
 from app.config import settings
 from app.dependencies import require_auth
-from app.documents.validation import read_upload, validate_upload
+from app.documents.validation import (
+    read_upload,
+    validate_content_magic,
+    validate_upload,
+)
 
 router = APIRouter()
 
@@ -44,6 +48,13 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.error,
+        )
+
+    content_error = validate_content_magic(result.filename, content)
+    if content_error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=content_error,
         )
 
     pending_dir = Path(settings.storage_pending_dir)

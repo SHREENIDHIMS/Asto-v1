@@ -87,7 +87,8 @@ class TestClientUploadBehavior:
         yield tmp_path
         settings.storage_pending_dir = original
 
-    def _post_upload(self, client_id=7, property_id=None, filename="policy.txt"):
+    def _post_upload(self, client_id=7, property_id=None, filename="policy.txt",
+                     content=b"client policy content"):
         from app.main import app
         from app.dependencies import require_auth
         app.dependency_overrides[require_auth] = lambda: {
@@ -95,7 +96,7 @@ class TestClientUploadBehavior:
         }
         try:
             client = TestClient(app)
-            files = {"file": (filename, b"client policy content", "text/plain")}
+            files = {"file": (filename, content, "text/plain")}
             params = {}
             if property_id is not None:
                 params["property_id"] = str(property_id)
@@ -110,7 +111,7 @@ class TestClientUploadBehavior:
             app.dependency_overrides.pop(require_auth, None)
 
     def test_upload_writes_file_and_sidecar(self, pending_dir):
-        response = self._post_upload(filename="statement.pdf")
+        response = self._post_upload(filename="statement.pdf", content=b"%PDF-1.7 body")
         assert response.status_code == 200
         data = response.json()
         assert data["filename"] == "statement.pdf"

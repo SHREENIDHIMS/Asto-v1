@@ -48,7 +48,11 @@ from app.api.v1.messaging import (
 )
 from app.db.postgres import session
 from app.dependencies import require_auth
-from app.documents.validation import read_upload, validate_upload
+from app.documents.validation import (
+    read_upload,
+    validate_content_magic,
+    validate_upload,
+)
 from app.documents.file_serve import resolve_stored_file
 from app.api.v1.notifications import notify_admins, notify_user
 
@@ -1242,6 +1246,13 @@ async def staff_upload_document(
             detail=result.error,
         )
 
+    content_error = validate_content_magic(result.filename, content)
+    if content_error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=content_error,
+        )
+
     pending_dir = Path(settings.storage_pending_dir)
     pending_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1327,6 +1338,16 @@ async def staff_document_file(
         )
 
     file_path = resolve_stored_file(row["source_path"])
+    # Rule #8: document access is audit-logged like every other query.
+    from app.audit.audit_logger import AuditLogEntry, log_query
+
+    log_query(AuditLogEntry(
+        user_id=int(user["id"]),
+        query=f"document file: {document_id}",
+        retrieved_ids=[document_id],
+        outcome="document_view",
+        audience=user.get("audience"),
+    ))
     return FileResponse(
         file_path,
         filename=row["title"] or file_path.name,

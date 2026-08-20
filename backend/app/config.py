@@ -141,12 +141,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _check_jwt_secret(self) -> "Settings":
-        if not self.jwt_secret:
-            if self.environment == "development":
-                # Allow empty secret only in development — tests use env vars
-                return self
+        # A short or empty secret is forgeable and the guard must not depend on
+        # the environment being "production" (deploys can silently default to
+        # development). Require a strong secret in every environment; no
+        # default is provided. Tests/CI set ASTO_JWT_SECRET explicitly.
+        if len(self.jwt_secret) < 32:
             raise ValueError(
-                "ASTO_JWT_SECRET must be set when environment is not 'development'"
+                "ASTO_JWT_SECRET must be set to a strong secret (>= 32 chars) "
+                "in every environment. No default is provided for safety."
             )
         return self
 

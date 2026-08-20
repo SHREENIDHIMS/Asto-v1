@@ -446,6 +446,17 @@ async def suggest(
     """
     with session.acquire() as conn:
         suggestions = suggest_queries(conn=conn, prefix=q, user=user)
+    # Rule #8: suggestion lookups are queries against production data and are
+    # audit-logged like any other search.
+    log_query(AuditLogEntry(
+        user_id=user.get("id"),
+        query=q,
+        sub_queries=[],
+        retrieved_ids=[],
+        confidence=None,
+        outcome="suggest",
+        audience=user.get("audience"),
+    ))
     return SuggestResponse(suggestions=suggestions)
 
 

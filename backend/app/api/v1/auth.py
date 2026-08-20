@@ -56,10 +56,22 @@ async def require_csrf(request: Request) -> None:
 # ---------------------------------------------------------------------------
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP, honoring the X-Forwarded-For hop set by nginx."""
+    """Best-effort client IP for throttling.
+
+    Trusts ``X-Real-IP``, which both nginx configs overwrite with
+    ``$remote_addr`` (the actual TCP peer), rather than ``X-Forwarded-For``
+    whose leftmost hops are client-supplied and spoofable — using them let an
+    attacker rotate IPs to dodge the throttle or lock out a victim. Falls back
+    to the last XFF hop, then the direct peer (dev direct-to-8011 only).
+    """
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+        if hops:
+            return hops[-1]
     return request.client.host if request.client else ""
 
 

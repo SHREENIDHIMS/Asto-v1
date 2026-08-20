@@ -125,3 +125,29 @@ def validate_upload(filename: str, file_size: int) -> ValidationResult:
         error=None,
         file_size=file_size,
     )
+
+
+def validate_content_magic(filename: str, content: bytes) -> str | None:
+    """Return an error string if the content contradicts the declared extension.
+
+    Only formats with a reliable leading signature are checked: PDF, and the
+    ZIP-based office containers (docx/xlsx/pptx/odt/epub). Plain-text formats
+    (txt/html/md/csv/rtf) have no reliable magic bytes and are skipped — a
+    mismatched extension there is not detectable from the header.
+    """
+    ext = Path(filename).suffix.lower()
+    head = content[:8]
+
+    if ext == ".pdf":
+        if not head.startswith(b"%PDF-"):
+            return (
+                "File content does not match the .pdf extension "
+                "(missing PDF header)."
+            )
+    elif ext in (".docx", ".xlsx", ".pptx", ".odt", ".epub"):
+        if not head.startswith(b"PK\x03\x04") and not head.startswith(b"PK\x05\x06"):
+            return (
+                f"File content does not match the {ext} extension "
+                "(not a ZIP/Office container)."
+            )
+    return None

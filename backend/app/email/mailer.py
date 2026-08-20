@@ -16,6 +16,7 @@ path: no answer content is ever emailed, only auth/notification messages.
 from __future__ import annotations
 
 import logging
+import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -26,6 +27,31 @@ logger = logging.getLogger(__name__)
 
 _SEND_TIMEOUT_S = 10
 _FALLBACK_FROM = "Asto <no-reply@asto.local>"
+
+# Query params whose values are one-time credentials and must never reach the
+# logs (password-reset links carry the raw reset token as ``?reset=...``).
+_SECRET_QUERY_PARAMS = ("reset", "token", "code", "secret", "key", "jti")
+
+
+def _redact_text(text: str) -> str:
+    """Mask one-time credentials inside URLs before logging a body.
+
+    Rewrites ``?param=value`` (and ``&param=value``) for known credential
+    params to ``param=[redacted:<sha256-8>]`` so the flow stays usable in
+    local dev without leaking the raw token into INFO logs/journald.
+    """
+
+    def _mask(match: re.Match) -> str:
+        name, value = match.group(1), match.group(2)
+        import hashlib
+
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+        return f"{name}[redacted:{digest}]"
+
+    pattern = re.compile(
+        rf"(?:[?&]|\b)((?:{'|'.join(_SECRET_QUERY_PARAMS)})=)([^&\s\"]+)"
+    )
+    return pattern.sub(_mask, text)
 
 
 def smtp_configured() -> bool:
@@ -46,7 +72,10 @@ def send_email(
     raises.
     """
     if not smtp_configured():
-        logger.info("EMAIL (console fallback) to=%s subject=%r text=%r", to, subject, text)
+        logger.info(
+            "EMAIL (console fallback) to=%s subject=%r text=%r",
+            to, subject, _redact_text(text),
+        )
         return False
 
     from_addr = settings.smtp_from or _FALLBACK_FROM
@@ -77,9 +106,13 @@ def send_email(
                 server.send_message(msg)
     except Exception:
         # Never break the caller's request because mail is down. Re-log the
-        # full message so the flow still works in dev/ops.
+        # message (with one-time credentials redacted) so the flow still works
+        # in dev/ops.
         logger.exception("EMAIL send failed to=%s subject=%r", to, subject)
-        logger.info("EMAIL (failed-send fallback) to=%s subject=%r text=%r", to, subject, text)
+        logger.info(
+            "EMAIL (failed-send fallback) to=%s subject=%r text=%r",
+            to, subject, _redact_text(text),
+        )
         return False
 
     logger.info("EMAIL sent to=%s subject=%r", to, subject)

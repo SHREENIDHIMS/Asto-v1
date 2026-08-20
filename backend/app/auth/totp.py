@@ -26,7 +26,9 @@ TOTP_VALID_WINDOW: int = 1  # ±1 x 30s window tolerates clock drift
 
 def _fernet_key() -> bytes:
     """Deterministic 32-byte url-safe Fernet key derived from jwt_secret."""
-    secret = (settings.jwt_secret or "asto-dev-2fa-key").encode("utf-8")
+    # No fallback: config.py guarantees a strong ASTO_JWT_SECRET in every
+    # environment, so the derived key can never degrade to a public constant.
+    secret = settings.jwt_secret.encode("utf-8")
     return base64.urlsafe_b64encode(hashlib.sha256(secret).digest())
 
 

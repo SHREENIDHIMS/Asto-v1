@@ -60,16 +60,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — restricted in production, permissive in dev
-if settings.cors_origins == "*":
-    allow_origins = ["*"]
-else:
-    allow_origins = settings.cors_origins.split(",")
+# CORS — restricted in production, permissive in dev. A "*" origin is
+# incompatible with credentialed (cookie) requests — browsers reject the
+# combination and it would weaken the H1 refresh-cookie flow. When "*" is set,
+# credentials are disabled, so cookie auth always requires an explicit origin.
+allow_origins = ["*"] if settings.cors_origins == "*" else settings.cors_origins.split(",")
+allow_credentials = settings.cors_origins != "*"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
