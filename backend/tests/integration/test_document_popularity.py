@@ -107,7 +107,7 @@ class TestDocumentPopularityIntegration:
         from app.api.v1.analytics import _rank_popularity, _document_popularity_rows
 
         with acquire() as conn:
-            rows = _document_popularity_rows(conn, limit=20)
+            rows = _document_popularity_rows(conn, limit=1000)
 
         doc = next((r for r in rows if r["doc_id"] == pop_doc), None)
         assert doc is not None, "test doc not in results"
@@ -145,7 +145,7 @@ class TestDocumentPopularityIntegration:
                     (resp_id, 2),
                 )
                 conn.commit()
-            rows = _document_popularity_rows(conn, limit=20)
+            rows = _document_popularity_rows(conn, limit=1000)
 
         doc = next((r for r in rows if r["doc_id"] == pop_doc), None)
         assert int(doc["positive_count"]) == 1

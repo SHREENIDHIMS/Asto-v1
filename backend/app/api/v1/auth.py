@@ -793,7 +793,10 @@ async def forgot_password(
 
 
 @router.post("/reset-password")
-async def reset_password(request: ResetPasswordRequest) -> dict:
+async def reset_password(
+    request: ResetPasswordRequest,
+    http_request: Request,
+) -> dict:
     """Set a new password with a one-time reset token (H2).
 
     The token is looked up by hash, must be unused and unexpired, and is
@@ -801,11 +804,23 @@ async def reset_password(request: ResetPasswordRequest) -> dict:
     stored audience (never user-supplied), same as /change-password. All of
     the identity's refresh sessions are revoked so a password reset logs
     the account out everywhere at once.
+
+    The endpoint is throttled per source IP with the same sentinel-email
+    scheme as /forgot-password so reset tokens cannot be brute-forced; the
+    throttle row is committed up front so even invalid-token guesses count
+    toward the per-IP cap (they never touch a real account's login lockout).
     """
     token_hash = hash_token(request.token)
     now = datetime.now(timezone.utc)
+    ip = _client_ip(http_request)
     with session.acquire() as conn:
         with conn.cursor() as cur:
+            _check_reset_throttle(cur, ip)
+            _record_reset_attempt(cur, ip)
+            # Persist the throttle record immediately: an invalid-token guess
+            # below raises before the final commit, which would otherwise
+            # roll the counter back and defeat brute-force protection.
+            conn.commit()
             cur.execute(
                 "SELECT id, audience, identity_id, expires_at FROM password_resets "
                 "WHERE token_hash = %s AND used_at IS NULL",

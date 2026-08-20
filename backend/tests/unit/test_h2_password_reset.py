@@ -136,12 +136,15 @@ class TestResetPassword:
 
         conn = _conn()
         cur = conn.cursor.return_value
-        cur.fetchone.return_value = {
-            "id": 5,
-            "audience": "staff",
-            "identity_id": 2,
-            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
-        }
+        cur.fetchone.side_effect = [
+            {"ip_fails": 0},  # reset throttle count → allowed
+            {
+                "id": 5,
+                "audience": "staff",
+                "identity_id": 2,
+                "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+            },
+        ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             response = _client().post(
                 "/api/v1/auth/reset-password",
@@ -176,12 +179,15 @@ class TestResetPassword:
     def test_client_audience_targets_clients_table(self):
         conn = _conn()
         cur = conn.cursor.return_value
-        cur.fetchone.return_value = {
-            "id": 5,
-            "audience": "client",
-            "identity_id": 7,
-            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
-        }
+        cur.fetchone.side_effect = [
+            {"ip_fails": 0},  # reset throttle count → allowed
+            {
+                "id": 5,
+                "audience": "client",
+                "identity_id": 7,
+                "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+            },
+        ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             response = _client().post(
                 "/api/v1/auth/reset-password",
@@ -210,12 +216,15 @@ class TestResetPassword:
     def test_expired_token_rejected(self):
         conn = _conn()
         cur = conn.cursor.return_value
-        cur.fetchone.return_value = {
-            "id": 5,
-            "audience": "staff",
-            "identity_id": 2,
-            "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
-        }
+        cur.fetchone.side_effect = [
+            {"ip_fails": 0},  # reset throttle count → allowed
+            {
+                "id": 5,
+                "audience": "staff",
+                "identity_id": 2,
+                "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
+            },
+        ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             response = _client().post(
                 "/api/v1/auth/reset-password",
