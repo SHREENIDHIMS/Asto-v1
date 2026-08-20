@@ -235,7 +235,7 @@ Condensed, highest-signal findings by severity:
 - **2.4** Fix global `content_hash` dedup scoping + identical-content zero-chunk re-upload.
 - **2.5** Fix `requirements._infer_case_type` column selection + N+1.
 - **2.6** Isolate `ingest_batch` per-file (try/except around chunk/embed/index so one bad file can't abort the run).
-- **2.7** Fix OCR/zip-bomb OOM (page-at-a-time rendering, archive entry-size caps).
+- **2.7** Fix OCR/zip-bomb OOM (page-at-a-time rendering, archive entry-size caps). → **done (2026-08-21)**
 - **2.8** Audit trail for watermark bypass (log when raw bytes are served); move pypdf/PIL out of the request path or harden.
 
 ### Phase 3 — P2 (correctness / ranking / docs)
@@ -338,7 +338,10 @@ passed** (unit + integration) after this session's changes.
 
 ### Remaining (not yet addressed)
 - **#1 Confidence model overconfidence** (fix 3.2) — routing `partial` band still unreachable; needs score-magnitude redesign + benchmark before/after.
-- **#12 OCR/zip-bomb OOM** (2.7), **#13 watermark bypass audit trail** (2.8), **#15 login timing** (2.3, partially — 2FA/reset throttled but bcrypt timing not), **#17 governance editor false control**, **#18 PII narrow**, **#20 reranker budget unenforceable**, **#23 synonym expansion**, **#19 `document_popularity` chunk-vs-doc keying**, plus frontend hardening (3.5) and design-doc freeze (3.6).
+- **#13 watermark bypass** (2.8) — audit trail added (S1-S7), but pypdf/PIL still run in the always-on request path; move to batch or harden.
+- **#17 governance editor false control** — `PUT /admin/governance` rewrites `roles_config.py`, but `permissions.require_role` uses a hardcoded hierarchy; `rbac.py` never reads `ROLE_DEPARTMENTS`.
+- **#23 synonym expansion** (3.3) — `build_tsquery(combined_text)` uses the unexpanded text; `synonyms` table fetched uncached every request.
+- **3.2 confidence model**, **3.5 frontend hardening** (mostly done), **3.6 design-doc freeze**.
 
 ### Constraint-compliance map — updated rows
 | CLAUDE.md rule | Status |

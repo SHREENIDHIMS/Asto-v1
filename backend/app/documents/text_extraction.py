@@ -15,6 +15,38 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Decompression caps for zip-backed formats (ODT/EPUB). The ingest batch runs
+# under a ~200MB memory cap, so an archive entry inflating past the per-entry
+# cap — or a whole archive inflating past the total cap — is refused as a
+# zip-bomb instead of being read into RAM (audit finding 2.7).
+_MAX_ARCHIVE_ENTRY_BYTES = 50 * 1024 * 1024
+_MAX_ARCHIVE_TOTAL_BYTES = 100 * 1024 * 1024
+
+
+def _bounded_read(zf: zipfile.ZipFile, name: str, cap: int) -> bytes:
+    """Read one archive member, refusing zip-bomb entries.
+
+    Checks the central-directory ``file_size`` first, then streams the inflate
+    through ``read(cap + 1)`` so even a lying header can only pull ``cap + 1``
+    decompressed bytes into RAM.
+    """
+    import zipfile
+
+    info = zf.getinfo(name)
+    if info.file_size > cap:
+        raise ValueError(
+            f"Archive entry {name!r} inflates to {info.file_size} bytes "
+            f"(cap {cap}); refusing zip-bomb"
+        )
+    with zf.open(name) as fh:
+        content = fh.read(cap + 1)
+    if len(content) > cap:
+        raise ValueError(
+            f"Archive entry {name!r} inflated past the {cap}-byte cap; "
+            "refusing zip-bomb"
+        )
+    return content
+
 try:
     import pdfplumber
 
@@ -208,6 +240,7 @@ def _extract_pptx(path: Path) -> ExtractedText:
 
 
 def _extract_odt(path: Path) -> ExtractedText:
+    import io
     import xml.etree.ElementTree as ET
     import zipfile
 
@@ -216,8 +249,8 @@ def _extract_odt(path: Path) -> ExtractedText:
         "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
     }
     with zipfile.ZipFile(str(path)) as zf:
-        with zf.open("content.xml") as fh:
-            tree = ET.parse(fh)
+        content = _bounded_read(zf, "content.xml", _MAX_ARCHIVE_ENTRY_BYTES)
+    tree = ET.parse(io.BytesIO(content))
     root = tree.getroot()
 
     parts: list[str] = []
@@ -265,12 +298,20 @@ def _extract_epub(path: Path) -> ExtractedText:
 
     chapters: list[str] = []
     with zipfile.ZipFile(str(path)) as zf:
+        total_bytes = 0
         for name in zf.namelist():
             if not name.lower().endswith((".xhtml", ".html", ".htm")):
                 continue
-            content = zf.read(name).decode("utf-8", errors="replace")
+            content = _bounded_read(zf, name, _MAX_ARCHIVE_ENTRY_BYTES)
+            total_bytes += len(content)
+            if total_bytes > _MAX_ARCHIVE_TOTAL_BYTES:
+                raise ValueError(
+                    f"EPUB decompresses past the {_MAX_ARCHIVE_TOTAL_BYTES}-byte "
+                    "total cap; refusing zip-bomb"
+                )
+            text = content.decode("utf-8", errors="replace")
             parser = TextExtractor()
-            parser.feed(content)
+            parser.feed(text)
             chapter = "\n".join(parser.parts).strip()
             if chapter:
                 chapters.append(chapter)

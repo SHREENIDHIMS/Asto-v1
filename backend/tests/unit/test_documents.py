@@ -280,6 +280,77 @@ class TestTextExtractionFormats:
         raise AssertionError("expected ValueError for unsupported extension")
 
 
+class TestZipBombCaps:
+    """Audit 2.7: ODT/EPUB archive entries must be size-capped so a zip-bomb
+    cannot inflate into the ~200MB-capped batch worker."""
+
+    def test_odt_content_xml_over_entry_cap_rejected(self, tmp_path):
+        import zipfile
+
+        from unittest.mock import patch
+
+        p = tmp_path / "bomb.odt"
+        with zipfile.ZipFile(str(p), "w") as zf:
+            zf.writestr("content.xml", "<text:p>" + "x" * 500 + "</text:p>")
+        with patch("app.documents.text_extraction._MAX_ARCHIVE_ENTRY_BYTES", 100):
+            with pytest.raises(ValueError, match="zip-bomb"):
+                extract_text(p)
+
+    def test_epub_chapter_over_entry_cap_rejected(self, tmp_path):
+        import zipfile
+
+        from unittest.mock import patch
+
+        p = tmp_path / "bomb.epub"
+        with zipfile.ZipFile(str(p), "w") as zf:
+            zf.writestr("EPUB/chapter1.xhtml", "<p>" + "y" * 500 + "</p>")
+        with patch("app.documents.text_extraction._MAX_ARCHIVE_ENTRY_BYTES", 100):
+            with pytest.raises(ValueError, match="zip-bomb"):
+                extract_text(p)
+
+    def test_epub_total_decompressed_over_cap_rejected(self, tmp_path):
+        import zipfile
+
+        from unittest.mock import patch
+
+        p = tmp_path / "manybomb.epub"
+        with zipfile.ZipFile(str(p), "w") as zf:
+            for i in range(4):
+                zf.writestr(f"EPUB/c{i}.xhtml", "<p>" + "z" * 120 + "</p>")
+        # 4 entries * ~126 bytes each < per-entry cap, but total > 200 cap.
+        with (
+            patch("app.documents.text_extraction._MAX_ARCHIVE_ENTRY_BYTES", 1000),
+            patch("app.documents.text_extraction._MAX_ARCHIVE_TOTAL_BYTES", 200),
+        ):
+            with pytest.raises(ValueError, match="total cap"):
+                extract_text(p)
+
+    def test_legit_odt_and_epub_still_extract(self, tmp_path):
+        import zipfile
+
+        p = tmp_path / "ok.odt"
+        content_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<office:document-content '
+            'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+            'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+            '<office:body><office:text>'
+            "<text:p>Loan to value ceiling</text:p>"
+            "</office:text></office:body></office:document-content>"
+        )
+        with zipfile.ZipFile(str(p), "w") as zf:
+            zf.writestr("content.xml", content_xml)
+        assert "Loan to value ceiling" in extract_text(p).text
+
+        p2 = tmp_path / "ok.epub"
+        with zipfile.ZipFile(str(p2), "w") as zf:
+            zf.writestr("EPUB/c1.xhtml", "<p>Term assurance basics</p>")
+            zf.writestr("EPUB/c2.xhtml", "<p>Whole of life</p>")
+        result = extract_text(p2)
+        assert "Term assurance basics" in result.text
+        assert "Whole of life" in result.text
+
+
 class TestAllowedExtensions:
     def test_new_formats_accepted(self):
         for name in [
