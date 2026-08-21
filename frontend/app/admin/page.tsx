@@ -20,8 +20,9 @@ import {
   RefreshCw,
   Save,
   ShieldAlert,
-  Sparkles,
-  Upload,
+   Sparkles,
+   Trash2,
+   Upload,
   UserPlus,
   Users,
   X,
@@ -84,10 +85,14 @@ import {
    DocumentVersion,
    AdminDocument,
    AdminTag,
-   AdminUser,
-   AdminClient,
-   KnowledgeGap,
-} from "@/lib/api-client";
+    AdminUser,
+    AdminClient,
+    KnowledgeGap,
+    listPinnedAnswers,
+    patchPinnedAnswer,
+    deletePinnedAnswer,
+    PinnedAnswer,
+  } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
 import AppShell from "@/components/layout/AppShell";
@@ -2433,6 +2438,166 @@ function KnowledgeBaseTab({ token }: { token: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Pinned Answers tab (curated verbatim response packages)
+// ---------------------------------------------------------------------------
+
+function PinnedAnswersTab({ token }: { token: string }) {
+  const [pins, setPins] = useState<PinnedAnswer[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await listPinnedAnswers(token);
+      setPins(res.pinned_answers);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load pinned answers");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleToggle = async (pin: PinnedAnswer) => {
+    setBusyId(pin.id);
+    setError(null);
+    try {
+      await patchPinnedAnswer(token, pin.id, { is_active: !pin.is_active });
+      setPins((prev) =>
+        prev.map((p) => (p.id === pin.id ? { ...p, is_active: !p.is_active } : p))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update pin");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleAudienceChange = async (pin: PinnedAnswer, audience: string) => {
+    setBusyId(pin.id);
+    setError(null);
+    try {
+      await patchPinnedAnswer(token, pin.id, {
+        audience: audience as PinnedAnswer["audience"],
+      });
+      setPins((prev) =>
+        prev.map((p) => (p.id === pin.id ? { ...p, audience: audience as PinnedAnswer["audience"] } : p))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update audience");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (pin: PinnedAnswer) => {
+    setBusyId(pin.id);
+    setError(null);
+    try {
+      await deletePinnedAnswer(token, pin.id);
+      setPins((prev) => prev.filter((p) => p.id !== pin.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete pin");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Verified answers replay a stored response package verbatim when a
+        staff or client query matches exactly — no retrieval, no generation.
+        Pin new answers from the AI Assistant message menu (&quot;Pin as
+        verified answer&quot;).
+      </p>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : pins.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center text-sm text-muted-foreground">
+            No pinned answers yet. Run a search in the AI Assistant and choose
+            &quot;Pin as verified answer&quot; from the message menu.
+          </CardContent>
+        </Card>
+      ) : (
+        pins.map((pin) => (
+          <Card key={pin.id} className={pin.is_active ? "" : "opacity-60"}>
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{pin.query}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {pin.excerpt_count} excerpt{pin.excerpt_count === 1 ? "" : "s"} ·{" "}
+                    {Math.round(pin.confidence * 100)}% confidence · source{" "}
+                    {pin.source_response_id?.slice(0, 8) || "—"}
+                  </p>
+                </div>
+                <Badge variant={pin.is_active ? "default" : "outline"}>
+                  {pin.is_active ? "Active" : "Inactive"}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Select
+                  value={pin.audience}
+                  onValueChange={(v) => void handleAudienceChange(pin, v)}
+                >
+                  <SelectTrigger className="w-[150px] h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="staff">Staff only</SelectItem>
+                    <SelectItem value="client">Clients only</SelectItem>
+                    <SelectItem value="any">Everyone</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busyId === pin.id}
+                  onClick={() => void handleToggle(pin)}
+                >
+                  {pin.is_active ? "Deactivate" : "Activate"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  disabled={busyId === pin.id}
+                  onClick={() => void handleDelete(pin)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" />
+                  Delete
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SOP Management tab (Phase F3 — read-all + access request review)
 // ---------------------------------------------------------------------------
 
@@ -3743,6 +3908,7 @@ export default function AdminPage() {
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
             <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
+            <TabsTrigger value="pinned">Pinned</TabsTrigger>
             <TabsTrigger value="sops">SOPs</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
             <TabsTrigger value="clients">Clients</TabsTrigger>
@@ -3763,6 +3929,9 @@ export default function AdminPage() {
           </TabsContent>
           <TabsContent value="knowledge">
             <KnowledgeBaseTab token={token} />
+          </TabsContent>
+          <TabsContent value="pinned">
+            <PinnedAnswersTab token={token} />
           </TabsContent>
           <TabsContent value="sops">
             <SopManagementTab token={token} />

@@ -2,8 +2,10 @@
 
 import { useRef, useState } from "react";
 import {
+  BadgeCheck,
   Check,
   Copy,
+  Pin,
   Speaker,
   StopCircle,
   RefreshCw,
@@ -26,8 +28,8 @@ import {
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ChatTurn } from "@/hooks/use-chat-history";
-import { submitFeedback } from "@/lib/api-client";
-import { getToken } from "@/lib/auth";
+import { createPinnedAnswer, submitFeedback } from "@/lib/api-client";
+import { decodeToken, getToken, isAdminRole } from "@/lib/auth";
 import { HighlightedText } from "@/components/chat/HighlightedText";
 
 interface AssistantMessageProps {
@@ -188,6 +190,35 @@ export default function AssistantMessage({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(false);
+  const [pinState, setPinState] = useState<"idle" | "pinning" | "pinned" | "error">("idle");
+  const isAdmin = (() => {
+    try {
+      return isAdminRole(decodeToken(getToken() ?? "")?.role);
+    } catch {
+      return false;
+    }
+  })();
+
+  const handlePinAnswer = async () => {
+    if (pinState === "pinning" || pinState === "pinned") return;
+    const token = getToken();
+    if (!token) {
+      setPinState("error");
+      return;
+    }
+    setPinState("pinning");
+    try {
+      await createPinnedAnswer(token, {
+        query: turn.query,
+        response_id: response.response_id,
+        audience: "staff",
+        package: response as unknown as Record<string, unknown>,
+      });
+      setPinState("pinned");
+    } catch {
+      setPinState("error");
+    }
+  };
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -326,6 +357,15 @@ export default function AssistantMessage({
         </div>
 
         {/* Answer bubble */}
+        {response.pinned && (
+          <span
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-green-600 dark:text-green-400"
+            title="Admin-verified answer, served from the curated knowledge base"
+          >
+            <BadgeCheck className="h-3.5 w-3.5" />
+            Verified answer
+          </span>
+        )}
         <div
           className={cn(
             "rounded-2xl rounded-tl-sm border border-border bg-card p-4 shadow-sm text-sm leading-relaxed whitespace-pre-wrap break-words",
@@ -473,6 +513,26 @@ export default function AssistantMessage({
                   <Copy className="h-3 w-3 mr-2" />
                   Copy with citations
                 </DropdownMenuItem>
+                {isAdmin && !noAnswer && !response.pinned && (
+                  <DropdownMenuItem
+                    className="text-xs py-1.5"
+                    disabled={pinState === "pinning" || pinState === "pinned"}
+                    onSelect={() => {
+                      void handlePinAnswer();
+                    }}
+                  >
+                    {pinState === "pinned" ? (
+                      <BadgeCheck className="h-3 w-3 mr-2 text-green-500" />
+                    ) : (
+                      <Pin className="h-3 w-3 mr-2" />
+                    )}
+                    {pinState === "pinned"
+                      ? "Pinned as verified answer"
+                      : pinState === "error"
+                        ? "Pin failed — retry"
+                        : "Pin as verified answer"}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <div className="px-3 py-2 text-xs text-muted-foreground">
                   Sources

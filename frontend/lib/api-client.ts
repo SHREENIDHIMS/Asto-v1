@@ -137,6 +137,90 @@ export interface RecentSearch {
   times_run: number;
 }
 
+// ---------------------------------------------------------------------------
+// Admin: pinned answers (curated verbatim response packages)
+// ---------------------------------------------------------------------------
+
+export interface PinnedAnswer {
+  id: number;
+  query: string;
+  audience: 'staff' | 'client' | 'any';
+  confidence: number;
+  source_response_id: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  excerpt_count: number;
+}
+
+export async function listPinnedAnswers(
+  token: string
+): Promise<{ pinned_answers: PinnedAnswer[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load pinned answers');
+  }
+  return response.json();
+}
+
+export async function createPinnedAnswer(
+  token: string,
+  payload: {
+    query: string;
+    response_id: string;
+    audience: 'staff' | 'client' | 'any';
+    package: Record<string, unknown>;
+  }
+): Promise<PinnedAnswer> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to pin answer');
+  }
+  return response.json();
+}
+
+export async function patchPinnedAnswer(
+  token: string,
+  id: number,
+  payload: { is_active?: boolean; audience?: 'staff' | 'client' | 'any' }
+): Promise<{ message: string; id: number }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers/${id}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to update pinned answer');
+  }
+  return response.json();
+}
+
+export async function deletePinnedAnswer(token: string, id: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok && response.status !== 204) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to delete pinned answer');
+  }
+}
+
 export async function listRecentSearches(
   token: string,
   limit = 10
@@ -203,6 +287,14 @@ export interface SearchResponse {
   facts?: StructuredFact[];
   retrieval_path?: 'document' | 'structured_fact';
   no_answer_reason?: string | null;
+  citations?: Citation[];
+  /** True when served from an admin-curated pinned answer. */
+  pinned?: boolean;
+  pinned_from_query?: string | null;
+}
+
+export interface Citation {
+  [key: string]: unknown;
 }
 
 export interface AuthLoginRequest {

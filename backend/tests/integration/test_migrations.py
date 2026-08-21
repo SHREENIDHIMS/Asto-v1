@@ -122,7 +122,28 @@ def test_upgrade_head_stamps_alembic_version(migrated_db):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT version_num FROM alembic_version")
-            assert cur.fetchone() == ("0003_scoped_chunk_dedup",)
+            assert cur.fetchone() == ("0004_pinned_answers",)
+    finally:
+        conn.close()
+
+
+def test_pinned_answers_table_exists(migrated_db):
+    """0004_pinned_answers: curated verbatim response packages must exist
+    after a fresh ``alembic upgrade head`` (serving hook queries it on
+    every search)."""
+    conn = psycopg.connect(migrated_db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_name = 'pinned_answers'"
+            )
+            assert cur.fetchone()[0] == 1
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = 'pinned_answers' AND column_name = 'audience'"
+            )
+            assert cur.fetchone()[0] == 1
     finally:
         conn.close()
 

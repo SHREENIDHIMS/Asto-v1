@@ -455,6 +455,23 @@ DDL_STATEMENTS: list[str] = [
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # --- Pinned answers (curated verbatim response packages) ---
+    """
+    CREATE TABLE IF NOT EXISTS pinned_answers (
+        id                  BIGSERIAL PRIMARY KEY,
+        query               TEXT NOT NULL,
+        query_norm          TEXT NOT NULL UNIQUE,
+        audience            TEXT NOT NULL DEFAULT 'staff'
+                            CHECK (audience IN ('staff', 'client', 'any')),
+        package             JSONB NOT NULL,
+        source_response_id  TEXT,
+        confidence          DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+        created_by          BIGINT REFERENCES users(id),
+        is_active           BOOLEAN NOT NULL DEFAULT true,
+        created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 ]
 
 # Idempotent column additions for schemas created before the dual-audience
@@ -526,6 +543,7 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets (token_hash, used_at)",
     "CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts (email, attempted_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts (ip, attempted_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_pinned_answers_active ON pinned_answers (query_norm, is_active)",
 ]
 
 
