@@ -65,6 +65,21 @@ async def gap_topics(
     return report
 
 
+@router.get("/content-coverage")
+async def content_coverage(
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Where the knowledge base is thin: per (department, doc_type)
+    approved-document and chunk counts, thinnest first, plus cells that
+    have no approved documents at all. Requires admin role."""
+    require_role(user, "admin")
+
+    from app.documents.coverage import build_coverage_report
+
+    with session.acquire() as conn:
+        return build_coverage_report(conn)
+
+
 # J6 — document popularity analytics
 _WEAK_OUTCOMES_SQL = "'no_answer', 'partial'"
 _ANSWERED_OUTCOMES_SQL = "'answer', 'partial'"

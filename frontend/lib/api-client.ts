@@ -1274,6 +1274,29 @@ export interface GapTopic {
   samples: string[];
 }
 
+/** Content coverage: per (department, doc_type) KB thickness. */
+export interface CoverageRow {
+  department: string;
+  doc_type: string;
+  documents: number;
+  chunks: number;
+  last_added?: string | null;
+  expected?: boolean;
+}
+
+export async function getContentCoverage(
+  token: string
+): Promise<{ coverage: CoverageRow[]; empty_cells: { department: string; doc_type: string }[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/analytics/content-coverage`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load content coverage');
+  }
+  return response.json();
+}
+
 export async function getGapTopics(
   token: string,
   windowDays = 30

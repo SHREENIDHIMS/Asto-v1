@@ -97,6 +97,8 @@ import {
     ReviewOverdueDocument,
     getGapTopics,
     GapTopic,
+    getContentCoverage,
+    CoverageRow,
   } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
@@ -2155,6 +2157,10 @@ function AnalyticsTab({ token }: { token: string }) {
   const [popularity, setPopularity] =
     useState<{ top_documents: DocumentPopularityEntry[]; underperforming_documents: DocumentPopularityEntry[] } | null>(null);
   const [gapTopics, setGapTopics] = useState<GapTopic[]>([]);
+  const [coverage, setCoverage] = useState<{
+    coverage: CoverageRow[];
+    empty_cells: { department: string; doc_type: string }[];
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2162,16 +2168,18 @@ function AnalyticsTab({ token }: { token: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      const [res, summaryRes, popRes, topicsRes] = await Promise.all([
+      const [res, summaryRes, popRes, topicsRes, covRes] = await Promise.all([
         getKnowledgeGaps(token),
         getAnalyticsSummary(token),
         getDocumentPopularity(token),
         getGapTopics(token),
+        getContentCoverage(token),
       ]);
       setGaps(res.knowledge_gaps);
       setSummary(summaryRes.summary);
       setPopularity(popRes);
       setGapTopics(topicsRes);
+      setCoverage(covRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -2299,6 +2307,57 @@ function AnalyticsTab({ token }: { token: string }) {
                     </ul>
                   </div>
                 ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {coverage && (coverage.coverage.length > 0 || coverage.empty_cells.length > 0) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Content coverage</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {coverage.empty_cells.length > 0 && (
+                  <div className="rounded-md border border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
+                    <p className="font-medium text-amber-600 dark:text-amber-400 mb-1">
+                      No approved documents for:
+                    </p>
+                    <p>
+                      {coverage.empty_cells
+                        .map((c) => `${c.department} / ${c.doc_type}`)
+                        .join(" · ")}
+                    </p>
+                  </div>
+                )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-muted-foreground border-b border-border">
+                        <th className="py-2 pr-3 font-medium">Department</th>
+                        <th className="py-2 pr-3 font-medium">Doc type</th>
+                        <th className="py-2 pr-3 font-medium">Documents</th>
+                        <th className="py-2 pr-3 font-medium">Chunks</th>
+                        <th className="py-2 font-medium">Last added</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coverage.coverage.slice(0, 15).map((row) => (
+                        <tr key={`${row.department}-${row.doc_type}`} className="border-b border-border/50">
+                          <td className="py-1.5 pr-3">{row.department}</td>
+                          <td className="py-1.5 pr-3">{row.doc_type}</td>
+                          <td className="py-1.5 pr-3">{row.documents}</td>
+                          <td className="py-1.5 pr-3">{row.chunks}</td>
+                          <td className="py-1.5">{row.last_added ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {coverage.coverage.length > 15 && (
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      Showing the 15 thinnest of {coverage.coverage.length} areas.
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
           )}
