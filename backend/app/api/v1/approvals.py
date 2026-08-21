@@ -115,6 +115,13 @@ def _apply_document_status(
                     link="/staff?tab=clients",
                 )
 
+        # Auto-event: keep the client-facing case timeline current (only
+        # for client-relevant transitions; the helper never raises).
+        if to_status in ("approved", "rejected"):
+            from app.cases.timeline import record_document_status_events
+
+            record_document_status_events(conn, document_id, to_status, reason)
+
 
 @router.get("/documents/pending")
 async def list_pending_documents(

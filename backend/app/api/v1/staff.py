@@ -504,12 +504,12 @@ async def advance_workflow(
         with conn.cursor() as cur:
             if is_admin(user):
                 cur.execute(
-                    "SELECT id, status FROM workflows WHERE id = %s",
+                    "SELECT id, status, case_id FROM workflows WHERE id = %s",
                     (workflow_id,),
                 )
             else:
                 cur.execute(
-                    "SELECT id, status FROM workflows "
+                    "SELECT id, status, case_id FROM workflows "
                     "WHERE id = %s AND department = ANY(%s)",
                     (workflow_id, depts),
                 )
@@ -532,6 +532,12 @@ async def advance_workflow(
                 "UPDATE workflows SET status = %s, updated_at = now() WHERE id = %s",
                 (next_status, workflow_id),
             )
+
+            # Auto-event: keep the client-facing case timeline current when
+            # the workflow is tied to a case (helper never raises).
+            from app.cases.timeline import record_workflow_stage_event
+
+            record_workflow_stage_event(conn, workflow_id, row.get("case_id"), next_status)
 
             # Check if workflow is now overdue (due_at has passed). The
             # comparison runs in Postgres (now()) so Python never needs a
