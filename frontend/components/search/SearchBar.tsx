@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Search, Loader2, AlertCircle, CornerDownLeft } from "lucide-react";
+import { Search, Loader2, AlertCircle, CornerDownLeft, Mic } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { getSearchSuggestions } from "@/lib/api-client";
 import { getToken } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 
 interface SearchBarProps {
   onSearch: (query: string, urgency?: boolean) => void;
@@ -96,17 +97,31 @@ export default function SearchBar({
     []
   );
 
+  const runSearch = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (trimmed && !isLoading) {
+        onSearch(trimmed, showUrgency ? urgency : undefined);
+        setQuery("");
+        setOpen(false);
+        setSuggestions([]);
+        if (showUrgency) setUrgency(false);
+      }
+    },
+    [isLoading, onSearch, showUrgency, urgency]
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = query.trim();
-    if (trimmed && !isLoading) {
-      onSearch(trimmed, showUrgency ? urgency : undefined);
-      setQuery("");
-      setOpen(false);
-      setSuggestions([]);
-      if (showUrgency) setUrgency(false);
-    }
+    runSearch(query);
   };
+
+  // Voice input (Web Speech API, browser-side only). A final transcript
+  // fills the input and submits immediately.
+  const speech = useSpeechRecognition((text) => {
+    setQuery(text);
+    runSearch(text);
+  });
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!open || suggestions.length === 0) return;
@@ -156,13 +171,36 @@ export default function SearchBar({
         />
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
 
+        {speech.supported && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "absolute right-[3.75rem] top-1/2 -translate-y-1/2 h-9 w-9 rounded-full",
+              speech.listening && "text-destructive animate-pulse"
+            )}
+            onClick={() => (speech.listening ? speech.stop() : speech.start())}
+            disabled={isLoading}
+            aria-label={speech.listening ? "Stop voice input" : "Start voice input"}
+            title={speech.listening ? "Stop voice input" : "Ask by voice"}
+          >
+            {speech.listening ? (
+              <span className="block h-2.5 w-2.5 rounded-full bg-destructive" />
+            ) : (
+              <Mic className="h-4 w-4" />
+            )}
+          </Button>
+        )}
+
         {showUrgency && (
           <Button
             type="button"
             variant={urgency ? "default" : "outline"}
             size="sm"
             className={cn(
-              "absolute right-20 top-1/2 -translate-y-1/2 h-9",
+              "absolute top-1/2 -translate-y-1/2 h-9",
+              speech.supported ? "right-[6.75rem]" : "right-20",
               "gap-1.5 text-xs",
               urgency
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
