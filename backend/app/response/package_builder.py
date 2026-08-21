@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from app.config import settings
 from app.ranking.rrf import RRF_K, RankedCandidate
 from app.response.summarizer import SummarySentence, summarize_excerpts
-from app.search.matched_terms import matched_terms
+from app.search.matched_terms import matched_terms, significant_query_terms
 
 
 def _normalize_rrf_score(rrf_score: float) -> float:
@@ -29,6 +29,31 @@ def _normalize_rrf_score(rrf_score: float) -> float:
     if max_rrf <= 0:
         return 0.0
     return min((rrf_score / max_rrf) * 100.0, 100.0)
+
+
+# Smoothing floor for the term-coverage factor: with zero lexical overlap
+# the factor is 0.55 (not 0), so a single well-ranked chunk can still route
+# as "partial" rather than being discarded outright.
+_COVERAGE_FLOOR = 0.55
+
+
+def _calibrated_confidence(rrf_score: float, coverage: float) -> float:
+    """Rank-agreement × query-term-coverage calibrated confidence (0-100).
+
+    The raw normalized RRF saturates near 100 for any top-ranked candidate
+    (rank (2,2) ≈ 98.4, rank (5,5) ≈ 93.8), which made the ``partial``
+    band unreachable — every query retrieving anything at all routed to
+    "answer". Multiplying rank agreement by a smoothed term-coverage
+    factor spreads the scale so weak lexical matches land in
+    partial/no_answer while strong matches are unaffected:
+
+        confidence = 100 × (rrf / max_rrf) × (floor + (1−floor) × coverage)
+
+    Calibration reasoning: evaluation/reports/2026-08-22_confidence_calibration.md
+    """
+    agreement = _normalize_rrf_score(rrf_score) / 100.0
+    coverage_factor = _COVERAGE_FLOOR + (1.0 - _COVERAGE_FLOOR) * max(0.0, min(coverage, 1.0))
+    return round(min(agreement * coverage_factor * 100.0, 100.0), 1)
 
 
 @dataclass
@@ -118,8 +143,18 @@ def build_response_package(
     # Response title from the most relevant document
     title = excerpts[0].source.title if excerpts else "No Results Found"
 
-    # Confidence from the top candidate
-    top_confidence = excerpts[0].confidence if excerpts else 0.0
+    # Response-level confidence: calibrated from the top candidate's rank
+    # agreement AND how much of the query it actually covers lexically.
+    if excerpts:
+        significant = significant_query_terms(query_text)
+        coverage = (
+            len(excerpts[0].matched_terms) / len(significant)
+            if significant
+            else 1.0  # no measurable terms — do not penalize
+        )
+        top_confidence = _calibrated_confidence(candidates[0].rrf_score, coverage)
+    else:
+        top_confidence = 0.0
 
     # Best-effort extractive summary of the top excerpts (never raises)
     summary = summarize_excerpts(excerpts, query_text=query_text)
