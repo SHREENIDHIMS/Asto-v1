@@ -497,6 +497,9 @@ ALTER_STATEMENTS: list[str] = [
     # Fresh databases get it via the CREATE TABLE above; databases that
     # already ran an earlier ensure_schema()/baseline without it need this.
     "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS audience TEXT",
+    # documents.review_due: scheduled content review date (compliance).
+    # NULL = no review schedule. Overdue = review_due < CURRENT_DATE.
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_due DATE",
 ]
 
 # CHECK constraints added via ALTER (no IF NOT EXISTS for constraints in PG,
@@ -544,6 +547,7 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts (email, attempted_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts (ip, attempted_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_pinned_answers_active ON pinned_answers (query_norm, is_active)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_review_due ON documents (review_due) WHERE review_due IS NOT NULL",
 ]
 
 

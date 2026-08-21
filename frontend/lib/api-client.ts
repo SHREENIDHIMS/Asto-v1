@@ -291,6 +291,8 @@ export interface SearchResponse {
   /** True when served from an admin-curated pinned answer. */
   pinned?: boolean;
   pinned_from_query?: string | null;
+  /** Titles of cited documents past their scheduled review date. */
+  stale_sources?: string[];
 }
 
 export interface Citation {
@@ -2438,6 +2440,54 @@ export interface AdminSummary {
   active_cases: number;
   total_gaps: number;
   pending_sop_requests: number;
+  documents_review_overdue?: number;
+}
+
+/** Documents past their scheduled review date (admin worklist). */
+export interface ReviewOverdueDocument {
+  id: number;
+  title: string;
+  department: string;
+  doc_type: string;
+  version: number;
+  review_due: string;
+  days_overdue: number;
+}
+
+export async function listReviewOverdue(
+  token: string
+): Promise<{ documents: ReviewOverdueDocument[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/documents/review-overdue`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load overdue reviews');
+  }
+  return response.json();
+}
+
+export async function setDocumentReviewDue(
+  token: string,
+  documentId: number,
+  reviewDue: string | null
+): Promise<{ document_id: number; review_due: string | null }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/documents/${documentId}/review-due`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ review_due: reviewDue }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to set review date');
+  }
+  return response.json();
 }
 
 export async function getAdminSummary(

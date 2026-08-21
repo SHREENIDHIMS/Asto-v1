@@ -122,7 +122,7 @@ def test_upgrade_head_stamps_alembic_version(migrated_db):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT version_num FROM alembic_version")
-            assert cur.fetchone() == ("0004_pinned_answers",)
+            assert cur.fetchone() == ("0005_document_review_due",)
     finally:
         conn.close()
 

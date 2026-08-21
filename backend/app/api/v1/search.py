@@ -102,6 +102,7 @@ class SearchResponse(BaseModel):
     citations: list[dict] = []
     pinned: bool = False
     pinned_from_query: str | None = None
+    stale_sources: list[str] = []
 
 
 def _serialize(package) -> dict:
@@ -399,6 +400,17 @@ def _run_pipeline(
             confidence=package.confidence,
         )
 
+    # Stale-source check: flag cited documents past their review date so
+    # the response can warn that an excerpt may be outdated (compliance).
+    stale_sources: list[str] = []
+    if package.routing != "no_answer":
+        with session.acquire() as conn:
+            from app.documents.review import stale_source_titles
+
+            stale_sources = stale_source_titles(
+                conn, [c.document_id for c in ranked[:25]]
+            )
+
     # Re-check the staff client-assignment leg of the SQL scope as a safety
     # net (rule #1 re-check). Clients and admins need no assignment list.
     assigned_client_ids = None
@@ -443,6 +455,7 @@ def _run_pipeline(
         )
 
     payload = _serialize(package)
+    payload["stale_sources"] = stale_sources
 
     for s in payload["summary"]:
         if emit:

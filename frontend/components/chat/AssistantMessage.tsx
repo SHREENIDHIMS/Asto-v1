@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import {
+  AlertTriangle,
   BadgeCheck,
   Check,
   Copy,
@@ -388,6 +389,18 @@ export default function AssistantMessage({
             </>
           )}
         </div>
+
+        {/* Stale-source compliance warning */}
+        {!noAnswer && (response.stale_sources?.length ?? 0) > 0 && (
+          <p className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+            <span>
+              Source{response.stale_sources!.length > 1 ? "s" : ""} past their
+              review date: {response.stale_sources!.join(", ")}. Verify before
+              relying on this.
+            </span>
+          </p>
+        )}
 
         {/* Action row */}
         <div className="flex items-center gap-1 -ml-1">

@@ -265,6 +265,13 @@ async def admin_summary(user: dict = Depends(require_auth)) -> dict:
             )
             pending_sop_requests = cur.fetchone()["n"] or 0
 
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM documents "
+                "WHERE is_active = true AND approval_status = 'approved' "
+                "AND review_due IS NOT NULL AND review_due < CURRENT_DATE"
+            )
+            documents_review_overdue = cur.fetchone()["n"] or 0
+
     return {
         "pending_approvals": pending_approvals,
         "stale_pending_approvals": stale_pending_approvals,
@@ -274,6 +281,7 @@ async def admin_summary(user: dict = Depends(require_auth)) -> dict:
         "active_cases": active_cases,
         "total_gaps": total_gaps,
         "pending_sop_requests": pending_sop_requests,
+        "documents_review_overdue": documents_review_overdue,
     }
 
 

@@ -92,6 +92,9 @@ import {
     patchPinnedAnswer,
     deletePinnedAnswer,
     PinnedAnswer,
+    listReviewOverdue,
+    setDocumentReviewDue,
+    ReviewOverdueDocument,
   } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
@@ -1210,8 +1213,65 @@ function DocumentsTab({ token }: { token: string }) {
     await loadTags();
   };
 
+  const [overdueReviews, setOverdueReviews] = useState<ReviewOverdueDocument[]>([]);
+  const [overdueBusyId, setOverdueBusyId] = useState<number | null>(null);
+
+  useEffect(() => {
+    listReviewOverdue(token)
+      .then((res) => setOverdueReviews(res.documents))
+      .catch(() => {
+        // Non-critical worklist; the summary card still shows the count.
+      });
+  }, [token]);
+
+  const handleScheduleReview = async (doc: ReviewOverdueDocument) => {
+    setOverdueBusyId(doc.id);
+    try {
+      const due = new Date();
+      due.setMonth(due.getMonth() + 6);
+      await setDocumentReviewDue(token, doc.id, due.toISOString().slice(0, 10));
+      setOverdueReviews((prev) => prev.filter((d) => d.id !== doc.id));
+    } catch {
+      // keep the entry; the admin can retry
+    } finally {
+      setOverdueBusyId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {overdueReviews.length > 0 && (
+        <Card className="border-amber-400 bg-amber-50 dark:bg-amber-950/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <AlertCircle className="h-4 w-4" />
+              {overdueReviews.length} document
+              {overdueReviews.length === 1 ? "" : "s"} past their review date
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {overdueReviews.map((doc) => (
+              <div key={doc.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate">
+                  {doc.title}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    ({doc.days_overdue} day{doc.days_overdue === 1 ? "" : "s"} overdue)
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={overdueBusyId === doc.id}
+                  onClick={() => void handleScheduleReview(doc)}
+                >
+                  Schedule review (+6 mo)
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
@@ -3232,6 +3292,14 @@ function DashboardTab({ token }: { token: string }) {
       label: "SOP access requests",
       value: summary ? summary.pending_sop_requests.toLocaleString() : "—",
       hint: "awaiting review",
+    },
+    {
+      label: "Reviews overdue",
+      value: summary
+        ? (summary.documents_review_overdue ?? 0).toLocaleString()
+        : "—",
+      hint: "documents past their review date",
+      alert: summary ? (summary.documents_review_overdue ?? 0) > 0 : false,
     },
   ];
 
