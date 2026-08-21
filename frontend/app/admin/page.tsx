@@ -95,6 +95,8 @@ import {
     listReviewOverdue,
     setDocumentReviewDue,
     ReviewOverdueDocument,
+    getGapTopics,
+    GapTopic,
   } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
@@ -2152,6 +2154,7 @@ function AnalyticsTab({ token }: { token: string }) {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [popularity, setPopularity] =
     useState<{ top_documents: DocumentPopularityEntry[]; underperforming_documents: DocumentPopularityEntry[] } | null>(null);
+  const [gapTopics, setGapTopics] = useState<GapTopic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2159,14 +2162,16 @@ function AnalyticsTab({ token }: { token: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      const [res, summaryRes, popRes] = await Promise.all([
+      const [res, summaryRes, popRes, topicsRes] = await Promise.all([
         getKnowledgeGaps(token),
         getAnalyticsSummary(token),
         getDocumentPopularity(token),
+        getGapTopics(token),
       ]);
       setGaps(res.knowledge_gaps);
       setSummary(summaryRes.summary);
       setPopularity(popRes);
+      setGapTopics(topicsRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -2266,6 +2271,37 @@ function AnalyticsTab({ token }: { token: string }) {
               </CardContent>
             </Card>
           </div>
+
+          {gapTopics.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Recurring unanswered topics (last 30 days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Shared keywords across failed queries — candidates for new or
+                  updated documents, or synonym mappings in the Knowledge Base.
+                </p>
+                {gapTopics.map((t) => (
+                  <div key={t.topic} className="rounded-md border border-border p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{t.topic}</span>
+                      <Badge variant="outline">
+                        {t.query_count} quer{t.query_count === 1 ? "y" : "ies"}
+                      </Badge>
+                    </div>
+                    <ul className="text-xs text-muted-foreground space-y-0.5">
+                      {t.samples.map((s) => (
+                        <li key={s} className="truncate">“{s}”</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {gaps.length === 0 ? (
             <Card>

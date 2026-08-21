@@ -1260,10 +1260,34 @@ export async function getAdminTags(token: string): Promise<{ tags: AdminTag[] }>
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || 'Failed to load document tags');
   }
   return response.json();
+}
+
+/** Recurring unanswered topics (deterministic clustering of knowledge_gaps). */
+export interface GapTopic {
+  topic: string;
+  query_count: number;
+  gap_hits: number;
+  samples: string[];
+}
+
+export async function getGapTopics(
+  token: string,
+  windowDays = 30
+): Promise<GapTopic[]> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/analytics/gap-topics?window_days=${windowDays}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load gap topics');
+  }
+  const data = (await response.json()) as { topics?: GapTopic[] };
+  return data.topics ?? [];
 }
 
 // ---------------------------------------------------------------------------

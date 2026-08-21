@@ -39,6 +39,32 @@ async def knowledge_gaps(
     }
 
 
+@router.get("/gap-topics")
+async def gap_topics(
+    user: dict = Depends(require_auth),
+    window_days: int = 30,
+    min_queries: int = 3,
+) -> dict:
+    """Recurring unanswered topics across recent knowledge gaps.
+
+    Deterministic token clustering over ``knowledge_gaps`` — every sample
+    query is verbatim from the log. Requires admin role.
+    """
+    require_role(user, "admin")
+
+    from app.knowledge_gap.topics import TopicConfig, cluster_gap_topics
+
+    window_days = max(1, min(window_days, 365))
+    min_queries = max(2, min(min_queries, 50))
+
+    with session.acquire() as conn:
+        report = cluster_gap_topics(
+            conn,
+            TopicConfig(window_days=window_days, min_queries=min_queries),
+        )
+    return report
+
+
 # J6 — document popularity analytics
 _WEAK_OUTCOMES_SQL = "'no_answer', 'partial'"
 _ANSWERED_OUTCOMES_SQL = "'answer', 'partial'"
