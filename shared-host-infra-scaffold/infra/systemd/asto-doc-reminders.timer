@@ -1,0 +1,9 @@
+[Unit]
+Description=Run client document reminders twice a week
+
+[Timer]
+OnBootSec=15min
+OnCalendar=Mon,Thu *-*-* 09:00
+
+[Install]
+WantedBy=timers.target
