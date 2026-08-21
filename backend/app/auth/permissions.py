@@ -1,25 +1,31 @@
 """Permission helpers for role-based access control.
 
 Defines the action/resource matrix used by admin endpoints.
+
+Single source of truth: the role hierarchy is read from
+``app.auth.roles_config`` at call time, so governance edits via
+``PUT /admin/governance`` (which rewrites and reloads ``roles_config``)
+immediately change what ``require_role`` enforces — the hierarchy is not
+hardcoded here.
 """
 
 from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-from app.auth.rbac import ADMIN_ROLES
-
 
 def require_role(user: dict | None, role: str) -> None:
     """Raise 403 if the user's role doesn't meet the minimum requirement.
 
-    Role hierarchy (higher = more permissive):
+    Hierarchy (higher = more permissive), read live from roles_config:
     super_admin > admin > loan_officer > underwriter > compliance
 
     Fail-closed for the client audience and unknown roles: a client token
     must never satisfy a staff role check by falling through.
     """
-    hierarchy = ["compliance", "underwriter", "loan_officer", "admin", "super_admin"]
+    from app.auth import roles_config
+
+    hierarchy = roles_config.ROLE_HIERARCHY
 
     if user is None or user.get("audience") == "client":
         raise HTTPException(

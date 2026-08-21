@@ -99,11 +99,13 @@ def render_config(
 
     body = _HEADER + (
         "# Role -> departments they can access. [] means \"all departments\".\n"
-        "# Mirrors ROLE_DEPARTMENTS in app/auth/rbac.py.\n"
+        "# app/auth/rbac.py reads these constants at call time, so edits here\n"
+        "# (applied via this file's atomic write + reload) take effect\n"
+        "# immediately in enforcement.\n"
         "ROLE_DEPARTMENTS: dict[str, list[str]] = "
         + pprint.pformat(role_departments, width=88, sort_dicts=False)
         + "\n\n"
-        "# Roles that bypass department filtering entirely (rbac.ADMIN_ROLES).\n"
+        "# Roles that bypass department filtering entirely (rbac.is_admin).\n"
         "ADMIN_ROLES: set[str] = "
         + pprint.pformat({"super_admin", "admin"})
         + "\n\n"
