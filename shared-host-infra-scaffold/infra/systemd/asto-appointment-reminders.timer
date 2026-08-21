@@ -1,0 +1,9 @@
+[Unit]
+Description=Check upcoming appointments daily
+
+[Timer]
+OnBootSec=25min
+OnCalendar=*-*-* 08:00
+
+[Install]
+WantedBy=timers.target
