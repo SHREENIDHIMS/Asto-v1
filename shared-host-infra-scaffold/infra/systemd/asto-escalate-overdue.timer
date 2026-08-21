@@ -1,0 +1,9 @@
+[Unit]
+Description=Check overdue tasks/workflows daily
+
+[Timer]
+OnBootSec=20min
+OnCalendar=*-*-* 08:30
+
+[Install]
+WantedBy=timers.target
