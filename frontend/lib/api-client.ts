@@ -616,6 +616,41 @@ export async function logoutAll(token: string): Promise<{ revoked: boolean }> {
 return response.json();
 }
 
+// ---------------------------------------------------------------------------
+// Self-service session management
+// ---------------------------------------------------------------------------
+
+export interface ActiveSessionInfo {
+  id: number;
+  audience: string;
+  created_at: string | null;
+  expires_at: string | null;
+}
+
+export async function listMySessions(
+  token: string
+): Promise<{ active_sessions: number; sessions: ActiveSessionInfo[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load sessions');
+  }
+  return response.json();
+}
+
+export async function revokeMySession(token: string, sessionId: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/sessions/${sessionId}/revoke`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to revoke session');
+  }
+}
+
 export async function verifyToken(
   token: string
 ): Promise<{ valid: boolean; user_id?: number; email?: string }> {
