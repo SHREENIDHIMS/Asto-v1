@@ -103,6 +103,63 @@ function collectMatchedTerms(turn: ChatTurn): string[] {
   return Array.from(set);
 }
 
+/**
+ * Full response package as clipboard text: answer/facts plus per-source
+ * citations and confidence — ready to paste into an email with provenance.
+ */
+function buildCitationText(turn: ChatTurn): string {
+  const { response } = turn;
+  const parts: string[] = [];
+  const answer = buildAnswerText(turn);
+  if (answer) parts.push(answer);
+
+  const facts = response.facts ?? [];
+  if (facts.length > 0) {
+    parts.push(
+      "\n" +
+        facts
+          .map((f) => `${f.label}: ${f.value ?? "—"} (source: ${f.source})`)
+          .join("\n")
+    );
+  }
+
+  const sources: string[] = [];
+  const seen = new Set<string>();
+  for (const s of response.summary ?? []) {
+    const key = `${s.source.title}::${s.source.section ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push(s.source.section ? `${s.source.title} — ${s.source.section}` : s.source.title);
+    }
+  }
+  for (const e of response.excerpts ?? []) {
+    const key = `${e.source.title}::${e.source.section ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push(e.source.section ? `${e.source.title} — ${e.source.section}` : e.source.title);
+    }
+  }
+  for (const f of facts) {
+    if (f.source && !seen.has(f.source)) {
+      seen.add(f.source);
+      sources.push(f.source);
+    }
+  }
+  if (sources.length > 0) {
+    parts.push("\nSources:\n" + sources.map((s) => `- ${s}`).join("\n"));
+  }
+
+  const labels: Record<string, string> = {
+    answer: "High",
+    partial: "Partial",
+    no_answer: "No match",
+  };
+  parts.push(
+    `\nConfidence: ${labels[response.routing] ?? "Low"} (${Math.round(response.confidence)}%)`
+  );
+  return parts.join("\n");
+}
+
 export default function AssistantMessage({
   turn,
   onRegenerate,
@@ -156,6 +213,16 @@ export default function AssistantMessage({
     }
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
+  };
+
+  const handleCopyWithCitations = async () => {
+    try {
+      await navigator.clipboard.writeText(buildCitationText(turn));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
   };
 
   const handleSpeak = () => {
@@ -397,6 +464,16 @@ export default function AssistantMessage({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuItem
+                  className="text-xs py-1.5"
+                  onSelect={() => {
+                    void handleCopyWithCitations();
+                  }}
+                >
+                  <Copy className="h-3 w-3 mr-2" />
+                  Copy with citations
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <div className="px-3 py-2 text-xs text-muted-foreground">
                   Sources
                 </div>

@@ -18,6 +18,7 @@ from app.api.v1 import (
     documents,
     feedback,
     notifications,
+    recent_searches,
     saved_searches,
     search,
     staff,
@@ -37,4 +38,5 @@ api_router.include_router(approvals.router, prefix="/admin", tags=["approvals"])
 api_router.include_router(client.router, prefix="/client", tags=["client"])
 api_router.include_router(staff.router, prefix="/staff", tags=["staff"])
 api_router.include_router(saved_searches.router, prefix="/staff", tags=["staff"])
+api_router.include_router(recent_searches.router, prefix="/staff", tags=["staff"])
 api_router.include_router(notifications.router, prefix="/staff", tags=["staff"])

@@ -130,6 +130,29 @@ export async function deleteSavedSearch(token: string, id: number): Promise<void
   }
 }
 
+/** Recent searches — the caller's own query history (read from audit_log). */
+export interface RecentSearch {
+  query: string;
+  last_run_at?: string | null;
+  times_run: number;
+}
+
+export async function listRecentSearches(
+  token: string,
+  limit = 10
+): Promise<RecentSearch[]> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/recent-searches?limit=${limit}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load recent searches');
+  }
+  const data = (await response.json()) as { recent_searches?: RecentSearch[] };
+  return data.recent_searches ?? [];
+}
+
 /** J2 faceted filters — folded into the search SQL WHERE server-side. */
 export interface SearchFilters {
   departments?: string[];

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   Bookmark,
+  History,
   MessageSquarePlus,
   Sparkles,
   Trash2,
@@ -12,10 +13,12 @@ import {
 import {
   getStaffDashboard,
   listSavedSearches,
+  listRecentSearches,
   logout,
   logoutAll,
   saveSearch,
   deleteSavedSearch,
+  RecentSearch,
   SavedSearch,
   searchKnowledgeBaseStream,
   SearchFilters,
@@ -94,6 +97,17 @@ export default function ChatPage() {
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
   const [savedSearchesError, setSavedSearchesError] = useState<string | null>(null);
   const [savingSearch, setSavingSearch] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
+
+  const refreshRecentSearches = useCallback(() => {
+    const token = getToken();
+    if (!token) return;
+    listRecentSearches(token)
+      .then((searches) => setRecentSearches(searches))
+      .catch(() => {
+        // History is a convenience panel — stay silent on failure.
+      });
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -135,11 +149,12 @@ export default function ChatPage() {
             err instanceof Error ? err.message : "Failed to load saved searches"
           )
         );
+      refreshRecentSearches();
     });
     return () => {
       mounted = false;
     };
-  }, [router]);
+  }, [router, refreshRecentSearches]);
 
   useEffect(() => {
     // Scroll to bottom only when a new message/response begins.
@@ -238,6 +253,7 @@ export default function ChatPage() {
       setStage(null);
       setStreamFacts([]);
       setStreamSentences([]);
+      refreshRecentSearches();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setPendingQuestion(null);
@@ -279,6 +295,7 @@ export default function ChatPage() {
         setStage(null);
         setStreamFacts([]);
         setStreamSentences([]);
+        refreshRecentSearches();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
         setStage(null);
@@ -288,7 +305,7 @@ export default function ChatPage() {
         setRegeneratingId(null);
       }
     },
-    [isLoading, replaceTurnResponse, selectedCaseId, filters]
+    [isLoading, replaceTurnResponse, selectedCaseId, filters, refreshRecentSearches]
   );
 
   const handleOpenRecentChat = useCallback(
@@ -414,6 +431,34 @@ export default function ChatPage() {
           <div className="space-y-1">
             <div className="flex items-center justify-between px-1">
               <p className="text-xs font-medium text-muted-foreground">
+                Recent searches
+              </p>
+            </div>
+            <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+              {recentSearches.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-1 py-1">
+                  No recent searches
+                </p>
+              ) : (
+                recentSearches.map((r) => (
+                  <button
+                    key={r.query}
+                    type="button"
+                    className="w-full flex items-center gap-2 font-normal text-sm h-8 px-2 text-left rounded-md hover:bg-muted"
+                    onClick={() => handleSearch(r.query)}
+                    title={`${r.times_run} run${r.times_run === 1 ? "" : "s"} — click to search again`}
+                  >
+                    <History className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                    <span className="truncate text-xs">{r.query}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-1">
+              <p className="text-xs font-medium text-muted-foreground">
                 Saved searches
               </p>
             </div>
@@ -461,6 +506,7 @@ export default function ChatPage() {
       user={{ name: userName ?? "Staff", role: role ?? "Staff" }}
       onSettings={() => setSettingsOpen(true)}
       onSignOut={handleLogout}
+      onAsk={handleSearch}
     >
       <div className="flex h-full flex-col">
         <main ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">

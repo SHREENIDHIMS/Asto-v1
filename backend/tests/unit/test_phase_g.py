@@ -425,3 +425,100 @@ class TestNotifications:
         cur = conn.cursor.return_value
         calls = [c.args[0] for c in cur.execute.call_args_list]
         assert any("is_read = true" in sql for sql in calls)
+
+
+class TestSignatureRequestNotification:
+    """G3: creating a signature request emails the client; signing one
+    notifies admins."""
+
+    def test_create_signature_request_emails_client(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 5, "client_id": 7},  # document lookup
+            {  # client + document title for the notice
+                "email": "client@asto.local",
+                "full_name": "Client User",
+                "document_title": "Loan Agreement",
+            },
+            {"id": 9, "token": "tok", "status": "pending", "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                with patch("app.email.mailer.send_email") as mock_send:
+                    response = _authorized(ADMIN_USER).post(
+                        "/api/v1/admin/signature-requests",
+                        json={"case_id": 3, "document_id": 5,
+                              "requested_from": "client"},
+                    )
+            finally:
+                _cleanup()
+        assert response.status_code == 201
+        assert mock_send.call_count == 1
+        args = mock_send.call_args.args
+        assert args[0] == "client@asto.local"
+        assert "Loan Agreement" in args[2]
+        # The raw signing token must never be emailed (clients sign via the
+        # authenticated portal).
+        assert "tok" not in args[2] and "tok" not in args[3]
+
+    def test_create_signature_request_without_email_skips_mail(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 5, "client_id": 7},
+            {"email": None, "full_name": "Client User",
+             "document_title": "Loan Agreement"},
+            {"id": 9, "token": "tok", "status": "pending", "created_at": None},
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                with patch("app.email.mailer.send_email") as mock_send:
+                    response = _authorized(ADMIN_USER).post(
+                        "/api/v1/admin/signature-requests",
+                        json={"case_id": 3, "document_id": 5,
+                              "requested_from": "client"},
+                    )
+            finally:
+                _cleanup()
+        assert response.status_code == 201
+        mock_send.assert_not_called()
+
+    def test_create_signature_request_case_not_found_404(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.side_effect = [
+            {"id": 5, "client_id": 7},
+            None,  # no matching case
+        ]
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                response = _authorized(ADMIN_USER).post(
+                    "/api/v1/admin/signature-requests",
+                    json={"case_id": 999, "document_id": 5,
+                          "requested_from": "client"},
+                )
+            finally:
+                _cleanup()
+        assert response.status_code == 404
+
+    def test_client_sign_notifies_admins(self):
+        conn = _conn()
+        cur = conn.cursor.return_value
+        cur.fetchone.return_value = {
+            "id": 1, "document_id": 5, "status": "pending",
+        }
+        with patch("app.db.postgres.session.acquire", return_value=conn):
+            try:
+                with patch(
+                    "app.api.v1.notifications.notify_admins"
+                ) as mock_notify:
+                    response = _authorized(CLIENT_USER).post(
+                        "/api/v1/client/signature-requests/1/sign",
+                        json={"signed_name": "Client User", "consent": True},
+                    )
+            finally:
+                _cleanup()
+        assert response.status_code == 200
+        assert mock_notify.call_count == 1
+        assert mock_notify.call_args.args[1] == "signature_signed"

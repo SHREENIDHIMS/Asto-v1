@@ -936,6 +936,22 @@ async def client_sign_signature_request(
                 )
             conn.commit()
 
+        # G3: tell staff the document has been signed (best-effort, after
+        # the signing transaction committed so notifications never roll back
+        # with it).
+        from app.api.v1.notifications import notify_admins
+
+        with session.acquire() as conn:
+            notify_admins(
+                conn,
+                "signature_signed",
+                "Document signed",
+                f"Signature request #{request_id} was signed"
+                + (f" by {payload.signed_name.strip()}" if payload.signed_name else ""),
+                link="/admin",
+            )
+            conn.commit()
+
     return {
         "message": "Document signed",
         "document_id": doc_id,

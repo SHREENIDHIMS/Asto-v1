@@ -1,0 +1,9 @@
+[Unit]
+Description=Run knowledge-gap digest every week
+
+[Timer]
+OnBootSec=10min
+OnCalendar=Mon *-*-* 08:00
+
+[Install]
+WantedBy=timers.target
