@@ -408,16 +408,6 @@ DDL_STATEMENTS: list[str] = [
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # --- Feature flags (M8: Safe ship-half-built features) ---
-    """
-    CREATE TABLE IF NOT EXISTS feature_flags (
-        name            TEXT PRIMARY KEY,
-        enabled         BOOLEAN NOT NULL DEFAULT true,
-        department      TEXT NOT NULL DEFAULT 'general',
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
     # --- Saved searches (J7: Saved searches / search history) ---
     """
     CREATE TABLE IF NOT EXISTS saved_searches (

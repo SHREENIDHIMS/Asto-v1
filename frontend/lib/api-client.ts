@@ -314,33 +314,6 @@ export interface AuthLoginResponse {
   two_fa_token?: string | null;
 }
 
-export async function searchKnowledgeBase(
-  query: string,
-  token?: string,
-  caseId?: number | null,
-  filters?: SearchFilters | null
-): Promise<SearchResponse> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await apiFetch(`${API_BASE_URL}/search/`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ query, case_id: caseId ?? null, filters: filters ?? null }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Search request failed');
-  }
-
-  return response.json();
-}
-
 export type SearchStage =
   | 'processing'
   | 'searching'
