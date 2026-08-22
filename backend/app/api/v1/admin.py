@@ -1253,6 +1253,8 @@ async def get_default_requirements(
 ) -> dict:
     """Return the default requirement list for a case type (admin only)."""
     require_role(user, "admin")
+    from app.documents.requirements import DEFAULT_REQUIREMENTS
+
     requirements = DEFAULT_REQUIREMENTS.get(case_type, [])
     return {"case_type": case_type, "requirements": requirements}
 
