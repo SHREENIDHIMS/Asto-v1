@@ -42,7 +42,7 @@ def _get_model() -> TextEmbedding:
 
 def generate_embeddings(texts: Sequence[str]) -> list[list[float]]:
     """Generate embeddings for a batch of text chunks."""
-    if not _model_available():
+    if not _HAS_FASTEMBED:
         raise RuntimeError("fastembed is not installed")
 
     model = _get_model()
