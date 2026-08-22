@@ -37,6 +37,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Restore historical benchmark reports so the regression check has a
+      # baseline. Without this the fresh checkout contains only the single
+      # report generated below and the gate can never fire.
+      - name: Restore previous benchmark reports
+        uses: actions/cache@v4
+        with:
+          path: evaluation/reports
+          key: eval-reports-${{ github.run_id }}
+          restore-keys: |
+            eval-reports-
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -112,20 +123,36 @@ jobs:
           latest_summary = latest.get('summary', {})
           previous_summary = previous.get('summary', {})
           threshold = 0.05
+          failed = False
           for metric in ['sub_question_accuracy', 'intent_accuracy', 'entity_accuracy']:
               delta = latest_summary.get(metric, 0) - previous_summary.get(metric, 0)
               if delta < -threshold:
                   print(f'REGRESSION: {metric} dropped by {delta:.3f} (threshold: -{threshold})')
-                  exit(1)
+                  failed = True
+                  continue
               print(f'{metric}: {previous_summary.get(metric, 0):.3f} -> {latest_summary.get(metric, 0):.3f} (delta: {delta:+.3f})')
           # Check retrieval metrics if available
           latest_retrieval = latest.get('retrieval_metrics', {})
           previous_retrieval = previous.get('retrieval_metrics', {})
-          if 'hit_rate@10' in latest_retrieval and 'hit_rate@10' in previous_retrieval:
-              delta = latest_retrieval['hit_rate@10'] - previous_retrieval['hit_rate@10']
-              if delta < -threshold:
-                  print(f'REGRESSION: hit_rate@10 dropped by {delta:.3f} (threshold: -{threshold})')
-                  exit(1)
-              print(f'hit_rate@10: {previous_retrieval[\"hit_rate@10\"]:.3f} -> {latest_retrieval[\"hit_rate@10\"]:.3f} (delta: {delta:+.3f})')
+          for metric in ['hit_rate@10', 'ndcg@10']:
+              if metric in latest_retrieval and metric in previous_retrieval:
+                  delta = latest_retrieval[metric] - previous_retrieval[metric]
+                  if delta < -threshold:
+                      print(f'REGRESSION: {metric} dropped by {delta:.3f} (threshold: -{threshold})')
+                      failed = True
+                      continue
+                  print(f'{metric}: {previous_retrieval[metric]:.3f} -> {latest_retrieval[metric]:.3f} (delta: {delta:+.3f})')
+          # Reranker latency gate (CLAUDE.md rule 6): fail when the reranker
+          # ran and missed its <200ms p95 budget. When the reranker is
+          # disabled there are no metrics and the gate does not apply.
+          reranker = latest.get('latency_metrics', {}).get('reranker')
+          if isinstance(reranker, dict) and 'p95_ms' in reranker:
+              budget_ok = reranker.get('budget_ok')
+              print(f\"reranker p95: {reranker.get('p95_ms')}ms (budget <200ms: {'PASS' if budget_ok else 'FAIL'})\")
+              if budget_ok is False:
+                  print('REGRESSION: reranker p95 exceeded the 200ms budget')
+                  failed = True
+          if failed:
+              exit(1)
           print('No significant regression detected')
           "

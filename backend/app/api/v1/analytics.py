@@ -31,14 +31,6 @@ async def knowledge_gaps(
     return {"knowledge_gaps": gaps}
 
 
-    return {
-        "total_gaps": total,
-        "by_intent": by_intent,
-        "by_day": by_day,
-        "low_confidence_count": low_confidence,
-    }
-
-
 @router.get("/gap-topics")
 async def gap_topics(
     user: dict = Depends(require_auth),

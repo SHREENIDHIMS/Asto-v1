@@ -408,16 +408,6 @@ DDL_STATEMENTS: list[str] = [
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # --- Feature flags (M8: Safe ship-half-built features) ---
-    """
-    CREATE TABLE IF NOT EXISTS feature_flags (
-        name            TEXT PRIMARY KEY,
-        enabled         BOOLEAN NOT NULL DEFAULT true,
-        department      TEXT NOT NULL DEFAULT 'general',
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
     # --- Saved searches (J7: Saved searches / search history) ---
     """
     CREATE TABLE IF NOT EXISTS saved_searches (
@@ -500,6 +490,10 @@ ALTER_STATEMENTS: list[str] = [
     # documents.review_due: scheduled content review date (compliance).
     # NULL = no review schedule. Overdue = review_due < CURRENT_DATE.
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_due DATE",
+    # documents.tags: free-form labels (TEXT[]) used by the admin Documents
+    # tab and tag-filtered document listings. Written as a full-replace
+    # list via PUT /admin/documents/{id}/tags.
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'",
 ]
 
 # CHECK constraints added via ALTER (no IF NOT EXISTS for constraints in PG,
@@ -548,6 +542,7 @@ INDEX_STATEMENTS: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts (ip, attempted_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_pinned_answers_active ON pinned_answers (query_norm, is_active)",
     "CREATE INDEX IF NOT EXISTS idx_documents_review_due ON documents (review_due) WHERE review_due IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_documents_tags ON documents USING gin (tags)",
 ]
 
 

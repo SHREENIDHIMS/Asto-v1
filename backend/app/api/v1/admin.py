@@ -1246,14 +1246,6 @@ async def export_audit_log(
 # ---------------------------------------------------------------------------
 
 
-class RequirementCreate:
-    """Request body for creating a requirement definition."""
-    def __init__(self, name: str, description: str = "", case_type: str = "purchase"):
-        self.name = name
-        self.description = description
-        self.case_type = case_type
-
-
 @router.get("/case-requirements/default/{case_type}")
 async def get_default_requirements(
     case_type: str,
@@ -1261,6 +1253,8 @@ async def get_default_requirements(
 ) -> dict:
     """Return the default requirement list for a case type (admin only)."""
     require_role(user, "admin")
+    from app.documents.requirements import DEFAULT_REQUIREMENTS
+
     requirements = DEFAULT_REQUIREMENTS.get(case_type, [])
     return {"case_type": case_type, "requirements": requirements}
 

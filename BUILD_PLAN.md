@@ -145,7 +145,8 @@
 - `backend/requirements-dev.txt` — Dev/test dependencies
 - `frontend/package.json` — Frontend Node.js dependencies
 - `docker-compose.yml` — Docker orchestration for local dev
-- `backend/Dockerfile` — Backend container definition
+- `backend/Dockerfile` — Backend container definition 
+ 
 - `frontend/Dockerfile` — Frontend container definition
 - `.github/workflows/` — CI/CD pipelines
 - `backend/app/` — Main application source code

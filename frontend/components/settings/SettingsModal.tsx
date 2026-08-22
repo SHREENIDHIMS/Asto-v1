@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   Copy,
+  Download,
   Sun,
 } from "lucide-react";
 import {
@@ -48,6 +49,7 @@ import {
   updateClientProfile,
   listMySessions,
   revokeMySession,
+  exportMyClientData,
   type ActiveSessionInfo,
   type ClientProfile,
 } from "@/lib/api-client";
@@ -419,6 +421,8 @@ function ClientProfileCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     setFullName(profile.full_name ?? "");
@@ -494,6 +498,7 @@ function ClientProfileCard({
         {saved && (
           <p className="text-xs text-green-700">Profile saved.</p>
         )}
+        {exportError && <p className="text-xs text-destructive">{exportError}</p>}
 
         <Button
           type="button"
@@ -509,6 +514,33 @@ function ClientProfileCard({
             <Save className="h-3.5 w-3.5 mr-1.5" />
           )}
           Save profile
+        </Button>
+
+        {/* M5: GDPR self-serve data export */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full text-muted-foreground"
+          onClick={() => {
+            setExportBusy(true);
+            setExportError(null);
+            exportMyClientData(token)
+              .catch((err) =>
+                setExportError(
+                  err instanceof Error ? err.message : "Export failed"
+                )
+              )
+              .finally(() => setExportBusy(false));
+          }}
+          disabled={exportBusy}
+        >
+          {exportBusy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+          ) : (
+            <Download className="h-3.5 w-3.5 mr-1.5" />
+          )}
+          Download my data (GDPR export)
         </Button>
       </CardContent>
     </Card>

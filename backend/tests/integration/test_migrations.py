@@ -122,7 +122,7 @@ def test_upgrade_head_stamps_alembic_version(migrated_db):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT version_num FROM alembic_version")
-            assert cur.fetchone() == ("0005_document_review_due",)
+            assert cur.fetchone() == ("0006_document_tags",)
     finally:
         conn.close()
 
@@ -144,6 +144,40 @@ def test_pinned_answers_table_exists(migrated_db):
                 "WHERE table_name = 'pinned_answers' AND column_name = 'audience'"
             )
             assert cur.fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_documents_tags_column_usable(migrated_db):
+    """0006_document_tags: the tags column must exist AND accept the exact
+    write/read patterns the routers use (full-replace text[] UPDATE,
+    ``ANY(tags)`` filter). Regression guard: this column was queried by
+    three routers but missing from all DDL, which only surfaced on a live
+    database."""
+    conn = psycopg.connect(migrated_db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO documents (title, source_path, doc_type, department) "
+                "VALUES ('Tagged', 'p/tagged.pdf', 'policy', 'general') "
+                "RETURNING id"
+            )
+            doc_id = cur.fetchone()[0]
+            # The exact write pattern from approvals.update_document_tags.
+            cur.execute(
+                "UPDATE documents SET tags = %s WHERE id = %s",
+                (["policy", "compliance"], doc_id),
+            )
+            # The exact read/filter pattern from documents.list + client docs.
+            cur.execute(
+                "SELECT title FROM documents "
+                "WHERE is_active = true AND %s = ANY(tags)",
+                ("compliance",),
+            )
+            rows = cur.fetchall()
+            assert any(r[0] == "Tagged" for r in rows)
+            cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+        conn.commit()
     finally:
         conn.close()
 
