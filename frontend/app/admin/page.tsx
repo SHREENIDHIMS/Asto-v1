@@ -4568,7 +4568,7 @@ export default function AdminPage() {
       headerSubtitle="Approvals · Documents · Users · Clients"
       headerActions={
         <Button asChild variant="outline" size="sm">
-          <Link href="/">
+          <Link href="/?ask=1">
             <MessageSquare className="h-4 w-4 mr-2" />
             Ask Asto
           </Link>

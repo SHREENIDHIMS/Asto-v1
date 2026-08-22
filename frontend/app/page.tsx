@@ -132,7 +132,13 @@ export default function ChatPage() {
         router.replace("/client");
         return;
       }
-      if (isAdminRole(claims?.role)) {
+      // Admins land on the admin console on fresh loads/bookmarks — but the
+      // admin console's "Ask Asto" button links here with ?ask=1, meaning
+      // they explicitly asked for the assistant, so let them stay.
+      const askedForAssistant =
+        typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("ask") === "1";
+      if (isAdminRole(claims?.role) && !askedForAssistant) {
         router.replace("/admin");
         return;
       }
