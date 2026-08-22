@@ -51,12 +51,15 @@ default** and only become searchable after an admin approves them.
                                 │
                                 ▼
                   Ranking Engine (Reciprocal Rank Fusion)
-        40% Semantic / 30% BM25 / 15% Metadata / 10% Feedback / 5% Freshness
-        (initial default weights — tuned via Evaluation Framework)
+        weighted linear reorder: 20% BM25 / 80% Semantic (pgvector)
+        (benchmark-verified defaults — ranking/weights_config.py;
+         feedback_boost off per J3 sweep; tuned only via Evaluation
+         Framework with a report in evaluation/reports/)
                                 │
                                 ▼
-              Cross-Encoder Re-ranking (ONNX Int8, top-10 candidates)
-                     Latency budget: <200ms p95
+          Cross-Encoder Re-ranking — OPTIONAL, OFF by default
+        (ONNX Int8 quantized, top-10 candidates, <200ms p95 budget;
+         enable via ASTO_RERANK_ENABLED on hardware that affords it)
                                 │
                                 ▼
                        Response Packaging
@@ -82,10 +85,11 @@ flowchart TD
     API --> AUTH[Authentication - JWT]
     API --> QP[Query Processing Engine]
     API --> FB[Feedback API]
+    QP --> FP[Dual-Path Router<br/>STRUCTURED_FACT → typed SQL<br/>DOCUMENT → hybrid search<br/>see docs/architecture/dual_path_assistant.md]
     QP --> HS[Hybrid Search<br/>single Postgres query:<br/>BM25 + pgvector + RBAC filter]
-    HS --> RANK[Ranking Engine - RRF]
-    RANK --> RERANK[Cross-Encoder Re-ranking<br/>ONNX Int8, top-10]
-    RERANK --> PKG[Response Packaging]
+    HS --> RANK[Ranking Engine - RRF<br/>+ weighted linear reorder]
+    RANK -. optional, off by default .-> RERANK[Cross-Encoder Re-ranking<br/>ONNX Int8, top-10]
+    RANK --> PKG[Response Packaging<br/>verbatim excerpts + extractive summary<br/>+ pinned-answer replay + calibrated confidence]
     PKG --> VAL[Response Validation<br/>safety net]
     VAL --> AUDIT[Audit Logger]
     AUDIT --> U
@@ -139,8 +143,9 @@ flowchart TD
     end
     PGQ --> RRF[Reciprocal Rank Fusion]
     RRF --> RANKENG[Ranking Engine<br/>weighted scoring]
-    RANKENG --> RERANK[Cross-Encoder Re-ranking<br/>top-10, less than 200ms p95]
-    RERANK --> TOPN[Top-N — already permission-scoped]
+    RANKENG -. optional, off by default .-> RERANK[Cross-Encoder Re-ranking<br/>top-10, less than 200ms p95]
+    RANKENG --> TOPN[Top-N — already permission-scoped]
+    RERANK -.-> TOPN
     TOPN --> PKG[Response Packaging]
 ```
 
@@ -335,7 +340,7 @@ stateDiagram-v2
 | Query Processing Engine | Clean and structure the raw query | Always-on, lightweight |
 | Hybrid Search (Postgres + pgvector) | Retrieve candidates; **enforce RBAC + active-version + approval filtering in the WHERE clause** | Primary enforcement point |
 | Ranking Engine (RRF) | Fuse BM25 + semantic scores with metadata/feedback/freshness | Post-filter |
-| Cross-Encoder Reranker | Precision-rank top-10 candidates (not generative) | Post-RRF, <200ms p95 |
+| Cross-Encoder Reranker | Precision-rank top-10 candidates (not generative) | OPTIONAL, OFF by default (`ASTO_RERANK_ENABLED`); <200ms p95 when on |
 | Response Packaging | Assemble retrieved content into a structured package | Post-rank |
 | Response Validation | Redundant safety-net check; confidence-based routing | Last-mile, non-primary for permissions |
 | Audit Logger | Immutable record of every query | Every request |
