@@ -2666,7 +2666,15 @@ export default function StaffPage() {
       <AppShell
         navGroups={NAV_GROUPS.staff}
       activeNavId={activeNavId}
-      onNavigate={(id) => setActiveNavId(id)}
+      onNavigate={(id) => {
+        // The AI Assistant is a standalone page ("/"), not a tab here —
+        // route to it instead of selecting a non-existent tab.
+        if (id === "assistant") {
+          router.push("/");
+          return;
+        }
+        setActiveNavId(id);
+      }}
       brandTitle="Asto"
       brandSubtitle="Staff Workspace"
       headerTitle="Staff"
