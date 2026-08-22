@@ -13,7 +13,9 @@ plain data so it could be swapped to YAML/DB later without callers changing.
 from __future__ import annotations
 
 # Role -> departments they can access. [] means "all departments".
-# Mirrors ROLE_DEPARTMENTS in app/auth/rbac.py.
+# app/auth/rbac.py reads these constants AT CALL TIME, so governance
+# edits (PUT /admin/governance rewrites + reloads this module) take
+# effect immediately in enforcement, not just in the admin UI.
 ROLE_DEPARTMENTS: dict[str, list[str]] = {
     "super_admin": [],
     "admin": [],

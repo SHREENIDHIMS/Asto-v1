@@ -130,6 +130,113 @@ export async function deleteSavedSearch(token: string, id: number): Promise<void
   }
 }
 
+/** Recent searches — the caller's own query history (read from audit_log). */
+export interface RecentSearch {
+  query: string;
+  last_run_at?: string | null;
+  times_run: number;
+}
+
+// ---------------------------------------------------------------------------
+// Admin: pinned answers (curated verbatim response packages)
+// ---------------------------------------------------------------------------
+
+export interface PinnedAnswer {
+  id: number;
+  query: string;
+  audience: 'staff' | 'client' | 'any';
+  confidence: number;
+  source_response_id: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+  excerpt_count: number;
+}
+
+export async function listPinnedAnswers(
+  token: string
+): Promise<{ pinned_answers: PinnedAnswer[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load pinned answers');
+  }
+  return response.json();
+}
+
+export async function createPinnedAnswer(
+  token: string,
+  payload: {
+    query: string;
+    response_id: string;
+    audience: 'staff' | 'client' | 'any';
+    package: Record<string, unknown>;
+  }
+): Promise<PinnedAnswer> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to pin answer');
+  }
+  return response.json();
+}
+
+export async function patchPinnedAnswer(
+  token: string,
+  id: number,
+  payload: { is_active?: boolean; audience?: 'staff' | 'client' | 'any' }
+): Promise<{ message: string; id: number }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers/${id}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to update pinned answer');
+  }
+  return response.json();
+}
+
+export async function deletePinnedAnswer(token: string, id: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/pinned-answers/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok && response.status !== 204) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to delete pinned answer');
+  }
+}
+
+export async function listRecentSearches(
+  token: string,
+  limit = 10
+): Promise<RecentSearch[]> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/staff/recent-searches?limit=${limit}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load recent searches');
+  }
+  const data = (await response.json()) as { recent_searches?: RecentSearch[] };
+  return data.recent_searches ?? [];
+}
+
 /** J2 faceted filters — folded into the search SQL WHERE server-side. */
 export interface SearchFilters {
   departments?: string[];
@@ -180,6 +287,16 @@ export interface SearchResponse {
   facts?: StructuredFact[];
   retrieval_path?: 'document' | 'structured_fact';
   no_answer_reason?: string | null;
+  citations?: Citation[];
+  /** True when served from an admin-curated pinned answer. */
+  pinned?: boolean;
+  pinned_from_query?: string | null;
+  /** Titles of cited documents past their scheduled review date. */
+  stale_sources?: string[];
+}
+
+export interface Citation {
+  [key: string]: unknown;
 }
 
 export interface AuthLoginRequest {
@@ -497,6 +614,41 @@ export async function logoutAll(token: string): Promise<{ revoked: boolean }> {
     throw new Error(error.detail || 'Failed to revoke sessions');
   }
 return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Self-service session management
+// ---------------------------------------------------------------------------
+
+export interface ActiveSessionInfo {
+  id: number;
+  audience: string;
+  created_at: string | null;
+  expires_at: string | null;
+}
+
+export async function listMySessions(
+  token: string
+): Promise<{ active_sessions: number; sessions: ActiveSessionInfo[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load sessions');
+  }
+  return response.json();
+}
+
+export async function revokeMySession(token: string, sessionId: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/sessions/${sessionId}/revoke`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to revoke session');
+  }
 }
 
 export async function verifyToken(
@@ -1143,10 +1295,57 @@ export async function getAdminTags(token: string): Promise<{ tags: AdminTag[] }>
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || 'Failed to load document tags');
   }
   return response.json();
+}
+
+/** Recurring unanswered topics (deterministic clustering of knowledge_gaps). */
+export interface GapTopic {
+  topic: string;
+  query_count: number;
+  gap_hits: number;
+  samples: string[];
+}
+
+/** Content coverage: per (department, doc_type) KB thickness. */
+export interface CoverageRow {
+  department: string;
+  doc_type: string;
+  documents: number;
+  chunks: number;
+  last_added?: string | null;
+  expected?: boolean;
+}
+
+export async function getContentCoverage(
+  token: string
+): Promise<{ coverage: CoverageRow[]; empty_cells: { department: string; doc_type: string }[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/analytics/content-coverage`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load content coverage');
+  }
+  return response.json();
+}
+
+export async function getGapTopics(
+  token: string,
+  windowDays = 30
+): Promise<GapTopic[]> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/analytics/gap-topics?window_days=${windowDays}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load gap topics');
+  }
+  const data = (await response.json()) as { topics?: GapTopic[] };
+  return data.topics ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -2323,6 +2522,54 @@ export interface AdminSummary {
   active_cases: number;
   total_gaps: number;
   pending_sop_requests: number;
+  documents_review_overdue?: number;
+}
+
+/** Documents past their scheduled review date (admin worklist). */
+export interface ReviewOverdueDocument {
+  id: number;
+  title: string;
+  department: string;
+  doc_type: string;
+  version: number;
+  review_due: string;
+  days_overdue: number;
+}
+
+export async function listReviewOverdue(
+  token: string
+): Promise<{ documents: ReviewOverdueDocument[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/documents/review-overdue`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load overdue reviews');
+  }
+  return response.json();
+}
+
+export async function setDocumentReviewDue(
+  token: string,
+  documentId: number,
+  reviewDue: string | null
+): Promise<{ document_id: number; review_due: string | null }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/documents/${documentId}/review-due`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ review_due: reviewDue }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to set review date');
+  }
+  return response.json();
 }
 
 export async function getAdminSummary(

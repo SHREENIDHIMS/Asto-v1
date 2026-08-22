@@ -2,8 +2,12 @@
 
 import { useRef, useState } from "react";
 import {
+  AlertTriangle,
+  BadgeCheck,
   Check,
   Copy,
+  Pin,
+  Printer,
   Speaker,
   StopCircle,
   RefreshCw,
@@ -26,8 +30,8 @@ import {
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ChatTurn } from "@/hooks/use-chat-history";
-import { submitFeedback } from "@/lib/api-client";
-import { getToken } from "@/lib/auth";
+import { createPinnedAnswer, submitFeedback } from "@/lib/api-client";
+import { decodeToken, getToken, isAdminRole } from "@/lib/auth";
 import { HighlightedText } from "@/components/chat/HighlightedText";
 
 interface AssistantMessageProps {
@@ -103,6 +107,161 @@ function collectMatchedTerms(turn: ChatTurn): string[] {
   return Array.from(set);
 }
 
+/**
+ * Full response package as clipboard text: answer/facts plus per-source
+ * citations and confidence — ready to paste into an email with provenance.
+ */
+function buildCitationText(turn: ChatTurn): string {
+  const { response } = turn;
+  const parts: string[] = [];
+  const answer = buildAnswerText(turn);
+  if (answer) parts.push(answer);
+
+  const facts = response.facts ?? [];
+  if (facts.length > 0) {
+    parts.push(
+      "\n" +
+        facts
+          .map((f) => `${f.label}: ${f.value ?? "—"} (source: ${f.source})`)
+          .join("\n")
+    );
+  }
+
+  const sources: string[] = [];
+  const seen = new Set<string>();
+  for (const s of response.summary ?? []) {
+    const key = `${s.source.title}::${s.source.section ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push(s.source.section ? `${s.source.title} — ${s.source.section}` : s.source.title);
+    }
+  }
+  for (const e of response.excerpts ?? []) {
+    const key = `${e.source.title}::${e.source.section ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push(e.source.section ? `${e.source.title} — ${e.source.section}` : e.source.title);
+    }
+  }
+  for (const f of facts) {
+    if (f.source && !seen.has(f.source)) {
+      seen.add(f.source);
+      sources.push(f.source);
+    }
+  }
+  if (sources.length > 0) {
+    parts.push("\nSources:\n" + sources.map((s) => `- ${s}`).join("\n"));
+  }
+
+  const labels: Record<string, string> = {
+    answer: "High",
+    partial: "Partial",
+    no_answer: "No match",
+  };
+  parts.push(
+    `\nConfidence: ${labels[response.routing] ?? "Low"} (${Math.round(response.confidence)}%)`
+  );
+  return parts.join("\n");
+}
+
+/** Minimal HTML escaping for user/document content in the print view. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Open a clean printable view of the full response package (answer,
+ * facts, sources, confidence) in a new window and trigger the browser's
+ * print dialog — "Save as PDF" produces a record-keeping document with
+ * full provenance. All dynamic content is HTML-escaped.
+ */
+function buildPrintableHtml(turn: ChatTurn): string {
+  const { response } = turn;
+  const esc = escapeHtml;
+  const when = turn.timestamp ? new Date(turn.timestamp).toLocaleString() : "";
+
+  const facts = (response.facts ?? [])
+    .map(
+      (f) =>
+        `<tr><td>${esc(f.label)}</td><td>${esc(String(f.value ?? "—"))}</td><td>${esc(f.source)}</td></tr>`
+    )
+    .join("\n");
+
+  const sources: string[] = [];
+  const seen = new Set<string>();
+  for (const s of response.summary ?? []) {
+    const key = `${s.source.title}::${s.source.section ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push(s.source.section ? `${s.source.title} — ${s.source.section}` : s.source.title);
+    }
+  }
+  for (const e of response.excerpts ?? []) {
+    const key = `${e.source.title}::${e.source.section ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push(e.source.section ? `${e.source.title} — ${e.source.section}` : e.source.title);
+    }
+  }
+  for (const f of response.facts ?? []) {
+    if (f.source && !seen.has(f.source)) {
+      seen.add(f.source);
+      sources.push(f.source);
+    }
+  }
+
+  const labels: Record<string, string> = {
+    answer: "High",
+    partial: "Partial",
+    no_answer: "No match",
+  };
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Asto — ${esc(turn.query || "Answer")}</title>
+<style>
+  body { font-family: Georgia, 'Times New Roman', serif; margin: 48px auto; max-width: 720px; color: #111; line-height: 1.55; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: #666; font-size: 12px; margin-bottom: 24px; }
+  .answer { border-left: 3px solid #333; padding-left: 16px; margin: 24px 0; white-space: pre-wrap; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 13px; }
+  td, th { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: top; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: #444; margin-top: 28px; }
+  ul { padding-left: 20px; } li { margin: 2px 0; }
+  footer { margin-top: 40px; border-top: 1px solid #ccc; padding-top: 8px; color: #666; font-size: 11px; }
+  @media print { body { margin: 24px; } }
+</style>
+</head>
+<body>
+<h1>${esc(turn.query || "Asto answer")}</h1>
+<div class="meta">${esc(when)} · Confidence: ${labels[response.routing] ?? "Low"} (${Math.round(response.confidence)}%)${response.pinned ? " · Verified answer" : ""}</div>
+<div class="answer">${esc(answerTextFallback(response))}</div>
+${
+  facts
+    ? `<h2>Facts</h2><table><thead><tr><th>Label</th><th>Value</th><th>Source</th></tr></thead><tbody>${facts}</tbody></table>`
+    : ""
+}
+${sources.length ? `<h2>Sources</h2><ul>${sources.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : ""}
+<footer>Generated by Asto. Every excerpt above is verbatim from the cited source document.</footer>
+<script>window.onload = function () { window.print(); };</script>
+</body>
+</html>`;
+}
+
+/** Same fallback chain as the bubble text (answer → summary → first excerpt). */
+function answerTextFallback(response: ChatTurn["response"]): string {
+  if (response.answer && response.answer.trim()) return response.answer.trim();
+  const parts = (response.summary ?? []).map((s) => s.text.trim()).filter(Boolean);
+  if (parts.length) return parts.join(" ");
+  return response.excerpts?.[0]?.text?.trim() ?? "";
+}
+
 export default function AssistantMessage({
   turn,
   onRegenerate,
@@ -131,6 +290,35 @@ export default function AssistantMessage({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [speaking, setSpeaking] = useState(false);
+  const [pinState, setPinState] = useState<"idle" | "pinning" | "pinned" | "error">("idle");
+  const isAdmin = (() => {
+    try {
+      return isAdminRole(decodeToken(getToken() ?? "")?.role);
+    } catch {
+      return false;
+    }
+  })();
+
+  const handlePinAnswer = async () => {
+    if (pinState === "pinning" || pinState === "pinned") return;
+    const token = getToken();
+    if (!token) {
+      setPinState("error");
+      return;
+    }
+    setPinState("pinning");
+    try {
+      await createPinnedAnswer(token, {
+        query: turn.query,
+        response_id: response.response_id,
+        audience: "staff",
+        package: response as unknown as Record<string, unknown>,
+      });
+      setPinState("pinned");
+    } catch {
+      setPinState("error");
+    }
+  };
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -156,6 +344,23 @@ export default function AssistantMessage({
     }
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
+  };
+
+  const handleCopyWithCitations = async () => {
+    try {
+      await navigator.clipboard.writeText(buildCitationText(turn));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handlePrint = () => {
+    const win = window.open("", "_blank", "noopener,noreferrer,width=800,height=900");
+    if (!win) return;
+    win.document.write(buildPrintableHtml(turn));
+    win.document.close();
   };
 
   const handleSpeak = () => {
@@ -259,6 +464,15 @@ export default function AssistantMessage({
         </div>
 
         {/* Answer bubble */}
+        {response.pinned && (
+          <span
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-green-600 dark:text-green-400"
+            title="Admin-verified answer, served from the curated knowledge base"
+          >
+            <BadgeCheck className="h-3.5 w-3.5" />
+            Verified answer
+          </span>
+        )}
         <div
           className={cn(
             "rounded-2xl rounded-tl-sm border border-border bg-card p-4 shadow-sm text-sm leading-relaxed whitespace-pre-wrap break-words",
@@ -281,6 +495,18 @@ export default function AssistantMessage({
             </>
           )}
         </div>
+
+        {/* Stale-source compliance warning */}
+        {!noAnswer && (response.stale_sources?.length ?? 0) > 0 && (
+          <p className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+            <span>
+              Source{response.stale_sources!.length > 1 ? "s" : ""} past their
+              review date: {response.stale_sources!.join(", ")}. Verify before
+              relying on this.
+            </span>
+          </p>
+        )}
 
         {/* Action row */}
         <div className="flex items-center gap-1 -ml-1">
@@ -397,6 +623,45 @@ export default function AssistantMessage({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuItem
+                  className="text-xs py-1.5"
+                  onSelect={() => {
+                    void handleCopyWithCitations();
+                  }}
+                >
+                  <Copy className="h-3 w-3 mr-2" />
+                  Copy with citations
+                </DropdownMenuItem>
+                {isAdmin && !noAnswer && !response.pinned && (
+                  <DropdownMenuItem
+                    className="text-xs py-1.5"
+                    disabled={pinState === "pinning" || pinState === "pinned"}
+                    onSelect={() => {
+                      void handlePinAnswer();
+                    }}
+                  >
+                    {pinState === "pinned" ? (
+                      <BadgeCheck className="h-3 w-3 mr-2 text-green-500" />
+                    ) : (
+                      <Pin className="h-3 w-3 mr-2" />
+                    )}
+                    {pinState === "pinned"
+                      ? "Pinned as verified answer"
+                      : pinState === "error"
+                        ? "Pin failed — retry"
+                        : "Pin as verified answer"}
+                  </DropdownMenuItem>
+                )}
+                {!noAnswer && (
+                  <DropdownMenuItem
+                    className="text-xs py-1.5"
+                    onSelect={handlePrint}
+                  >
+                    <Printer className="h-3 w-3 mr-2" />
+                    Print / Save as PDF
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
                 <div className="px-3 py-2 text-xs text-muted-foreground">
                   Sources
                 </div>

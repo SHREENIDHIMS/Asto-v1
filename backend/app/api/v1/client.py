@@ -485,7 +485,7 @@ async def client_document_file(
     with session.acquire() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT source_path, title FROM documents "
+                "SELECT source_path, title, version FROM documents "
                 "WHERE id = %s AND client_id = %s "
                 "AND is_active = true AND is_approved = true",
                 (document_id, user["client_id"]),
@@ -509,28 +509,51 @@ async def client_document_file(
                 client_row = cur.fetchone()
         viewer_name = client_row["full_name"] if client_row else "the client"
 
+    from app.documents.watermark_cache import (
+        load_cached,
+        should_watermark,
+        store_cached,
+    )
+
     file_path = resolve_stored_file(row["source_path"])
     raw = file_path.read_bytes()
-    watermarked = watermark_bytes(raw, file_path.name, viewer_name)
+    version = row.get("version")
+
+    # Hardened request path (audit #13): reuse today's cached watermark for
+    # this (document, version, viewer); skip watermarking oversized files
+    # entirely so pypdf/PIL can't threaten the worker's memory cap.
+    watermarked: bytes | None = None
+    size_skipped = not should_watermark(len(raw))
+    if not size_skipped:
+        watermarked = load_cached(document_id, version, viewer_name)
+        if watermarked is None:
+            watermarked = watermark_bytes(raw, file_path.name, viewer_name)
+            store_cached(document_id, version, viewer_name, watermarked)
 
     # Rule #8: document access is audit-logged. A raw-bytes pass-through
-    # (unsupported type or a watermarking failure) is recorded explicitly so
-    # the compliance bypass is never invisible.
+    # (unsupported type, a watermarking failure, or the size guard) is
+    # recorded explicitly so the compliance bypass is never invisible.
     from app.audit.audit_logger import AuditLogEntry, log_query
 
-    bypassed = watermarked == raw
+    bypassed = watermarked is None or watermarked == raw
+    outcome = "document_view"
+    if size_skipped:
+        outcome = "document_view_unwatermarked_oversize"
+    elif bypassed:
+        outcome = "document_view_unwatermarked"
     log_query(AuditLogEntry(
         user_id=int(user["client_id"]),
         query=f"document file: {document_id}",
         retrieved_ids=[document_id],
-        outcome="document_view_unwatermarked" if bypassed else "document_view",
+        outcome=outcome,
         audience="client",
     ))
 
     if bypassed:
-        # No watermark could be applied (unsupported type or failure): serve
-        # as an explicit attachment download rather than silently presenting
-        # raw bytes inline as if watermarked. The bypass is audit-logged above.
+        # No watermark could be applied (unsupported type, failure, or the
+        # size guard): serve as an explicit attachment download rather than
+        # silently presenting raw bytes inline as if watermarked. The
+        # bypass is audit-logged above.
         return FileResponse(
             file_path,
             filename=row["title"] or file_path.name,
@@ -934,6 +957,22 @@ async def client_sign_signature_request(
                     "is_approved = true, version = version + 1 WHERE id = %s",
                     (doc_id,),
                 )
+            conn.commit()
+
+        # G3: tell staff the document has been signed (best-effort, after
+        # the signing transaction committed so notifications never roll back
+        # with it).
+        from app.api.v1.notifications import notify_admins
+
+        with session.acquire() as conn:
+            notify_admins(
+                conn,
+                "signature_signed",
+                "Document signed",
+                f"Signature request #{request_id} was signed"
+                + (f" by {payload.signed_name.strip()}" if payload.signed_name else ""),
+                link="/admin",
+            )
             conn.commit()
 
     return {

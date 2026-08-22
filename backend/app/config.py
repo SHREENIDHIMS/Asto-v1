@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     storage_processed_dir: str = "storage/processed"
     max_upload_bytes: int = 20 * 1024 * 1024
 
+    # --- Watermarking (I5, hardened per audit #13) ---
+    # Files above this size skip request-time watermarking (served as an
+    # audited attachment instead) so pypdf/PIL can't blow the worker's
+    # memory cap on a huge document. Watermarked output is cached on disk
+    # per (document, version, viewer, day) in storage/watermark_cache.
+    watermark_max_bytes: int = 20 * 1024 * 1024
+    storage_watermark_cache_dir: str = "storage/watermark_cache"
+
     # --- Backups (M6) ---
     # Rotating pg_dump destination + how many dumps to keep. Set
     # ASTO_PGDUMP_COMMAND / ASTO_PGRESTORE_COMMAND if pg_dump/pg_restore

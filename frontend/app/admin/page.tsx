@@ -20,8 +20,9 @@ import {
   RefreshCw,
   Save,
   ShieldAlert,
-  Sparkles,
-  Upload,
+   Sparkles,
+   Trash2,
+   Upload,
   UserPlus,
   Users,
   X,
@@ -84,10 +85,21 @@ import {
    DocumentVersion,
    AdminDocument,
    AdminTag,
-   AdminUser,
-   AdminClient,
-   KnowledgeGap,
-} from "@/lib/api-client";
+    AdminUser,
+    AdminClient,
+    KnowledgeGap,
+    listPinnedAnswers,
+    patchPinnedAnswer,
+    deletePinnedAnswer,
+    PinnedAnswer,
+    listReviewOverdue,
+    setDocumentReviewDue,
+    ReviewOverdueDocument,
+    getGapTopics,
+    GapTopic,
+    getContentCoverage,
+    CoverageRow,
+  } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
 import AppShell from "@/components/layout/AppShell";
@@ -1205,8 +1217,65 @@ function DocumentsTab({ token }: { token: string }) {
     await loadTags();
   };
 
+  const [overdueReviews, setOverdueReviews] = useState<ReviewOverdueDocument[]>([]);
+  const [overdueBusyId, setOverdueBusyId] = useState<number | null>(null);
+
+  useEffect(() => {
+    listReviewOverdue(token)
+      .then((res) => setOverdueReviews(res.documents))
+      .catch(() => {
+        // Non-critical worklist; the summary card still shows the count.
+      });
+  }, [token]);
+
+  const handleScheduleReview = async (doc: ReviewOverdueDocument) => {
+    setOverdueBusyId(doc.id);
+    try {
+      const due = new Date();
+      due.setMonth(due.getMonth() + 6);
+      await setDocumentReviewDue(token, doc.id, due.toISOString().slice(0, 10));
+      setOverdueReviews((prev) => prev.filter((d) => d.id !== doc.id));
+    } catch {
+      // keep the entry; the admin can retry
+    } finally {
+      setOverdueBusyId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {overdueReviews.length > 0 && (
+        <Card className="border-amber-400 bg-amber-50 dark:bg-amber-950/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <AlertCircle className="h-4 w-4" />
+              {overdueReviews.length} document
+              {overdueReviews.length === 1 ? "" : "s"} past their review date
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {overdueReviews.map((doc) => (
+              <div key={doc.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate">
+                  {doc.title}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    ({doc.days_overdue} day{doc.days_overdue === 1 ? "" : "s"} overdue)
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={overdueBusyId === doc.id}
+                  onClick={() => void handleScheduleReview(doc)}
+                >
+                  Schedule review (+6 mo)
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
@@ -2087,6 +2156,11 @@ function AnalyticsTab({ token }: { token: string }) {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [popularity, setPopularity] =
     useState<{ top_documents: DocumentPopularityEntry[]; underperforming_documents: DocumentPopularityEntry[] } | null>(null);
+  const [gapTopics, setGapTopics] = useState<GapTopic[]>([]);
+  const [coverage, setCoverage] = useState<{
+    coverage: CoverageRow[];
+    empty_cells: { department: string; doc_type: string }[];
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2094,14 +2168,18 @@ function AnalyticsTab({ token }: { token: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      const [res, summaryRes, popRes] = await Promise.all([
+      const [res, summaryRes, popRes, topicsRes, covRes] = await Promise.all([
         getKnowledgeGaps(token),
         getAnalyticsSummary(token),
         getDocumentPopularity(token),
+        getGapTopics(token),
+        getContentCoverage(token),
       ]);
       setGaps(res.knowledge_gaps);
       setSummary(summaryRes.summary);
       setPopularity(popRes);
+      setGapTopics(topicsRes);
+      setCoverage(covRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load analytics");
     } finally {
@@ -2201,6 +2279,88 @@ function AnalyticsTab({ token }: { token: string }) {
               </CardContent>
             </Card>
           </div>
+
+          {gapTopics.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Recurring unanswered topics (last 30 days)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Shared keywords across failed queries — candidates for new or
+                  updated documents, or synonym mappings in the Knowledge Base.
+                </p>
+                {gapTopics.map((t) => (
+                  <div key={t.topic} className="rounded-md border border-border p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{t.topic}</span>
+                      <Badge variant="outline">
+                        {t.query_count} quer{t.query_count === 1 ? "y" : "ies"}
+                      </Badge>
+                    </div>
+                    <ul className="text-xs text-muted-foreground space-y-0.5">
+                      {t.samples.map((s) => (
+                        <li key={s} className="truncate">“{s}”</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {coverage && (coverage.coverage.length > 0 || coverage.empty_cells.length > 0) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Content coverage</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {coverage.empty_cells.length > 0 && (
+                  <div className="rounded-md border border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
+                    <p className="font-medium text-amber-600 dark:text-amber-400 mb-1">
+                      No approved documents for:
+                    </p>
+                    <p>
+                      {coverage.empty_cells
+                        .map((c) => `${c.department} / ${c.doc_type}`)
+                        .join(" · ")}
+                    </p>
+                  </div>
+                )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-muted-foreground border-b border-border">
+                        <th className="py-2 pr-3 font-medium">Department</th>
+                        <th className="py-2 pr-3 font-medium">Doc type</th>
+                        <th className="py-2 pr-3 font-medium">Documents</th>
+                        <th className="py-2 pr-3 font-medium">Chunks</th>
+                        <th className="py-2 font-medium">Last added</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coverage.coverage.slice(0, 15).map((row) => (
+                        <tr key={`${row.department}-${row.doc_type}`} className="border-b border-border/50">
+                          <td className="py-1.5 pr-3">{row.department}</td>
+                          <td className="py-1.5 pr-3">{row.doc_type}</td>
+                          <td className="py-1.5 pr-3">{row.documents}</td>
+                          <td className="py-1.5 pr-3">{row.chunks}</td>
+                          <td className="py-1.5">{row.last_added ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {coverage.coverage.length > 15 && (
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      Showing the 15 thinnest of {coverage.coverage.length} areas.
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {gaps.length === 0 ? (
             <Card>
@@ -2424,6 +2584,166 @@ function KnowledgeBaseTab({ token }: { token: string }) {
                 </span>
               </div>
               <p className="text-sm whitespace-pre-wrap">{chunk.content}</p>
+            </CardContent>
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pinned Answers tab (curated verbatim response packages)
+// ---------------------------------------------------------------------------
+
+function PinnedAnswersTab({ token }: { token: string }) {
+  const [pins, setPins] = useState<PinnedAnswer[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await listPinnedAnswers(token);
+      setPins(res.pinned_answers);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load pinned answers");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleToggle = async (pin: PinnedAnswer) => {
+    setBusyId(pin.id);
+    setError(null);
+    try {
+      await patchPinnedAnswer(token, pin.id, { is_active: !pin.is_active });
+      setPins((prev) =>
+        prev.map((p) => (p.id === pin.id ? { ...p, is_active: !p.is_active } : p))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update pin");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleAudienceChange = async (pin: PinnedAnswer, audience: string) => {
+    setBusyId(pin.id);
+    setError(null);
+    try {
+      await patchPinnedAnswer(token, pin.id, {
+        audience: audience as PinnedAnswer["audience"],
+      });
+      setPins((prev) =>
+        prev.map((p) => (p.id === pin.id ? { ...p, audience: audience as PinnedAnswer["audience"] } : p))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update audience");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (pin: PinnedAnswer) => {
+    setBusyId(pin.id);
+    setError(null);
+    try {
+      await deletePinnedAnswer(token, pin.id);
+      setPins((prev) => prev.filter((p) => p.id !== pin.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete pin");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Verified answers replay a stored response package verbatim when a
+        staff or client query matches exactly — no retrieval, no generation.
+        Pin new answers from the AI Assistant message menu (&quot;Pin as
+        verified answer&quot;).
+      </p>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : pins.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center text-sm text-muted-foreground">
+            No pinned answers yet. Run a search in the AI Assistant and choose
+            &quot;Pin as verified answer&quot; from the message menu.
+          </CardContent>
+        </Card>
+      ) : (
+        pins.map((pin) => (
+          <Card key={pin.id} className={pin.is_active ? "" : "opacity-60"}>
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{pin.query}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {pin.excerpt_count} excerpt{pin.excerpt_count === 1 ? "" : "s"} ·{" "}
+                    {Math.round(pin.confidence * 100)}% confidence · source{" "}
+                    {pin.source_response_id?.slice(0, 8) || "—"}
+                  </p>
+                </div>
+                <Badge variant={pin.is_active ? "default" : "outline"}>
+                  {pin.is_active ? "Active" : "Inactive"}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Select
+                  value={pin.audience}
+                  onValueChange={(v) => void handleAudienceChange(pin, v)}
+                >
+                  <SelectTrigger className="w-[150px] h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="staff">Staff only</SelectItem>
+                    <SelectItem value="client">Clients only</SelectItem>
+                    <SelectItem value="any">Everyone</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busyId === pin.id}
+                  onClick={() => void handleToggle(pin)}
+                >
+                  {pin.is_active ? "Deactivate" : "Activate"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  disabled={busyId === pin.id}
+                  onClick={() => void handleDelete(pin)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" />
+                  Delete
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ))
@@ -3067,6 +3387,14 @@ function DashboardTab({ token }: { token: string }) {
       label: "SOP access requests",
       value: summary ? summary.pending_sop_requests.toLocaleString() : "—",
       hint: "awaiting review",
+    },
+    {
+      label: "Reviews overdue",
+      value: summary
+        ? (summary.documents_review_overdue ?? 0).toLocaleString()
+        : "—",
+      hint: "documents past their review date",
+      alert: summary ? (summary.documents_review_overdue ?? 0) > 0 : false,
     },
   ];
 
@@ -3743,6 +4071,7 @@ export default function AdminPage() {
             <TabsTrigger value="approvals">Approvals</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
             <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
+            <TabsTrigger value="pinned">Pinned</TabsTrigger>
             <TabsTrigger value="sops">SOPs</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
             <TabsTrigger value="clients">Clients</TabsTrigger>
@@ -3763,6 +4092,9 @@ export default function AdminPage() {
           </TabsContent>
           <TabsContent value="knowledge">
             <KnowledgeBaseTab token={token} />
+          </TabsContent>
+          <TabsContent value="pinned">
+            <PinnedAnswersTab token={token} />
           </TabsContent>
           <TabsContent value="sops">
             <SopManagementTab token={token} />

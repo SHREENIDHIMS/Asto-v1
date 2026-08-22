@@ -1,0 +1,6 @@
+[Unit]
+Description=Run client document reminder emails
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_document_reminders.sh

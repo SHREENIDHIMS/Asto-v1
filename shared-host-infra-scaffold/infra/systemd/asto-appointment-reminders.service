@@ -1,0 +1,6 @@
+[Unit]
+Description=Run appointment reminder emails
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_appointment_reminders.sh

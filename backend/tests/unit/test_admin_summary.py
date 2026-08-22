@@ -87,6 +87,7 @@ class TestAdminSummaryPayload:
             {"n": 5},  # active cases
             {"n": 7},  # knowledge gaps
             {"n": 1},  # pending sop requests
+            {"n": 6},  # documents review overdue
         ]
         with patch("app.db.postgres.session.acquire", return_value=conn):
             try:
@@ -104,6 +105,7 @@ class TestAdminSummaryPayload:
         assert data["active_cases"] == 5
         assert data["total_gaps"] == 7
         assert data["pending_sop_requests"] == 1
+        assert data["documents_review_overdue"] == 6
 
     def test_summary_defaults_zero_on_null_counts(self):
         conn = _conn()
@@ -126,5 +128,6 @@ class TestAdminSummaryPayload:
             "active_cases",
             "total_gaps",
             "pending_sop_requests",
+            "documents_review_overdue",
         ):
             assert data[key] == 0

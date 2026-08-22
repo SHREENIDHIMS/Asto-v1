@@ -34,6 +34,19 @@ def query_terms(query_text: str) -> list[str]:
     return _WORD_RE.findall(query_text.lower())
 
 
+def significant_query_terms(query_text: str) -> list[str]:
+    """Unique content terms of the query (stopwords removed), in order of
+    first appearance. This is the denominator for term-coverage signals."""
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in query_terms(query_text):
+        if term in seen or term in _STOPWORDS:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return terms
+
+
 def matched_terms(query_text: str, text: str) -> list[str]:
     """Return the unique query terms that occur as words in ``text``.
 

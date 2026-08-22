@@ -115,6 +115,13 @@ def _apply_document_status(
                     link="/staff?tab=clients",
                 )
 
+        # Auto-event: keep the client-facing case timeline current (only
+        # for client-relevant transitions; the helper never raises).
+        if to_status in ("approved", "rejected"):
+            from app.cases.timeline import record_document_status_events
+
+            record_document_status_events(conn, document_id, to_status, reason)
+
 
 @router.get("/documents/pending")
 async def list_pending_documents(
@@ -473,6 +480,78 @@ async def approval_history(
             history = [dict(row) for row in cur.fetchall()]
 
     return {"document_id": document_id, "history": history}
+
+
+# ---------------------------------------------------------------------------
+# Review scheduling (documents.review_due)
+# ---------------------------------------------------------------------------
+
+
+class ReviewDueRequest(BaseModel):
+    """ISO date (YYYY-MM-DD) to schedule a review; null to clear."""
+
+    review_due: str | None = None
+
+
+@router.put("/documents/{document_id}/review-due")
+async def set_review_due(
+    document_id: int,
+    request: ReviewDueRequest,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Schedule (or clear) the content review date for an active document.
+
+    Overdue documents surface in GET /admin/documents/review-overdue and
+    search responses citing them carry a stale-source warning.
+    """
+    require_role(user, "admin")
+
+    parsed = None
+    if request.review_due is not None:
+        from datetime import date
+
+        try:
+            parsed = date.fromisoformat(request.review_due)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="review_due must be an ISO date (YYYY-MM-DD)",
+            )
+
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE documents SET review_due = %s "
+                "WHERE id = %s AND is_active = true",
+                (parsed, document_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Document not found",
+                )
+        conn.commit()
+
+    return {
+        "document_id": document_id,
+        "review_due": parsed.isoformat() if parsed else None,
+    }
+
+
+@router.get("/documents/review-overdue")
+async def list_review_overdue(
+    user: dict = Depends(require_auth),
+    limit: int = 100,
+) -> dict:
+    """Active approved documents past their review date (admin worklist)."""
+    require_role(user, "admin")
+    limit = max(1, min(limit, 500))
+
+    from app.documents.review import overdue_review_documents
+
+    with session.acquire() as conn:
+        documents = overdue_review_documents(conn, limit=limit)
+    return {"documents": documents}
 
 
 @router.get("/documents/{document_id}/versions")

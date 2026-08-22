@@ -265,6 +265,13 @@ async def admin_summary(user: dict = Depends(require_auth)) -> dict:
             )
             pending_sop_requests = cur.fetchone()["n"] or 0
 
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM documents "
+                "WHERE is_active = true AND approval_status = 'approved' "
+                "AND review_due IS NOT NULL AND review_due < CURRENT_DATE"
+            )
+            documents_review_overdue = cur.fetchone()["n"] or 0
+
     return {
         "pending_approvals": pending_approvals,
         "stale_pending_approvals": stale_pending_approvals,
@@ -274,6 +281,7 @@ async def admin_summary(user: dict = Depends(require_auth)) -> dict:
         "active_cases": active_cases,
         "total_gaps": total_gaps,
         "pending_sop_requests": pending_sop_requests,
+        "documents_review_overdue": documents_review_overdue,
     }
 
 
@@ -1303,6 +1311,39 @@ class SignatureRequestCreate(BaseModel):
     requested_from: str  # e.g. "client", "staff"
 
 
+def _email_signature_request(recipient: dict) -> bool:
+    """Best-effort email telling the client a document awaits their signature.
+
+    The raw signing token is deliberately NOT included — clients sign through
+    the authenticated portal (/client), so the message carries no credential.
+    Uses the shared mailer, which falls back to INFO logging when SMTP is
+    unconfigured and never raises (G3).
+    """
+    from app.email.mailer import send_email
+
+    email = recipient.get("email")
+    if not email:
+        return False
+
+    name = recipient.get("full_name") or "there"
+    doc_title = recipient.get("document_title") or "a document"
+    subject = "Signature requested"
+    text = (
+        f"Hello {name},\n\n"
+        f"A signature is requested for the document \"{doc_title}\".\n"
+        "Please log in to your client portal to review and sign it.\n\n"
+        "— Asto"
+    )
+    html = (
+        f"<p>Hello {name},</p>"
+        f"<p>A signature is requested for the document "
+        f"<strong>{doc_title}</strong>.</p>"
+        '<p>Please log in to your client portal to review and sign it.</p>'
+        "<p>— Asto</p>"
+    )
+    return send_email(email, subject, html, text)
+
+
 @router.post("/signature-requests", status_code=status.HTTP_201_CREATED)
 async def create_signature_request(
     request: SignatureRequestCreate,
@@ -1319,7 +1360,7 @@ async def create_signature_request(
 
     token = uuid.uuid4().hex
     signed_at = None
-    status = "pending"
+    request_status = "pending"
 
     with session.acquire() as conn:
         with conn.cursor() as cur:
@@ -1335,15 +1376,32 @@ async def create_signature_request(
                     detail="Document not found or not approved",
                 )
 
+            # Resolve the case's client + document title for the G3 notice
+            cur.execute(
+                "SELECT cl.email, cl.full_name, d.title AS document_title "
+                "FROM cases cs "
+                "JOIN clients cl ON cl.id = cs.client_id "
+                "JOIN documents d ON d.id = %s "
+                "WHERE cs.id = %s",
+                (request.document_id, request.case_id),
+            )
+            recipient = cur.fetchone()
+            if recipient is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Case not found",
+                )
+
             cur.execute(
                 "INSERT INTO signature_requests (case_id, document_id, requested_from, token, status) "
                 "VALUES (%s, %s, %s, %s, %s) RETURNING id, token, status, created_at",
-                (request.case_id, request.document_id, request.requested_from, token, status),
+                (request.case_id, request.document_id, request.requested_from, token, request_status),
             )
             row = dict(cur.fetchone())
         conn.commit()
 
-    # TODO: send notification to client (G3)
+    _email_signature_request(recipient)
+
     return {"signature_request_id": row["id"], "token": row["token"], "status": row["status"]}
 
 

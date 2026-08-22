@@ -92,7 +92,12 @@ def run_maintenance(
                 result["reindexed_indexes"].append(index_name)
             result["reindexed"] = True
 
-        return result
+    # Prune expired watermark cache entries (audit #13 hardening). Entries
+    # are keyed by day, so anything older than yesterday is dead weight.
+    from app.documents.watermark_cache import prune_cache
+
+    result["watermark_cache_pruned"] = prune_cache(max_age_days=2)
+    return result
 
 
 def main() -> int:

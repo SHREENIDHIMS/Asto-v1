@@ -43,3 +43,16 @@ def _mock_db_acquire():
     patcher.start()
     yield
     patcher.stop()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_watermark_cache(tmp_path, monkeypatch):
+    """Point the watermark disk cache at a per-test temp directory so
+    endpoint tests never write into the real storage/ tree."""
+    from app.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "storage_watermark_cache_dir",
+        str(tmp_path / "watermark_cache"),
+    )

@@ -46,6 +46,9 @@ import {
   twoFaStatus,
   twoFaVerify,
   updateClientProfile,
+  listMySessions,
+  revokeMySession,
+  type ActiveSessionInfo,
   type ClientProfile,
 } from "@/lib/api-client";
 import { getToken, decodeToken, isAdminRole, type TokenClaims } from "@/lib/auth";
@@ -84,6 +87,96 @@ const SESSION_TIMEOUTS = [
 // ---------------------------------------------------------------------------
 // H4: admin two-factor authentication (TOTP) — setup / disable
 // ---------------------------------------------------------------------------
+
+/** Self-service active-session list with per-session revoke. */
+function SessionsCard({ token }: { token: string }) {
+  const [sessions, setSessions] = useState<ActiveSessionInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await listMySessions(token);
+      setSessions(res.sessions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load sessions");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const handleRevoke = async (id: number) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await revokeMySession(token, id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to revoke session");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Shield className="h-4 w-4" />
+          Active sessions
+        </CardTitle>
+        <CardDescription>
+          Devices where you are still signed in. Revoking one signs that
+          device out at its next token refresh.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        {loading ? (
+          <div className="flex justify-center py-3">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : sessions.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No other active sessions.</p>
+        ) : (
+          sessions.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-medium capitalize">{s.audience} session</p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  Signed in{" "}
+                  {s.created_at ? new Date(s.created_at).toLocaleString() : "—"}
+                  {" · expires "}
+                  {s.expires_at ? new Date(s.expires_at).toLocaleString() : "—"}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busyId === s.id}
+                onClick={() => void handleRevoke(s.id)}
+              >
+                Revoke
+              </Button>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function TwoFactorCard({ token }: { token: string }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -581,6 +674,9 @@ const identity = user ?? (() => {
 
       {/* H4: admin two-factor authentication */}
       {isAdmin && sessionToken && <TwoFactorCard token={sessionToken} />}
+
+      {/* Self-service session management */}
+      {sessionToken && <SessionsCard token={sessionToken} />}
 
       {/* Conversations */}
       <Card>

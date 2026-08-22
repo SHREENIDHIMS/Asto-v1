@@ -7,27 +7,16 @@ that restricts search results to documents the user is permitted to see.
 This is the PRIMARY enforcement point for RBAC — the WHERE clause in the
 SQL query itself. Response validation does a redundant re-check as a
 safety net (CLAUDE.md rule #1).
+
+Single source of truth: role constants are read from
+``app.auth.roles_config`` AT CALL TIME (not imported by value) so that a
+governance edit (``PUT /admin/governance`` → atomic write +
+``importlib.reload``) takes effect immediately in this module too.
 """
 
 from __future__ import annotations
 
-
-# Role hierarchy: higher roles inherit lower scopes.
-# Each role maps to the set of departments they can access.
-# "super_admin" can access all departments.
-ROLE_DEPARTMENTS: dict[str, list[str]] = {
-    "super_admin": [],  # empty means "all departments"
-    "admin": [],
-    "loan_officer": ["general"],
-    "underwriter": ["general"],
-    "compliance": ["general"],
-}
-
-# Default department if none specified.
-DEFAULT_DEPARTMENT: str = "general"
-
-# Roles that bypass department filtering entirely.
-ADMIN_ROLES: set[str] = {"super_admin", "admin"}
+from app.auth import roles_config
 
 
 def resolve_user_departments(user: dict | None) -> list[str]:
@@ -40,7 +29,7 @@ def resolve_user_departments(user: dict | None) -> list[str]:
     if user is None:
         return []
 
-    departments = {user.get("department", DEFAULT_DEPARTMENT)}
+    departments = {user.get("department", roles_config.DEFAULT_DEPARTMENT)}
     departments.update(user.get("allowed_departments") or [])
 
     return sorted(departments)
@@ -50,7 +39,7 @@ def is_admin(user: dict | None) -> bool:
     """Check if the user has admin-level access (bypasses RBAC)."""
     if user is None:
         return False
-    return user.get("role") in ADMIN_ROLES
+    return user.get("role") in roles_config.ADMIN_ROLES
 
 
 def get_search_filter(user: dict | None) -> tuple[str, list[str]]:

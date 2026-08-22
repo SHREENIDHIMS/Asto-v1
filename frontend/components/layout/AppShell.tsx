@@ -1,10 +1,11 @@
 "use client";
 
 import { ReactNode, useEffect, useState } from "react";
-import { Bell, ChevronsLeft, ChevronsRight, LogOut, Menu, Settings, Sparkles, X } from "lucide-react";
+import { Bell, ChevronsLeft, ChevronsRight, LogOut, Menu, Search, Settings, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import CommandPalette from "@/components/layout/CommandPalette";
 import { NavGroup } from "@/config/navigation";
 
 export interface ShellUser {
@@ -30,6 +31,8 @@ export interface AppShellProps {
   headerSubtitle?: string;
   /** right-side header actions (e.g. New Chat) */
   headerActions?: ReactNode;
+  /** When provided, enables the Ctrl/Cmd+K command palette with "Ask Asto". */
+  onAsk?: (query: string) => void;
   /** notification bell */
   onNotifications?: () => void;
   notificationCount?: number;
@@ -60,6 +63,7 @@ export default function AppShell({
   headerTitle,
   headerSubtitle,
   headerActions,
+  onAsk,
   onNotifications,
   notificationCount = 0,
   sidebarTop,
@@ -71,6 +75,7 @@ export default function AppShell({
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -317,6 +322,18 @@ export default function AppShell({
             </div>
             <div className="ml-auto flex items-center gap-2 flex-shrink-0">
               {headerActions}
+              {onAsk && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setPaletteOpen(true)}
+                  aria-label="Search (Ctrl+K)"
+                  title="Search (Ctrl+K)"
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              )}
               {onNotifications && (
                 <Button
                   type="button"
@@ -338,6 +355,17 @@ export default function AppShell({
 
         {/* Content */}
         <main id="main-content" className="flex-1 min-h-0 flex flex-col">{children}</main>
+
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          navGroups={navGroups}
+          onNavigate={(id) => {
+            onNavigate(id);
+            setDrawerOpen(false);
+          }}
+          onAsk={onAsk}
+        />
 
         {/* Mobile bottom tab bar (client portal) */}
         {isBottomTabs && bottomTabs.length > 0 && (

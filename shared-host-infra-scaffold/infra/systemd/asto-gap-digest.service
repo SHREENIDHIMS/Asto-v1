@@ -1,0 +1,6 @@
+[Unit]
+Description=Run weekly knowledge-gap digest email
+
+[Service]
+Type=oneshot
+ExecStart=/opt/projects/asto/infra/scripts/run_gap_digest.sh

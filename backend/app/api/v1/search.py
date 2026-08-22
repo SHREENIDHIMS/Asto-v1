@@ -49,6 +49,7 @@ from app.ranking.scoring import apply_linear_reorder
 from app.llm.citations import maybe_apply_citation_mode
 from app.response.confidence_thresholds import route_by_confidence
 from app.response.package_builder import build_response_package
+from app.response.pinned_answers import find_pinned_answer, pinned_payload
 from app.response.validation import validate_package
 from app.search.hybrid_orchestrator import search_knowledge_base
 from app.search.metadata_filters import _assigned_client_ids
@@ -99,6 +100,9 @@ class SearchResponse(BaseModel):
     retrieval_path: str = "document"
     no_answer_reason: str | None = None
     citations: list[dict] = []
+    pinned: bool = False
+    pinned_from_query: str | None = None
+    stale_sources: list[str] = []
 
 
 def _serialize(package) -> dict:
@@ -259,6 +263,30 @@ def _run_pipeline(
     sub_query_texts = [sq.expanded for sq in plan.sub_queries]
     sub_query_displays = [sq.display for sq in plan.sub_queries]
 
+    # Pinned-answer path — exact normalized match on an admin-curated
+    # response package (originating from a real audited search). Served
+    # verbatim before any retrieval; audience scoping is in the SQL WHERE
+    # clause (rule 1). Near-misses fall through to the normal pipeline.
+    status("searching")
+    with session.acquire() as conn:
+        pinned_row = find_pinned_answer(conn, query, user.get("audience"))
+    if pinned_row is not None:
+        payload = pinned_payload(pinned_row, query)
+        latency_ms = time.time() * 1000 - start_ms
+        _log_audit(
+            user_id=user["id"],
+            query=query,
+            sub_query_displays=sub_query_displays,
+            retrieved_ids=[],
+            confidence=round(payload["confidence"], 1),
+            response_id=payload["response_id"],
+            outcome="pinned",
+            latency_ms=round(latency_ms, 1),
+            audience=user.get("audience"),
+        )
+        status("done")
+        return SearchResponse(**payload)
+
     # Structured-fact path â€” deterministic SQL, no vector search. Falls
     # through to the document path when run_fact_path returns None.
     status("searching")
@@ -372,6 +400,17 @@ def _run_pipeline(
             confidence=package.confidence,
         )
 
+    # Stale-source check: flag cited documents past their review date so
+    # the response can warn that an excerpt may be outdated (compliance).
+    stale_sources: list[str] = []
+    if package.routing != "no_answer":
+        with session.acquire() as conn:
+            from app.documents.review import stale_source_titles
+
+            stale_sources = stale_source_titles(
+                conn, [c.document_id for c in ranked[:25]]
+            )
+
     # Re-check the staff client-assignment leg of the SQL scope as a safety
     # net (rule #1 re-check). Clients and admins need no assignment list.
     assigned_client_ids = None
@@ -416,6 +455,7 @@ def _run_pipeline(
         )
 
     payload = _serialize(package)
+    payload["stale_sources"] = stale_sources
 
     for s in payload["summary"]:
         if emit:

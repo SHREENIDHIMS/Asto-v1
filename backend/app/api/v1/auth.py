@@ -729,6 +729,62 @@ async def logout_all(user: dict = Depends(require_auth), response: Response = No
     return {"revoked": True, "audience": user.get("audience", "staff")}
 
 
+def _identity_filter(user: dict) -> tuple[str, tuple]:
+    """WHERE fragment + params scoping refresh_tokens to the caller only
+    (rule 1: self-service can never touch another identity's rows)."""
+    if user.get("audience") == "client":
+        return "client_id = %s", (user["id"],)
+    return "user_id = %s", (user["id"],)
+
+
+@router.get("/sessions")
+async def list_my_sessions(user: dict = Depends(require_auth)) -> dict:
+    """List the caller's own active refresh sessions (self-service view).
+
+    Same data admins see via /admin/users/{id}/sessions, but scoped in
+    SQL to the caller's own identity — no admin role required.
+    """
+    where, params = _identity_filter(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, audience, created_at, expires_at "
+                "FROM refresh_tokens "
+                f"WHERE {where} AND revoked_at IS NULL AND expires_at > now() "
+                "ORDER BY created_at DESC",
+                params,
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+    return {"active_sessions": len(rows), "sessions": rows}
+
+
+@router.post("/sessions/{session_id}/revoke")
+async def revoke_my_session(
+    session_id: int,
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Revoke one of the caller's own refresh sessions.
+
+    Scoped by identity in the SQL WHERE clause; revoking a session that
+    belongs to someone else is a 404, not an error leak.
+    """
+    where, params = _identity_filter(user)
+    with session.acquire() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE refresh_tokens SET revoked_at = now() "
+                f"WHERE id = %s AND {where} AND revoked_at IS NULL",
+                (session_id, *params),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Session not found",
+                )
+        conn.commit()
+    return {"revoked": True}
+
+
 @router.post("/forgot-password")
 async def forgot_password(
     request: ForgotPasswordRequest,
