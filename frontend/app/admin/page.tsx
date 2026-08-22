@@ -12,8 +12,8 @@ import {
   GitCompare,
   History,
   KeyRound,
-  Layers,
-  Loader2,
+   Layers,
+    Loader2,
   MessageSquare,
   Pencil,
   Plus,
@@ -113,6 +113,7 @@ import {
     getCaseChecklist,
     RequirementDefinition,
     ChecklistItemStatus,
+    exportClientGdpr,
   } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
@@ -2283,6 +2284,20 @@ function ClientsTab({ token }: { token: string }) {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {!client.is_active && <Badge variant="destructive">inactive</Badge>}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    title="Download this client's data (GDPR export)"
+                    onClick={() => {
+                      exportClientGdpr(token, client.id).catch(() => {
+                        // Download failures are surfaced by the browser; nothing to show inline.
+                      });
+                    }}
+                  >
+                    <Download className="h-3.5 w-3.5 mr-1.5" />
+                    Export
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"

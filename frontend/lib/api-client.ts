@@ -3237,3 +3237,52 @@ export async function getCaseChecklist(
   }
   return response.json();
 }
+
+// ---------------------------------------------------------------------------
+// GDPR data exports (M5)
+// ---------------------------------------------------------------------------
+
+/** Download a JSON file produced from an authenticated fetch. */
+async function downloadJson(
+  url: string,
+  filename: string,
+  token: string
+): Promise<void> {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Export failed');
+  }
+  const blob = await response.blob();
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
+}
+
+/** Client self-serve GDPR export (M5). */
+export async function exportMyClientData(token: string): Promise<void> {
+  await downloadJson(
+    `${API_BASE_URL}/client/me/export`,
+    'my_data_export.json',
+    token
+  );
+}
+
+/** Admin GDPR export for one client (M5). */
+export async function exportClientGdpr(
+  token: string,
+  clientId: number
+): Promise<void> {
+  await downloadJson(
+    `${API_BASE_URL}/admin/clients/${clientId}/export`,
+    `client_${clientId}_data.json`,
+    token
+  );
+}
