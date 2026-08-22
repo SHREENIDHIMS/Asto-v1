@@ -99,6 +99,20 @@ import {
     GapTopic,
     getContentCoverage,
     CoverageRow,
+    listSignatureRequests,
+    createSignatureRequest,
+    adminSignSignatureRequest,
+    AdminSignatureRequest,
+    listSynonyms,
+    createSynonym,
+    deleteSynonym,
+    expandWithSynonyms,
+    SynonymPair,
+    getDefaultRequirements,
+    seedCaseRequirements,
+    getCaseChecklist,
+    RequirementDefinition,
+    ChecklistItemStatus,
   } from "@/lib/api-client";
 import { clearToken, decodeToken, getToken, isAdminRole, restoreSession } from "@/lib/auth";
 import { clearClientLocalState } from "@/lib/session-cleanup";
@@ -111,7 +125,7 @@ import { DocumentPreviewDialog } from "@/components/documents/DocumentPreviewDia
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1143,6 +1157,328 @@ function TagEditorDialog({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Signature requests (K5: admin-side create / list / sign-on-behalf)
+// ---------------------------------------------------------------------------
+
+function SignatureRequestsCard({ token, documents }: { token: string; documents: AdminDocument[] }) {
+  const [requests, setRequests] = useState<AdminSignatureRequest[]>([]);
+  const [documentId, setDocumentId] = useState<string>("");
+  const [caseId, setCaseId] = useState("");
+  const [requestedFrom, setRequestedFrom] = useState("client");
+  const [signName, setSignName] = useState<Record<number, string>>({});
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await listSignatureRequests(token);
+      setRequests(res.signature_requests);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load signature requests");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!documentId || !caseId.trim() || creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      await createSignatureRequest(token, {
+        case_id: Number(caseId),
+        document_id: Number(documentId),
+        requested_from: requestedFrom,
+      });
+      setCaseId("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create signature request");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleSign = async (requestId: number) => {
+    const name = (signName[requestId] ?? "").trim();
+    if (!name || busyId === requestId) return;
+    setBusyId(requestId);
+    setError(null);
+    try {
+      await adminSignSignatureRequest(token, requestId, name, true);
+      setSignName((prev) => ({ ...prev, [requestId]: "" }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to sign");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Signature requests</CardTitle>
+        <CardDescription>
+          Request a client e-signature for an approved document. The client is
+          emailed and signs from their portal; you can also record a signature
+          on their behalf below.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid gap-2 sm:grid-cols-[2fr_1fr_auto_auto]">
+          <Select value={documentId} onValueChange={setDocumentId}>
+            <SelectTrigger aria-label="Document">
+              <SelectValue placeholder="Approved document…" />
+            </SelectTrigger>
+            <SelectContent>
+              {documents
+                .filter((d) => d.approval_status === "approved")
+                .map((d) => (
+                  <SelectItem key={d.id} value={String(d.id)}>
+                    #{d.id} · {d.title}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          <Input
+            value={caseId}
+            onChange={(e) => setCaseId(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Case ID"
+            inputMode="numeric"
+          />
+          <Select value={requestedFrom} onValueChange={setRequestedFrom}>
+            <SelectTrigger className="w-[110px]" aria-label="Requested from">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="client">Client</SelectItem>
+              <SelectItem value="staff">Staff</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            size="sm"
+            disabled={creating || !documentId || !caseId.trim()}
+            onClick={() => void handleCreate()}
+          >
+            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create"}
+          </Button>
+        </div>
+
+        <div className="max-h-64 overflow-y-auto rounded-md border border-border divide-y divide-border">
+          {requests.length === 0 ? (
+            <p className="p-3 text-xs text-muted-foreground">No signature requests yet.</p>
+          ) : (
+            requests.map((r) => (
+              <div key={r.id} className="px-3 py-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="truncate">
+                    Request #{r.id} · doc #{r.document_id} · case #{r.case_id}
+                  </span>
+                  <Badge variant={r.status === "signed" ? "default" : r.status === "pending" ? "outline" : "secondary"}>
+                    {r.status}
+                  </Badge>
+                </div>
+                {r.status === "pending" && (
+                  <div className="flex gap-2">
+                    <Input
+                      value={signName[r.id] ?? ""}
+                      onChange={(e) =>
+                        setSignName((prev) => ({ ...prev, [r.id]: e.target.value }))
+                      }
+                      placeholder="Signer's full name (on behalf)"
+                      className="h-8 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={busyId === r.id || !(signName[r.id] ?? "").trim()}
+                      onClick={() => void handleSign(r.id)}
+                    >
+                      Sign
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Case document requirements (K1: defaults + live checklist)
+// ---------------------------------------------------------------------------
+
+const CASE_TYPES = ["purchase", "refinance", "home equity"];
+
+function CaseRequirementsCard({ token }: { token: string }) {
+  const [caseType, setCaseType] = useState("purchase");
+  const [requirements, setRequirements] = useState<RequirementDefinition[]>([]);
+  const [checklistCaseId, setChecklistCaseId] = useState("");
+  const [checklist, setChecklist] = useState<ChecklistItemStatus[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    getDefaultRequirements(token, caseType)
+      .then(setRequirements)
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load requirements")
+      );
+  }, [token, caseType]);
+
+  const handleSeed = async () => {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await seedCaseRequirements(token, caseType);
+      setMessage(
+        res.inserted > 0
+          ? `Seeded ${res.inserted} requirement(s) for "${caseType}".`
+          : `All "${caseType}" requirements already seeded.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to seed requirements");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleChecklist = async () => {
+    const id = Number(checklistCaseId);
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await getCaseChecklist(token, id);
+      setChecklist(res.checklist);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load checklist");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusColor: Record<string, string> = {
+    approved: "text-green-600",
+    received: "text-blue-600",
+    pending: "text-amber-600",
+    required: "text-muted-foreground",
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Document requirements</CardTitle>
+        <CardDescription>
+          Default per-case-type checklists (K1) and the derived status for a
+          specific case.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {message && <p className="text-xs text-green-700">{message}</p>}
+
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
+          <Select value={caseType} onValueChange={setCaseType}>
+            <SelectTrigger aria-label="Case type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CASE_TYPES.map((t) => (
+                <SelectItem key={t} value={t} className="capitalize">
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => void handleSeed()}
+          >
+            Seed defaults
+          </Button>
+          <Input
+            value={checklistCaseId}
+            onChange={(e) => setChecklistCaseId(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Case ID for live checklist…"
+            inputMode="numeric"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || !checklistCaseId.trim()}
+            onClick={() => void handleChecklist()}
+          >
+            Derive
+          </Button>
+        </div>
+
+        <div className="rounded-md border border-border p-3 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground mb-1">
+            Defaults for &quot;{caseType}&quot;:
+          </p>
+          {requirements.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No defaults defined.</p>
+          ) : (
+            <ul className="text-xs space-y-0.5 list-disc list-inside">
+              {requirements.map((r) => (
+                <li key={r.name}>{r.name}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {checklist !== null && (
+          <div className="max-h-48 overflow-y-auto rounded-md border border-border divide-y divide-border">
+            {checklist.length === 0 ? (
+              <p className="p-3 text-xs text-muted-foreground">No checklist derivable.</p>
+            ) : (
+              checklist.map((item) => (
+                <div key={item.name} className="flex items-center justify-between px-3 py-1.5 text-sm">
+                  <span className="truncate">{item.name}</span>
+                  <span className={`text-xs capitalize ${statusColor[item.status] ?? ""}`}>
+                    {item.status}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DocumentsTab({ token }: { token: string }) {
   const [documents, setDocuments] = useState<AdminDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -1276,6 +1612,8 @@ function DocumentsTab({ token }: { token: string }) {
           </CardContent>
         </Card>
       )}
+      <SignatureRequestsCard token={token} documents={documents} />
+      <CaseRequirementsCard token={token} />
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
@@ -2478,6 +2816,166 @@ function AnalyticsTab({ token }: { token: string }) {
 // Knowledge Base tab (Phase F3 — read-only chunk browse)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Synonyms management (J8)
+// ---------------------------------------------------------------------------
+
+function SynonymsCard({ token }: { token: string }) {
+  const [pairs, setPairs] = useState<SynonymPair[]>([]);
+  const [canonical, setCanonical] = useState("");
+  const [alias, setAlias] = useState("");
+  const [expandText, setExpandText] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setPairs(await listSynonyms(token));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load synonyms");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleCreate = async () => {
+    if (!canonical.trim() || !alias.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createSynonym(token, canonical.trim(), alias.trim());
+      setCanonical("");
+      setAlias("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save synonym");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async (pair: SynonymPair) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteSynonym(token, pair.canonical, pair.alias);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete synonym");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleExpand = async () => {
+    if (!expandText.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setExpanded(await expandWithSynonyms(token, expandText.trim()));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to expand query");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Query synonyms</CardTitle>
+        <CardDescription>
+          Aliases expand to their canonical term at search time (e.g.
+          &quot;deposit&quot; → &quot;earnest money&quot;). Changes apply immediately.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <Input
+            value={canonical}
+            onChange={(e) => setCanonical(e.target.value)}
+            placeholder="Canonical term (e.g. earnest money)"
+          />
+          <Input
+            value={alias}
+            onChange={(e) => setAlias(e.target.value)}
+            placeholder="Alias (e.g. deposit)"
+          />
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || !canonical.trim() || !alias.trim()}
+            onClick={() => void handleCreate()}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
+            Add
+          </Button>
+        </div>
+
+        <div className="max-h-48 overflow-y-auto rounded-md border border-border divide-y divide-border">
+          {pairs.length === 0 ? (
+            <p className="p-3 text-xs text-muted-foreground">No synonyms defined.</p>
+          ) : (
+            pairs.map((p) => (
+              <div key={`${p.canonical}-${p.alias}`} className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm">
+                <span className="truncate">
+                  <span className="text-muted-foreground">{p.alias}</span>
+                  {" → "}
+                  <span className="font-medium">{p.canonical}</span>
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-destructive hover:text-destructive"
+                  disabled={busy}
+                  onClick={() => void handleDelete(p)}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Expansion preview</Label>
+          <div className="flex gap-2">
+            <Input
+              value={expandText}
+              onChange={(e) => setExpandText(e.target.value)}
+              placeholder="Try a query containing an alias…"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy || !expandText.trim()}
+              onClick={() => void handleExpand()}
+            >
+              Preview
+            </Button>
+          </div>
+          {expanded !== null && (
+            <p className="rounded-md bg-muted px-3 py-2 text-xs">{expanded}</p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function KnowledgeBaseTab({ token }: { token: string }) {
   const [documents, setDocuments] = useState<AdminDocument[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -2520,6 +3018,7 @@ function KnowledgeBaseTab({ token }: { token: string }) {
 
   return (
     <div className="space-y-4">
+      <SynonymsCard token={token} />
       <p className="text-sm text-muted-foreground">
         Browse the raw text chunks each document contributes to the knowledge
         base. Read-only view.

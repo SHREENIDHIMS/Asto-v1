@@ -3030,3 +3030,210 @@ export async function updateDocumentMetadata(
   }
   return response.json();
 }
+
+// ---------------------------------------------------------------------------
+// Admin: e-signature requests (K5)
+// ---------------------------------------------------------------------------
+
+export interface AdminSignatureRequest {
+  id: number;
+  case_id: number;
+  document_id: number;
+  requested_from: string;
+  status: 'pending' | 'signed' | 'cancelled';
+  signed_at: string | null;
+  created_at: string | null;
+}
+
+export async function listSignatureRequests(
+  token: string
+): Promise<{ signature_requests: AdminSignatureRequest[] }> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/signature-requests`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load signature requests');
+  }
+  return response.json();
+}
+
+export async function createSignatureRequest(
+  token: string,
+  payload: { case_id: number; document_id: number; requested_from: string }
+): Promise<AdminSignatureRequest> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/signature-requests`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to create signature request');
+  }
+  return response.json();
+}
+
+/** Staff/admin signing on a client's behalf (K5). */
+export async function adminSignSignatureRequest(
+  token: string,
+  requestId: number,
+  signedName: string,
+  consent: boolean
+): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append('signed_name', signedName);
+  form.append('consent', String(consent));
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/signature-requests/${requestId}/sign`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to sign');
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Admin: synonyms management (J8)
+// ---------------------------------------------------------------------------
+
+export interface SynonymPair {
+  canonical: string;
+  alias: string;
+}
+
+/** Returns a bare array of canonical/alias pairs. */
+export async function listSynonyms(token: string): Promise<SynonymPair[]> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/synonyms`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load synonyms');
+  }
+  return response.json();
+}
+
+export async function createSynonym(
+  token: string,
+  canonical: string,
+  alias: string
+): Promise<SynonymPair> {
+  const response = await apiFetch(`${API_BASE_URL}/admin/synonyms`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ canonical, alias }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to save synonym');
+  }
+  return response.json();
+}
+
+export async function deleteSynonym(
+  token: string,
+  canonical: string,
+  alias: string
+): Promise<void> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/synonyms/${encodeURIComponent(canonical)}/${encodeURIComponent(alias)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok && response.status !== 204) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to delete synonym');
+  }
+}
+
+/** Returns `{original, expanded}` — expanded is a single string with the
+ * canonical terms appended. */
+export async function expandWithSynonyms(
+  token: string,
+  text: string
+): Promise<string> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/synonyms/expand/${encodeURIComponent(text)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to expand query');
+  }
+  const data = (await response.json()) as { expanded?: string };
+  return data.expanded ?? text;
+}
+
+// ---------------------------------------------------------------------------
+// Admin: case document requirements (K1)
+// ---------------------------------------------------------------------------
+
+export interface RequirementDefinition {
+  name: string;
+  description: string;
+}
+
+export async function getDefaultRequirements(
+  token: string,
+  caseType: string
+): Promise<RequirementDefinition[]> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/case-requirements/default/${encodeURIComponent(caseType)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load requirements');
+  }
+  const data = (await response.json()) as { requirements?: RequirementDefinition[] };
+  return data.requirements ?? [];
+}
+
+export async function seedCaseRequirements(
+  token: string,
+  caseType: string
+): Promise<{ inserted: number }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/case-requirements/seed/${encodeURIComponent(caseType)}`,
+    { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to seed requirements');
+  }
+  return response.json();
+}
+
+export interface ChecklistItemStatus {
+  name: string;
+  description: string;
+  status: 'required' | 'pending' | 'received' | 'approved';
+  has_document: boolean;
+}
+
+export async function getCaseChecklist(
+  token: string,
+  caseId: number
+): Promise<{ case_id: number; checklist: ChecklistItemStatus[] }> {
+  const response = await apiFetch(
+    `${API_BASE_URL}/admin/case-requirements/${caseId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to load checklist');
+  }
+  return response.json();
+}
