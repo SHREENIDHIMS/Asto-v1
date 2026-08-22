@@ -5,6 +5,9 @@ x-backend-env: &backend-env
   ASTO_ENVIRONMENT: "${ASTO_ENVIRONMENT:-development}"
   ASTO_MAX_EVIDENCE_DOCS: "${ASTO_MAX_EVIDENCE_DOCS:-5}"
   ASTO_RERANK_ENABLED: "${ASTO_RERANK_ENABLED:-false}"
+  # Audit #13 hardening: files above this size skip request-time
+  # watermarking (served as an audited attachment instead).
+  ASTO_WATERMARK_MAX_BYTES: "${ASTO_WATERMARK_MAX_BYTES:-20971520}"
 
 services:
   postgres:
