@@ -1,4 +1,4 @@
-const CACHE = "asto-shell-v1";
+const CACHE = "asto-shell-v2";
 const SHELL_ASSETS = ["/", "/login/", "/offline.html"];
 
 self.addEventListener("install", (event) => {
@@ -61,7 +61,9 @@ self.addEventListener("fetch", (event) => {
 async function networkOnlyWithOffline(request) {
   try {
     const response = await fetch(request);
-    if (response.ok) {
+    // Cache.put() only supports GET requests — caching a POST (search,
+    // login, mutations) throws and must be skipped.
+    if (response.ok && request.method === "GET") {
       const copy = response.clone();
       caches.open(CACHE).then((cache) => cache.put(request, copy));
     }

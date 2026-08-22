@@ -58,14 +58,15 @@ def coverage_by_department(conn) -> list[dict]:
 def empty_cells(conn) -> list[dict]:
     """(department, doc_type) pairs that exist somewhere in the KB but have
     zero approved documents in this department — the clearest coverage
-    gaps."""
+    gaps. SOPs count as doc_type 'sop' (the sops table has no doc_type
+    column of its own)."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT DISTINCT department, doc_type FROM (
                 SELECT DISTINCT department, doc_type FROM documents WHERE is_active = true
                 UNION
-                SELECT DISTINCT department, doc_type FROM sops WHERE is_active = true
+                SELECT DISTINCT department, 'sop' AS doc_type FROM sops WHERE is_active = true
             ) all_cells
             WHERE NOT EXISTS (
                 SELECT 1 FROM documents d
